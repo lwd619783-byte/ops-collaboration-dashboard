@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-已完成 Task 0.1 工程基线：可运行的 React 单页应用、基础布局、首页与 404 页面、自动化检查、GitHub Actions 和 Vercel SPA 配置均已建立。
+已建立 Task 0.1 工程基线：可运行的 React 单页应用、基础布局、首页与 404 页面、自动化检查、GitHub Actions 和 Vercel SPA 配置均已建立。正式完成以远端独立审计和 PR 合并为准。
 
 ## 第一阶段边界
 
@@ -14,13 +14,13 @@
 
 - React + TypeScript（严格模式）
 - Vite + Tailwind CSS 4（官方 Vite 插件）
-- React Router
+- React Router 8
 - ESLint + Prettier
 - Vitest + React Testing Library + jest-dom
 
 ## 环境要求
 
-- Node.js 22 或更高版本
+- Node.js 22.22.0 或更高版本
 - npm 10 或更高版本
 
 ## 本地运行
@@ -43,6 +43,7 @@ npm run preview
 
 ```bash
 npm run format:check
+npm run security:audit
 npm run lint
 npm run typecheck
 npm run test
@@ -50,7 +51,7 @@ npm run build
 npm run check
 ```
 
-`npm run check` 按格式、Lint、类型、测试、生产构建的顺序执行，与 CI 使用同一标准。
+`npm run check` 按格式、Lint、类型、测试、生产构建的顺序执行。`npm run security:audit` 单独阻断高危和严重依赖漏洞，CI 会在项目检查前运行该命令。
 
 ## 环境变量
 
@@ -70,6 +71,10 @@ src/
 ```
 
 按实际任务创建文件；不为维持空目录而提交占位文件。
+
+## 公开仓库安全
+
+本仓库不接受真实业务数据、人员或单位信息、内部材料、IP/内部域名、日志、Cookie、Token、密码、私钥、API Key 或本机绝对路径。提交前遵循 [公开开发流程](docs/public-development-workflow.md)。
 
 ## Vercel 部署
 

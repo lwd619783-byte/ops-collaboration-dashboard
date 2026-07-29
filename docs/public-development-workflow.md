@@ -21,6 +21,7 @@
 - 保持 TypeScript strict；不使用无理由的 `any` 或 `@ts-ignore`。
 - 不编写只有 `toBeTruthy` 等弱断言的测试，不为通过检查关闭规则，不做任务范围外重构。
 - 依赖变化后必须运行 `npm run security:audit`。
+- 仓库文本文件通过 `.gitattributes` 统一使用 LF；不得提交纯换行变更，也不得依赖个人全局 `core.autocrlf` 设置维持检查结果。
 
 ## 每次交付检查
 

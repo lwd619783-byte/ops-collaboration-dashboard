@@ -1,0 +1,14 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+}
+
+html {
+  background: #f8fafc;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+}

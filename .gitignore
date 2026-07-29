@@ -1,0 +1,23 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+.vite/
+
+# Local environment files (keep .env.example tracked)
+.env
+.env.local
+.env.*.local
+
+# Vercel local state
+.vercel/
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

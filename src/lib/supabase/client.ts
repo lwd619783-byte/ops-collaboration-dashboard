@@ -3,7 +3,6 @@ import type { Database } from '@/types/database.generated'
 import {
   getSupabaseConfig,
   type SupabaseClientConfig,
-  type SupabaseConfigResult,
 } from '@/lib/supabase/config'
 
 export type SupabaseClientResolution =
@@ -23,9 +22,8 @@ let cachedClient:
     }
   | undefined
 
-export function getSupabaseClient(
-  configResult: SupabaseConfigResult = getSupabaseConfig(),
-): SupabaseClientResolution {
+export function getSupabaseClient(): SupabaseClientResolution {
+  const configResult = getSupabaseConfig()
   if (configResult.status !== 'configured') {
     return {
       status: 'unavailable',

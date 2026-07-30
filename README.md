@@ -67,7 +67,11 @@ npm run check
 
 ## 环境变量
 
-将 `.env.example` 复制为本地 `.env.local` 后按需调整。应用不依赖 Supabase 配置也可启动；未配置时系统健康页会显示安全的未配置状态。浏览器端只允许使用 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_PUBLISHABLE_KEY`，不得放入 secret key、service role key、数据库密码或连接串。不要提交真实密钥、令牌、账号或绝对路径；`.env`、`.env.local` 与 `.env.*.local` 已被忽略。
+将 `.env.example` 复制为本地 `.env.local` 后按需调整。所有 `.env` 和 `.env.[mode]` 文件均默认忽略，`.env.example` 是唯一允许提交的环境示例。应用不依赖 Supabase 配置也可启动；未配置时系统健康页会显示安全的未配置状态。
+
+Vite 会在构建阶段把使用到的 `VITE_*` 值写入客户端包，因此生产环境只能配置 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_PUBLISHABLE_KEY`。部分配置、无效 URL、secret key、service-role JWT 或高权限数据库变量会让 Vite 在启动或构建前直接失败，错误不会输出变量值。客户端工厂不接受调用方传入的 URL 或 key，只能读取并使用通过共享验证器的环境配置。
+
+数据库 migration 已撤销未来 `public` schema 函数的默认执行权限；每个需要公开的 RPC 都必须在创建后显式、审阅并授予目标角色。当前仍未连接远端 Supabase、未配置生产 Vercel，也未实现登录、业务表或业务 RLS。
 
 ## 目录结构
 

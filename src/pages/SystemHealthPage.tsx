@@ -27,7 +27,7 @@ type HealthPageState =
 
 type SystemHealthPageProps = {
   resolveConfig?: () => SupabaseConfigResult
-  resolveClient?: (result: SupabaseConfigResult) => SupabaseClientResolution
+  resolveClient?: () => SupabaseClientResolution
   runHealthCheck?: (
     client: SupabaseClient<Database>,
     signal: AbortSignal,
@@ -64,10 +64,7 @@ export function SystemHealthPage({
 }: SystemHealthPageProps) {
   const configResult = useMemo(() => resolveConfig(), [resolveConfig])
   const clientResult = useMemo(
-    () =>
-      configResult.status === 'configured'
-        ? resolveClient(configResult)
-        : undefined,
+    () => (configResult.status === 'configured' ? resolveClient() : undefined),
     [configResult, resolveClient],
   )
   const [attempt, setAttempt] = useState(0)

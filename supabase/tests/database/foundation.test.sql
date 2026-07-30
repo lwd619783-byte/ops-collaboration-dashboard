@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(16);
+select plan(24);
 
 select ok(
   to_regprocedure('public.set_updated_at()') is not null,
@@ -138,6 +138,97 @@ select is(
   0,
   'foundation migration creates no business tables'
 );
+
+create function public.default_privilege_probe()
+returns text
+language sql
+security invoker
+set search_path = pg_catalog
+as $function$
+  select 'probe-ok'::text;
+$function$;
+
+select ok(
+  to_regprocedure('public.default_privilege_probe()') is not null,
+  'default privilege probe exists inside the test transaction'
+);
+
+select ok(
+  not exists (
+    select 1
+    from pg_proc as procedure
+    cross join lateral aclexplode(
+      coalesce(
+        procedure.proacl,
+        acldefault('f', procedure.proowner)
+      )
+    ) as privilege
+    where procedure.oid =
+      to_regprocedure('public.default_privilege_probe()')
+      and privilege.grantee = 0
+      and privilege.privilege_type = 'EXECUTE'
+  ),
+  'PUBLIC cannot execute a newly created public function'
+);
+
+select ok(
+  not has_function_privilege(
+    'anon',
+    'public.default_privilege_probe()',
+    'execute'
+  ),
+  'anon cannot execute a newly created public function'
+);
+
+select ok(
+  not has_function_privilege(
+    'authenticated',
+    'public.default_privilege_probe()',
+    'execute'
+  ),
+  'authenticated cannot execute a newly created public function'
+);
+
+select ok(
+  not has_function_privilege(
+    'service_role',
+    'public.default_privilege_probe()',
+    'execute'
+  ),
+  'service_role cannot execute a newly created public function'
+);
+
+set local role anon;
+
+select throws_ok(
+  'select public.default_privilege_probe()',
+  '42501',
+  'permission denied for function default_privilege_probe',
+  'anon execution is denied before an explicit grant'
+);
+
+reset role;
+
+grant execute on function public.default_privilege_probe() to anon;
+
+select ok(
+  has_function_privilege(
+    'anon',
+    'public.default_privilege_probe()',
+    'execute'
+  ),
+  'an explicit grant allows anon to execute the probe'
+);
+
+set local role anon;
+
+select is(
+  public.default_privilege_probe(),
+  'probe-ok',
+  'anon can actually execute the probe after an explicit grant'
+);
+
+reset role;
 
 select * from finish();
 

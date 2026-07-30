@@ -1,9 +1,11 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { getSupabaseClient } from '@/lib/supabase/client'
+import type { SupabaseClientResolution } from '@/lib/supabase/client'
 import type { SupabaseConfigResult } from '@/lib/supabase/config'
 import { SystemHealthPage } from '@/pages/SystemHealthPage'
+import type { Database } from '@/types/database.generated'
 
 const configured: SupabaseConfigResult = {
   status: 'configured',
@@ -13,8 +15,12 @@ const configured: SupabaseConfigResult = {
   },
 }
 
-function resolveReadyClient() {
-  return getSupabaseClient(configured)
+const readyClient = {
+  rpc: vi.fn(),
+} as unknown as SupabaseClient<Database>
+
+function resolveReadyClient(): SupabaseClientResolution {
+  return { status: 'ready', client: readyClient }
 }
 
 describe('系统健康页面', () => {
@@ -33,15 +39,33 @@ describe('系统健康页面', () => {
   })
 
   it('检查期间复用加载状态组件', () => {
+    const resolveClient = vi.fn(resolveReadyClient)
     render(
       <SystemHealthPage
         resolveConfig={() => configured}
-        resolveClient={resolveReadyClient}
+        resolveClient={resolveClient}
         runHealthCheck={() => new Promise(() => undefined)}
       />,
     )
 
     expect(screen.getByRole('status')).toHaveTextContent('正在检查数据库连接')
+    expect(resolveClient).toHaveBeenCalledWith()
+  })
+
+  it('配置无效时不解析客户端', () => {
+    const resolveClient = vi.fn(resolveReadyClient)
+    render(
+      <SystemHealthPage
+        resolveConfig={() => ({
+          status: 'invalid',
+          message: '检测到不安全或无效的 Supabase 前端配置。',
+        })}
+        resolveClient={resolveClient}
+      />,
+    )
+
+    expect(screen.getByText('Supabase 配置无效')).toBeInTheDocument()
+    expect(resolveClient).not.toHaveBeenCalled()
   })
 
   it('成功时显示文字状态和数据库检查时间', async () => {

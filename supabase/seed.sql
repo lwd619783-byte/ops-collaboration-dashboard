@@ -1,0 +1,1 @@
+-- Task 1.1 intentionally contains no seed data or business tables.

@@ -158,6 +158,7 @@ a {
   gap: 1rem;
 }
 .card,
+.health-card,
 .empty-state,
 .error-state,
 .unauthorized-state,
@@ -169,6 +170,39 @@ a {
 }
 .card h3 {
   margin-top: 0;
+}
+.health-card {
+  display: grid;
+  gap: 1.25rem;
+}
+.health-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.health-heading h2 {
+  margin: 0;
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+}
+.health-details {
+  margin: 0;
+}
+.health-details > div {
+  display: grid;
+  gap: 0.35rem;
+  padding-top: 1rem;
+  border-top: 1px solid #dce3ed;
+}
+.health-details dt {
+  color: #526075;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+.health-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
 }
 .button {
   display: inline-flex;

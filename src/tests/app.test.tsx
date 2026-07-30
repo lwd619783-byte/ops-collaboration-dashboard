@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from '@/app/App'
 
 function navigate(path: string) {
@@ -16,6 +16,7 @@ function mobileDrawer() {
 
 describe('应用壳层与路由', () => {
   beforeEach(() => window.history.pushState({}, '', '/'))
+  afterEach(() => vi.unstubAllEnvs())
 
   it('显示导航并只标记当前页面', () => {
     render(<App />)
@@ -116,5 +117,16 @@ describe('应用壳层与路由', () => {
     expect(
       screen.getByRole('heading', { level: 1, name: '工作台' }),
     ).toBeInTheDocument()
+  })
+
+  it('系统健康路由使用集中标题并在无配置时安全降级', () => {
+    vi.stubEnv('VITE_SUPABASE_URL', '')
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', '')
+    window.history.pushState({}, '', '/system-health')
+    render(<App />)
+    expect(
+      screen.getByRole('heading', { level: 1, name: '系统健康' }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Supabase 尚未配置')).toBeInTheDocument()
   })
 })

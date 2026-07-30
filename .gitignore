@@ -9,6 +9,10 @@ coverage/
 .env.local
 .env.*.local
 
+# Supabase local state
+supabase/.temp/
+supabase/.branches/
+
 # Vercel local state
 .vercel/
 

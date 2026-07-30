@@ -11,6 +11,14 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset --local",
+    "db:test": "supabase test db",
+    "db:lint": "supabase db lint --local --fail-on warning",
+    "db:types": "node scripts/check-database-types.mjs --write",
+    "db:types:check": "node scripts/check-database-types.mjs",
+    "db:verify": "npm run db:reset && npm run db:test && npm run db:lint && npm run db:types:check",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -21,6 +29,7 @@
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.111.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router": "^8.3.0"
@@ -41,6 +50,7 @@
     "eslint-plugin-react-refresh": "^0.5.3",
     "jsdom": "^29.0.0",
     "prettier": "^3.9.6",
+    "supabase": "2.110.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",

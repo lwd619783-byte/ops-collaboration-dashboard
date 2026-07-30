@@ -1,7 +1,8 @@
 import {
   formatDateOnly,
   formatDateTime,
-  isDateValue,
+  isDateOnlyValue,
+  isDateTimeValue,
 } from '@/lib/dates/dateDisplay'
 export function DateDisplay({
   value,
@@ -16,9 +17,11 @@ export function DateDisplay({
     kind === 'date-only'
       ? formatDateOnly(value)
       : formatDateTime(value, timeZone)
+  const isValid =
+    kind === 'date-only'
+      ? isDateOnlyValue(value)
+      : isDateTimeValue(value, timeZone)
   return (
-    <time dateTime={isDateValue(value) ? (value ?? undefined) : undefined}>
-      {text}
-    </time>
+    <time dateTime={isValid ? (value ?? undefined) : undefined}>{text}</time>
   )
 }

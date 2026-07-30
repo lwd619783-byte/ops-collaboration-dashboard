@@ -22,11 +22,11 @@ export function SelectField({
       .filter(Boolean)
       .join(' ') || undefined
   return (
-    <label className="field" htmlFor={id}>
-      <span>
+    <div className="field">
+      <label htmlFor={id}>
         {label}
         {required && <span aria-label="必填"> *</span>}
-      </span>
+      </label>
       <select
         {...props}
         aria-describedby={describedBy}
@@ -42,6 +42,6 @@ export function SelectField({
           {error}
         </small>
       )}
-    </label>
+    </div>
   )
 }

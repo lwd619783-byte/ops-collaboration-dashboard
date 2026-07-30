@@ -1,7 +1,7 @@
-import { type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { type ComponentPropsWithRef, type ReactNode } from 'react'
 import { classNames } from '@/lib/classNames'
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+type ButtonProps = ComponentPropsWithRef<'button'> & {
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost'
   size?: 'md' | 'sm'
   loading?: boolean
@@ -14,6 +14,7 @@ export function Button({
   disabled,
   leading,
   loading = false,
+  ref,
   size = 'md',
   trailing,
   type = 'button',
@@ -31,6 +32,7 @@ export function Button({
         className,
       )}
       disabled={disabled || loading}
+      ref={ref}
       type={type}
     >
       {loading ? (

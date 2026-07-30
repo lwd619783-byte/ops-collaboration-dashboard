@@ -1,5 +1,8 @@
 const dateOnlyPattern = /^(\d{4})-(\d{2})-(\d{2})$/
-function validDateOnly(value: string) {
+const dateTimePattern =
+  /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/
+export function isDateOnlyValue(value?: string | null): value is string {
+  if (!value) return false
   const match = dateOnlyPattern.exec(value)
   if (!match) return false
   const [, year, month, day] = match
@@ -11,28 +14,40 @@ function validDateOnly(value: string) {
   )
 }
 export function formatDateOnly(value?: string | null) {
-  if (!value || !validDateOnly(value)) return '—'
-  const [, year, month, day] = dateOnlyPattern.exec(value) as RegExpExecArray
+  if (!isDateOnlyValue(value)) return '—'
+  const [year, month, day] = value.split('-')
   return `${year}年${Number(month)}月${Number(day)}日`
 }
 export function formatDateTime(
   value?: string | null,
   timeZone = 'Asia/Shanghai',
 ) {
-  if (!value || !/(Z|[+-]\d{2}:\d{2})$/.test(value)) return '—'
+  if (!isDateTimeValue(value, timeZone)) return '—'
   const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '—'
-  return new Intl.DateTimeFormat('zh-CN', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone,
-  }).format(date)
+  try {
+    return new Intl.DateTimeFormat('zh-CN', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone,
+    }).format(date)
+  } catch (error) {
+    if (error instanceof RangeError) return '—'
+    throw error
+  }
 }
-export function isDateValue(value?: string | null) {
-  return Boolean(
-    value &&
-    (validDateOnly(value) ||
-      (/(Z|[+-]\d{2}:\d{2})$/.test(value) &&
-        !Number.isNaN(new Date(value).getTime()))),
-  )
+
+export function isDateTimeValue(
+  value?: string | null,
+  timeZone = 'Asia/Shanghai',
+): value is string {
+  if (!value || !dateTimePattern.test(value)) return false
+  if (!isDateOnlyValue(value.slice(0, 10))) return false
+  if (Number.isNaN(new Date(value).getTime())) return false
+  try {
+    new Intl.DateTimeFormat('zh-CN', { timeZone })
+    return true
+  } catch (error) {
+    if (error instanceof RangeError) return false
+    throw error
+  }
 }

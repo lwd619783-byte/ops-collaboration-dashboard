@@ -21,11 +21,11 @@ export function InputField({
       .filter(Boolean)
       .join(' ') || undefined
   return (
-    <label className="field" htmlFor={id}>
-      <span>
+    <div className="field">
+      <label htmlFor={id}>
         {label}
         {required && <span aria-label="必填"> *</span>}
-      </span>
+      </label>
       <input
         {...props}
         aria-describedby={describedBy}
@@ -39,6 +39,6 @@ export function InputField({
           {error}
         </small>
       )}
-    </label>
+    </div>
   )
 }

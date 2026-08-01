@@ -4,7 +4,7 @@
 
 本项目采用 local-first migration：数据库结构先以版本化 SQL migration 在本地从空库重建、测试和生成类型，再进入远端审计与后续部署流程。这样可以让结构变更可复现、可审阅，并让前端使用与 migration 同源的 TypeScript 类型。
 
-Task 1.1 只建立基础设施、`set_updated_at()` 和匿名可调用的最小 `health_check()`。尚未实现登录、业务表、RLS 业务策略、Storage、Realtime、Edge Functions 或远端部署。本地配置关闭了 Studio、Realtime、Storage、Auth、Edge Runtime、Analytics 和本地 SMTP；数据库、Data API 与低权限健康 RPC 仍参与实际回归。
+Task 1.1 只建立基础设施、`set_updated_at()` 和匿名可调用的最小 `health_check()`。Task 1.2 在登录之前落地统一系统用户与多身份数据模型（`app_users` / `profiles` / `user_identities` / `identity_binding_challenges`）、解析函数（`resolve_app_user_id` / `current_app_user_id`）、RLS 与权限矩阵，以及对应的 pgTAP 与前端夹具测试；**仍不含登录页面、受保护路由或真实的绑定 / 认证 / 微信 / CloudBase 流程**。本地配置关闭了 Studio、Realtime、Storage、Auth、Edge Runtime、Analytics 和本地 SMTP；数据库、Data API 与低权限健康 RPC 仍参与实际回归。
 
 ## 环境要求
 
@@ -53,6 +53,16 @@ npm run db:lint
 每个数据库行为都应加入 `supabase/tests/database/` 下的 pgTAP 测试。测试必须放在 `begin` / `rollback` 边界内，并覆盖权限与实际返回值，不能只断言对象名称。
 
 `public` schema 中未来创建的函数默认不向 `PUBLIC`、`anon`、`authenticated` 或 `service_role` 开放执行权限。每个确需公开的 RPC 必须在函数创建后通过独立、可审阅的 migration 显式 `grant execute`；不能依赖 PostgreSQL 的函数默认权限。
+
+## 统一身份模型
+
+数据模型、解析边界、RLS 与权限矩阵的完整说明见 [统一身份模型](docs/identity-model.md)。相关产物：
+
+- Migration：`supabase/migrations/20260801120000_unified_user_identity_schema.sql`（表与枚举）、`20260801120100_unified_user_identity_security.sql`（解析函数、RLS、授权）；
+- pgTAP：`supabase/tests/database/identity_schema_constraints.test.sql`（`plan(33)`）、`supabase/tests/database/identity_resolution_rls.test.sql`（`plan(32)`）；
+- 前端夹具：`src/features/identity/fixtures.ts`、`src/tests/identity-fixtures.test.ts`。
+
+业务表只允许引用 `app_users.id`，绝不引用外部 ID，也绝不接受客户端传入的 `user_id` 或 subject；外部主体到内部用户的映射集中在 `resolve_app_user_id()`，调用方边界为 `current_app_user_id()`。
 
 ## 数据库类型
 

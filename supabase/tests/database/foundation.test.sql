@@ -126,6 +126,13 @@ select ok(
   'authenticated cannot execute set_updated_at'
 );
 
+-- The foundation migration itself introduces no business tables (only the
+-- set_updated_at and health_check helpers). Business tables are introduced by
+-- later, isolated feature migrations. This assertion tracks the cumulative
+-- business-table count of the current schema and MUST be bumped whenever a new
+-- business table is added by a subsequent task. At Task 1.2 the schema defines
+-- exactly four business tables: app_users, profiles, user_identities,
+-- identity_binding_challenges.
 select is(
   (
     select count(*)::integer
@@ -135,8 +142,8 @@ select is(
     where namespace.nspname = 'public'
       and relation.relkind in ('r', 'p')
   ),
-  0,
-  'foundation migration creates no business tables'
+  4,
+  'current schema defines exactly four business tables (foundation adds none)'
 );
 
 create function public.default_privilege_probe()

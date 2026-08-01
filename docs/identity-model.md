@@ -14,12 +14,12 @@
 
 四个表，全部位于 `public` schema，全部启用 RLS。
 
-| 表                            | 角色             | 关键约束                                                                                                                                                                                                       |
-| ----------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app_users`                   | 内部业务用户主体 | 受控状态枚举 `app_user_status`；`merged_into_user_id` 自引用 `RESTRICT`；状态与 `disabled_at` 一致性 CHECK；`status='merged'` 当且仅当 `merged_into_user_id` 非空                                              |
-| `profiles`                    | 公开档案，一对一 | `user_id` 为主键且引用 `app_users` `CASCADE`；`display_name` 非空且 ≤120；`contact_info` 必须为 JSON 对象                                                                                                      |
-| `user_identities`             | 外部身份绑定     | `(provider, provider_tenant, provider_subject)` **非部分**唯一约束；`user_id` 引用 `app_users` **`RESTRICT`**；`verified_at` / `revoked_at` / `last_used_at` 单向状态；绑定主体字段不可修改；行不可物理删除    |
-| `identity_binding_challenges` | 一次性绑定挑战   | 仅存 `challenge_hash`（**小写** SHA-256 hex，CHECK `^[0-9a-f]{64}$`），**不存原始 code / token / secret**；`created_by` 引用 `app_users` `RESTRICT`；`target_user_id` 引用 `app_users` `CASCADE`；状态不可回退 |
+| 表                            | 角色             | 关键约束                                                                                                                                                                                                                    |
+| ----------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app_users`                   | 内部业务用户主体 | 受控状态枚举 `app_user_status`；`merged_into_user_id` 自引用 `RESTRICT`；状态与 `disabled_at` 一致性 CHECK；`status='merged'` 当且仅当 `merged_into_user_id` 非空                                                           |
+| `profiles`                    | 公开档案，一对一 | `user_id` 为主键且引用 `app_users` `CASCADE`；`display_name` 非空且 ≤120；`contact_info` 必须为 JSON 对象                                                                                                                   |
+| `user_identities`             | 外部身份绑定     | `(provider, provider_tenant, provider_subject)` **非部分**唯一约束；`user_id` 引用 `app_users` **`RESTRICT`**；`verified_at` / `revoked_at` / `last_used_at` 单向状态；绑定主体字段不可修改；行不可物理删除                 |
+| `identity_binding_challenges` | 一次性绑定挑战   | 仅存 `challenge_hash`（**小写** SHA-256 hex，CHECK `^[0-9a-f]{64}$`），**不存原始 code / token / secret**；`created_by` 与 `target_user_id` 均引用 `app_users` **`RESTRICT`**（两个用户外键均不允许级联删除）；状态不可回退 |
 
 受控枚举：
 
@@ -33,6 +33,12 @@
 - 绑定主体与归属字段（`id` / `user_id` / `provider` / `provider_tenant` / `provider_subject` / `created_at`）由触发器强制不可修改；
 - 单向状态：`verified_at` 只能 `null → 时间`（设置一次）；`revoked_at` 只能 `null → 时间`（不可清空 / 改写）；`last_used_at` 不得倒退；`updated_at` 由 `set_updated_at` 维护；
 - 行不可物理删除（双层：`service_role` 无 `DELETE` 授权 + `BEFORE DELETE` 触发器拒绝）。
+
+`identity_binding_challenges` 同样是**只追加**的：
+
+- **两个用户外键（`target_user_id`、`created_by`）均为 `RESTRICT`**：删除目标用户或创建人时不会级联删除挑战行——挑战是高风险状态记录，只能通过独立、单独审计的 migration 或运维流程清理，普通业务 API 无法删除（`BEFORE DELETE` 触发器拒绝 + `service_role` 无 `DELETE` 授权，级联删除同样无法完成）；
+- **主键 `id` 不可修改**：连同 `challenge_hash` / `target_user_id` / `provider` / `provider_tenant` / `created_by` / `created_at` 由触发器强制不可变（不可重新换键、换 hash、换目标、换创建人）；
+- 状态不可回退：`attempt_count` 只增不减；`consumed_at` 只能 `null → 时间`（不可清空 / 改写）；`expires_at` 不得延长（过期挑战不可复活）；`max_attempts` 创建后不得增加；`updated_at` 由 `set_updated_at` 维护。
 
 ## 统一身份边界
 
@@ -75,12 +81,12 @@
 
 ## 测试
 
-- `supabase/tests/database/identity_schema_constraints.test.sql`（`plan(71)`）：表 / 枚举存在性、主键、外键删除策略（含 `user_identities.user_id` 为 `RESTRICT`）、`set_updated_at` 触发器、唯一约束、空白 tenant / subject、`app_users` 状态组合（self-merge 使用全新 UUID 的 UPDATE 以命中 `no-self-merge` CHECK）、`identity_binding_challenges` 无原始 secret 列、**小写 SHA-256 hex 格式**（拒绝短值 / 非 hex / 大写）、两张身份表的**不可变 / 单向状态 / 禁删触发器**（SQLSTATE `27000`）、删除有身份历史的 `app_user` 被 `RESTRICT` 拒绝（`23503`）、触发器函数不向任何客户端角色开放执行。
-- `supabase/tests/database/identity_resolution_rls.test.sql`（`plan(66)`）：**provider 隔离回归**（同一 `(tenant, subject)` 在 `supabase_auth` 与 `wechat_miniprogram` 下分别解析到不同用户；该测试在旧的 `i.provider = provider` 遮蔽实现下必失败）、**verified_at 生效规则**（未验证 → null，验证后 → 用户，撤销后 → null）、身份唯一性（含已撤销行仍占位）、JWT 解析矩阵、RLS 真实拒绝与**属主复核**（A 改自己后以数据库所有者确认已生效；A 改 B 后以属主确认 B 未变）、函数元数据（`stable`、`SECURITY DEFINER`、**`proconfig = {search_path=""}` 封闭断言**）、函数/表权限矩阵（`PUBLIC` / `anon` / `authenticated` / `service_role`，授权断言走 `information_schema` 以避免超户干扰）。
-- 测试使用会话级辅助函数 `pg_temp.sqlstate_of(sql)` 精确断言 SQLSTATE，避免依赖 pgTAP 的消息匹配语义。
-- 前端夹具 `src/features/identity/fixtures.ts` 与 `src/tests/identity-fixtures.test.ts`（17 项）：使用生成的 **`Tables` / `TablesInsert`** 类型，校验枚举、UUID、状态 / `disabled_at` 一致性、**全部身份（含已撤销）唯一性**、跨 provider 同 `(tenant, subject)` 隔离夹具、64 位小写 hex `challenge_hash`（正则与数据库 CHECK 一致）、引用完整性、`revoked_at` 时间一致，并断言所有 `provider_tenant` 均为已知虚构值、不含邮箱 / 手机号形态。
+- `supabase/tests/database/identity_schema_constraints.test.sql`（`plan(77)`）：表 / 枚举存在性、主键、外键删除策略（含 `user_identities.user_id` 与 challenge **两个用户外键均为 `RESTRICT`**）、`set_updated_at` 触发器、唯一约束、空白 tenant / subject、`app_users` 状态组合（self-merge 使用全新 UUID 的 UPDATE 以命中 `no-self-merge` CHECK）、`identity_binding_challenges` 无原始 secret 列、**小写 SHA-256 hex 格式**（拒绝短值 / 非 hex / 大写）、两张身份表的**不可变 / 单向状态 / 禁删触发器**（SQLSTATE `27000`，含 **challenge 主键 `id` 不可变**）、删除有身份历史的 `app_user` 被 `RESTRICT` 拒绝（`23503`）、**真实父记录删除行为**（目标用户 T 与创建人 C 不同，删除 T 返回 `23503` 且挑战行与创建人 C 均保留，证明失败来自 target FK 而非 created_by FK）、允许操作通过 `pg_temp.rows_affected` 证明命中恰一行并由属主复核值变化、触发器函数不向任何客户端角色开放执行。
+- `supabase/tests/database/identity_resolution_rls.test.sql`（`plan(74)`）：**provider 隔离回归**（同一 `(tenant, subject)` 在 `supabase_auth` 与 `wechat_miniprogram` 下分别解析到不同用户；该测试在旧的 `i.provider = provider` 遮蔽实现下必失败）、**verified_at 生效规则**（未验证 → null，验证后 → 用户，撤销后 → null）、身份唯一性（含已撤销行仍占位）、JWT 解析矩阵、RLS 真实拒绝与**属主复核**（A 改自己后以数据库所有者确认已生效；A 改 B 后以属主确认 B 未变）、函数元数据（`stable`、`SECURITY DEFINER`、**`proconfig = {search_path=""}` 封闭断言**）、函数/表权限矩阵（`PUBLIC` / `anon` / `authenticated` / `service_role`，授权断言走 `information_schema` 以避免超户干扰）、**service_role 真实行正向测试**（显式固定 id 的身份与挑战，初始 `verified_at` 为 null；service_role 更新后由属主确认底层值真实变化，杜绝零行 UPDATE 假阳性；service_role 对真实身份行 `DELETE` 被权限拒绝 `42501`，属主 `DELETE` 被触发器拒绝 `27000`）。
+- 测试使用会话级辅助函数 `pg_temp.sqlstate_of(sql)`（精确断言 SQLSTATE）与 `pg_temp.rows_affected(sql)`（返回受影响行数，-1 表示抛错，证明语句真实命中目标行）；辅助函数仅存在于测试事务的 `pg_temp`，不进入生产 migration。
+- 前端夹具 `src/features/identity/fixtures.ts` 与 `src/tests/identity-fixtures.test.ts`（21 项）：使用生成的 **`Tables` / `TablesInsert`** 类型，校验枚举、**所有 UUID 字段为合法小写十六进制格式（无 `/i` 掩盖，app_users.id / merged_into_user_id / profiles.user_id / user_identities.id / user_identities.user_id / challenge.target_user_id / challenge.created_by）**、状态 / `disabled_at` 一致性、**全部身份（含已撤销）唯一性**、跨 provider 同 `(tenant, subject)` 隔离夹具、64 位小写 hex `challenge_hash`（正则与数据库 CHECK 一致）、引用完整性、`revoked_at` 时间一致，并断言所有 `provider_tenant` 均为已知虚构值、不含邮箱 / 手机号形态。
 
-所有夹具均为虚构数据：无真实 AppID、OpenID、手机号、JWT、绑定码或密钥；UUID 与 issuer / appid 均带 `fictional` 标记。
+所有夹具均为虚构数据：无真实 AppID、OpenID、手机号、JWT、绑定码或密钥；UUID 为确定性、合法、全局唯一的测试值（不内嵌 `fictional` 文本标记），issuer / tenant / subject 使用明显虚构标识。
 
 ## 明确未实现
 

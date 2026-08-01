@@ -10,8 +10,9 @@ import {
   userIdentityFixtures,
 } from '@/features/identity/fixtures'
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+// Strict lowercase hex UUID: must match the fixtures' deterministic test
+// values exactly. No /i flag — uppercase hex is not accepted.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 // Every provider_tenant used by the fixtures must be an obvious fictional
 // literal — no real issuer domains or WeChat AppIDs.
@@ -31,6 +32,13 @@ function expectReferencesKnownUser(id: string, label: string) {
   ).toBe(true)
 }
 
+function expectLowercaseHexUuid(value: string, label: string) {
+  expect(
+    UUID_RE.test(value),
+    `${label} ${value} must be a lowercase hex UUID`,
+  ).toBe(true)
+}
+
 describe('统一身份模型测试夹具', () => {
   describe('app_users 夹具', () => {
     it('所有状态都是受控枚举值', () => {
@@ -39,9 +47,20 @@ describe('统一身份模型测试夹具', () => {
       }
     })
 
-    it('id 都是合法的 UUID', () => {
+    it('id 都是合法的小写十六进制 UUID', () => {
       for (const user of appUserFixtures) {
-        expect(user.id).toMatch(UUID_RE)
+        expectLowercaseHexUuid(user.id, 'app_users.id')
+      }
+    })
+
+    it('merged_into_user_id 非空时是合法的小写十六进制 UUID', () => {
+      for (const user of appUserFixtures) {
+        if (user.merged_into_user_id !== null) {
+          expectLowercaseHexUuid(
+            user.merged_into_user_id,
+            'app_users.merged_into_user_id',
+          )
+        }
       }
     })
 
@@ -82,6 +101,12 @@ describe('统一身份模型测试夹具', () => {
         expectReferencesKnownUser(profile.user_id, 'profile.user_id')
       }
     })
+
+    it('user_id 是合法的小写十六进制 UUID', () => {
+      for (const profile of profileFixtures) {
+        expectLowercaseHexUuid(profile.user_id, 'profiles.user_id')
+      }
+    })
   })
 
   describe('user_identities 夹具', () => {
@@ -101,6 +126,13 @@ describe('统一身份模型测试夹具', () => {
     it('user_id 必须引用已知的 app_users.id', () => {
       for (const identity of userIdentityFixtures) {
         expectReferencesKnownUser(identity.user_id, 'user_identity.user_id')
+      }
+    })
+
+    it('id 与 user_id 都是合法的小写十六进制 UUID', () => {
+      for (const identity of userIdentityFixtures) {
+        expectLowercaseHexUuid(identity.id, 'user_identities.id')
+        expectLowercaseHexUuid(identity.user_id, 'user_identities.user_id')
       }
     })
 
@@ -167,6 +199,16 @@ describe('统一身份模型测试夹具', () => {
           'challenge.target_user_id',
         )
         expectReferencesKnownUser(challenge.created_by, 'challenge.created_by')
+      }
+    })
+
+    it('target_user_id 与 created_by 都是合法的小写十六进制 UUID', () => {
+      for (const challenge of identityBindingChallengeInsertFixtures) {
+        expectLowercaseHexUuid(
+          challenge.target_user_id,
+          'challenge.target_user_id',
+        )
+        expectLowercaseHexUuid(challenge.created_by, 'challenge.created_by')
       }
     })
   })

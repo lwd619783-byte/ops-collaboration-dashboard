@@ -18,9 +18,30 @@ $function$;
 
 grant execute on function pg_temp.sqlstate_of(text) to public;
 
+-- Row-count capture helper (see schema-constraints test): runs p_sql and
+-- returns the number of affected rows, or -1 when it raises. Lets "allowed"
+-- tests prove the statement really hit exactly the intended row(s).
+create function pg_temp.rows_affected(p_sql text)
+returns integer
+language plpgsql
+as $function$
+declare
+  v_rows integer;
+begin
+  execute p_sql;
+  get diagnostics v_rows = row_count;
+  return v_rows;
+exception
+  when others then
+    return -1;
+end;
+$function$;
+
+grant execute on function pg_temp.rows_affected(text) to public;
+
 -- All data below is fictional. No real AppID, OpenID, phone number, JWT,
 -- binding code or personal information is used.
-select plan(66);
+select plan(74);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures (inserted as the postgres owner, bypassing RLS; rolled back).
@@ -60,6 +81,32 @@ insert into public.user_identities (user_id, provider, provider_tenant, provider
 update public.user_identities set revoked_at = now()
   where user_id = '11111111-1111-1111-1111-111111111111'
     and provider_tenant = 'rev_tenant' and provider_subject = 'rev_subject';
+
+-- Deterministic rows for the service_role positive tests below: explicit,
+-- fixed ids so every UPDATE/DELETE targets a real row (no zero-row false
+-- positives). The identity starts unverified (verified_at null) so the
+-- service_role can legally move it to a timestamp once.
+insert into public.user_identities (
+  id, user_id, provider, provider_tenant, provider_subject,
+  verified_at, last_used_at, revoked_at, created_at, updated_at
+) values (
+  'e1111111-1111-1111-1111-111111111111',
+  '66666666-6666-6666-6666-666666666666',
+  'supabase_auth', 'sr_tenant', 'sr_subject',
+  null, null, null, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00'
+);
+
+insert into public.identity_binding_challenges (
+  id, target_user_id, provider, provider_tenant, challenge_hash,
+  expires_at, attempt_count, max_attempts, created_by, created_at, updated_at
+) values (
+  'f3333333-3333-3333-3333-333333333333',
+  '11111111-1111-1111-1111-111111111111', 'supabase_auth', 'sr_tenant',
+  'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+  '2099-01-01T00:00:00+00:00', 0, 5,
+  '22222222-2222-2222-2222-222222222222',
+  '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00'
+);
 
 -- ---------------------------------------------------------------------------
 -- 7.1 Provider isolation regression.
@@ -413,20 +460,87 @@ select is(
   array['attempt_count','consumed_at','expires_at','max_attempts']::text[],
   'service_role can UPDATE only the state columns on identity_binding_challenges');
 
--- Real execution as service_role: status moves are allowed, physical deletion
--- is blocked by the trigger (the DELETE grant is absent regardless).
+-- Real execution as service_role on DETERMINISTIC rows (fixed ids inserted
+-- above). Every "allowed" mutation proves it hit exactly one real row and the
+-- owner verifies the underlying value actually changed afterwards — a zero-row
+-- UPDATE would fail these assertions instead of passing vacuously.
 set local role service_role;
-select ok(
+select is(
+  pg_temp.rows_affected($sql$
+    update public.user_identities set verified_at = '2026-01-02T00:00:00+00:00'::timestamptz
+     where id = 'e1111111-1111-1111-1111-111111111111'
+  $sql$),
+  1,
+  'service_role update of verified_at hits exactly one real identity row');
+reset role;
+select is(
+  (select verified_at from public.user_identities
+    where id = 'e1111111-1111-1111-1111-111111111111'),
+  '2026-01-02T00:00:00+00:00'::timestamptz,
+  'owner confirms verified_at really changed to the value service_role set');
+set local role service_role;
+select is(
+  pg_temp.rows_affected($sql$
+    update public.user_identities set last_used_at = '2026-01-03T00:00:00+00:00'::timestamptz
+     where id = 'e1111111-1111-1111-1111-111111111111'
+  $sql$),
+  1,
+  'service_role update of last_used_at hits exactly one real identity row');
+reset role;
+select is(
+  (select last_used_at from public.user_identities
+    where id = 'e1111111-1111-1111-1111-111111111111'),
+  '2026-01-03T00:00:00+00:00'::timestamptz,
+  'owner confirms last_used_at really changed to the value service_role set');
+set local role service_role;
+select is(
+  pg_temp.rows_affected($sql$
+    update public.user_identities set revoked_at = '2026-01-04T00:00:00+00:00'::timestamptz
+     where id = 'e1111111-1111-1111-1111-111111111111'
+  $sql$),
+  1,
+  'service_role update of revoked_at hits exactly one real identity row');
+reset role;
+select is(
+  (select revoked_at from public.user_identities
+    where id = 'e1111111-1111-1111-1111-111111111111'),
+  '2026-01-04T00:00:00+00:00'::timestamptz,
+  'owner confirms revoked_at really changed to the value service_role set');
+
+-- service_role positive UPDATE on a real challenge row (attempt_count 0 -> 1),
+-- verified by the owner afterwards.
+set local role service_role;
+select is(
+  pg_temp.rows_affected($sql$
+    update public.identity_binding_challenges set attempt_count = 1
+     where id = 'f3333333-3333-3333-3333-333333333333'
+  $sql$),
+  1,
+  'service_role update of challenge attempt_count hits exactly one real row');
+reset role;
+select is(
+  (select attempt_count from public.identity_binding_challenges
+    where id = 'f3333333-3333-3333-3333-333333333333'),
+  1,
+  'owner confirms challenge attempt_count really changed to 1');
+
+-- Deletion of a REAL identity row: service_role is denied by missing DELETE
+-- privilege (42501); the database owner is denied by the append-only trigger
+-- (27000). Both assertions fail if the target row does not exist.
+set local role service_role;
+select is(
   pg_temp.sqlstate_of($sql$
-    update public.user_identities set revoked_at = now()
-     where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
-  $sql$) is null,
-  'service_role can move the one-way status fields (set revoked_at)');
-select ok(
+    delete from public.user_identities where id = 'e1111111-1111-1111-1111-111111111111'
+  $sql$),
+  '42501',
+  'service_role DELETE on a real identity row is denied by missing privilege');
+reset role;
+select is(
   pg_temp.sqlstate_of($sql$
-    delete from public.user_identities where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
-  $sql$) is not null,
-  'service_role cannot physically delete identity history (privilege or trigger)');
+    delete from public.user_identities where id = 'e1111111-1111-1111-1111-111111111111'
+  $sql$),
+  '27000',
+  'owner DELETE on a real identity row is rejected by the append-only trigger');
 reset role;
 
 select * from finish();

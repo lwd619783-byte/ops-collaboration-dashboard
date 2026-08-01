@@ -20,9 +20,30 @@ $function$;
 
 grant execute on function pg_temp.sqlstate_of(text) to public;
 
+-- Row-count capture helper: runs p_sql and returns the number of affected
+-- rows, or -1 when it raises. Lets "allowed" tests prove the statement really
+-- hit exactly the intended row(s) instead of silently updating zero rows.
+create function pg_temp.rows_affected(p_sql text)
+returns integer
+language plpgsql
+as $function$
+declare
+  v_rows integer;
+begin
+  execute p_sql;
+  get diagnostics v_rows = row_count;
+  return v_rows;
+exception
+  when others then
+    return -1;
+end;
+$function$;
+
+grant execute on function pg_temp.rows_affected(text) to public;
+
 -- All fixtures and DDL changes live in this transaction and roll back at the
 -- end. No real subjects, AppIDs, OpenIDs, phone numbers or personal data.
-select plan(71);
+select plan(77);
 
 -- ---------------------------------------------------------------------------
 -- 1. Tables and controlled enumerations exist
@@ -75,9 +96,12 @@ select is(
   (select confdeltype::text from pg_constraint where conname = 'user_identities_user_id_fkey'),
   'r', 'user_identities user_id restricts deletion'
 );
+-- Both challenge user FKs must restrict: deleting the target user must never
+-- cascade-remove a challenge row (challenges are append-only and carry a
+-- physical-deletion trigger, so CASCADE could never complete anyway).
 select is(
   (select confdeltype::text from pg_constraint where conname = 'identity_binding_challenges_target_user_id_fkey'),
-  'c', 'challenges target_user_id cascades on user deletion'
+  'r', 'challenges target_user_id restricts deletion'
 );
 select is(
   (select confdeltype::text from pg_constraint where conname = 'identity_binding_challenges_created_by_fkey'),
@@ -132,10 +156,13 @@ insert into public.user_identities (
   now(), now()
 );
 
+-- Deterministic challenge row with an explicit id so every immutability test
+-- below targets a real, known row.
 insert into public.identity_binding_challenges (
-  target_user_id, provider, provider_tenant, challenge_hash, expires_at,
+  id, target_user_id, provider, provider_tenant, challenge_hash, expires_at,
   attempt_count, created_by
 ) values (
+  'd1111111-1111-1111-1111-111111111111',
   '11111111-1111-1111-1111-111111111111', 'supabase_auth', 'tenant-x',
   'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
   now() + interval '10 minutes', 1, '11111111-1111-1111-1111-111111111111'
@@ -373,13 +400,19 @@ select is(
   $sql$),
   '27000', 'verified_at cannot be cleared once set');
 
--- revoked_at: null -> timestamp is allowed (proven below), then irreversible.
-select ok(
-  pg_temp.sqlstate_of($sql$
+-- revoked_at: null -> timestamp is allowed and must hit exactly one real row,
+-- then it becomes irreversible (proven by the owner-verification below).
+select is(
+  pg_temp.rows_affected($sql$
     update public.user_identities set revoked_at = now()
      where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
-  $sql$) is null,
-  'revoked_at can be set from null');
+  $sql$),
+  1,
+  'setting revoked_at updates exactly one real identity row');
+select ok(
+  (select revoked_at is not null from public.user_identities
+    where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  'owner confirms revoked_at was really set on the identity row');
 select is(
   pg_temp.sqlstate_of($sql$
     update public.user_identities set revoked_at = null
@@ -415,97 +448,97 @@ select is(
 
 -- ---------------------------------------------------------------------------
 -- 9. identity_binding_challenges immutability / one-way-state guards
+--    (all statements target the deterministic challenge row d1111111-...)
 -- ---------------------------------------------------------------------------
 select is(
   pg_temp.sqlstate_of($sql$
+    update public.identity_binding_challenges set id = gen_random_uuid()
+     where id = 'd1111111-1111-1111-1111-111111111111'
+  $sql$),
+  '27000', 'challenge id is immutable');
+select is(
+  pg_temp.sqlstate_of($sql$
     update public.identity_binding_challenges set challenge_hash = gen_random_uuid()::text
-     where created_by = '11111111-1111-1111-1111-111111111111'
-       and provider_tenant = 'tenant-x'
+     where id = 'd1111111-1111-1111-1111-111111111111'
   $sql$),
   '27000', 'challenge_hash is immutable');
 select is(
   pg_temp.sqlstate_of($sql$
     update public.identity_binding_challenges set target_user_id = '22222222-2222-2222-2222-222222222222'
-     where created_by = '11111111-1111-1111-1111-111111111111'
-       and provider_tenant = 'tenant-x'
+     where id = 'd1111111-1111-1111-1111-111111111111'
   $sql$),
   '27000', 'challenge target_user_id is immutable');
 select is(
   pg_temp.sqlstate_of($sql$
     update public.identity_binding_challenges set provider = 'wechat_miniprogram'
-     where created_by = '11111111-1111-1111-1111-111111111111'
-       and provider_tenant = 'tenant-x'
+     where id = 'd1111111-1111-1111-1111-111111111111'
   $sql$),
   '27000', 'challenge provider is immutable');
 select is(
   pg_temp.sqlstate_of($sql$
     update public.identity_binding_challenges set provider_tenant = 'other-tenant'
-     where created_by = '11111111-1111-1111-1111-111111111111'
-       and provider_tenant = 'tenant-x'
+     where id = 'd1111111-1111-1111-1111-111111111111'
   $sql$),
   '27000', 'challenge provider_tenant is immutable');
 select is(
   pg_temp.sqlstate_of($sql$
     update public.identity_binding_challenges set created_by = '22222222-2222-2222-2222-222222222222'
-     where created_by = '11111111-1111-1111-1111-111111111111'
-       and provider_tenant = 'tenant-x'
+     where id = 'd1111111-1111-1111-1111-111111111111'
   $sql$),
   '27000', 'challenge created_by is immutable');
 select is(
   pg_temp.sqlstate_of($sql$
     update public.identity_binding_challenges set created_at = now() - interval '1 day'
-     where created_by = '11111111-1111-1111-1111-111111111111'
-       and provider_tenant = 'tenant-x'
+     where id = 'd1111111-1111-1111-1111-111111111111'
   $sql$),
   '27000', 'challenge created_at is immutable');
 select is(
   pg_temp.sqlstate_of($sql$
     update public.identity_binding_challenges set attempt_count = attempt_count - 1
-     where created_by = '11111111-1111-1111-1111-111111111111'
-       and provider_tenant = 'tenant-x'
+     where id = 'd1111111-1111-1111-1111-111111111111'
   $sql$),
   '27000', 'attempt_count cannot decrease');
--- consumed_at: null -> timestamp allowed, then irreversible.
-select ok(
-  pg_temp.sqlstate_of($sql$
+-- consumed_at: null -> timestamp allowed on exactly one real row, then
+-- irreversible (proven by the owner-verification below).
+select is(
+  pg_temp.rows_affected($sql$
     update public.identity_binding_challenges set consumed_at = now()
-     where created_by = '11111111-1111-1111-1111-111111111111'
-       and provider_tenant = 'tenant-x'
-  $sql$) is null,
-  'consumed_at can be set from null');
+     where id = 'd1111111-1111-1111-1111-111111111111'
+  $sql$),
+  1,
+  'setting consumed_at updates exactly one real challenge row');
+select ok(
+  (select consumed_at is not null from public.identity_binding_challenges
+    where id = 'd1111111-1111-1111-1111-111111111111'),
+  'owner confirms consumed_at was really set on the challenge row');
 select is(
   pg_temp.sqlstate_of($sql$
     update public.identity_binding_challenges set consumed_at = null
-     where created_by = '11111111-1111-1111-1111-111111111111'
-       and provider_tenant = 'tenant-x'
+     where id = 'd1111111-1111-1111-1111-111111111111'
   $sql$),
   '27000', 'consumed_at cannot be cleared once set');
 select is(
   pg_temp.sqlstate_of($sql$
     update public.identity_binding_challenges set consumed_at = now() + interval '1 hour'
-     where created_by = '11111111-1111-1111-1111-111111111111'
-       and provider_tenant = 'tenant-x'
+     where id = 'd1111111-1111-1111-1111-111111111111'
   $sql$),
   '27000', 'consumed_at cannot be rewritten once set');
 select is(
   pg_temp.sqlstate_of($sql$
     update public.identity_binding_challenges set expires_at = now() + interval '1 day'
-     where created_by = '11111111-1111-1111-1111-111111111111'
-       and provider_tenant = 'tenant-x'
+     where id = 'd1111111-1111-1111-1111-111111111111'
   $sql$),
   '27000', 'expires_at cannot be extended');
 select is(
   pg_temp.sqlstate_of($sql$
     update public.identity_binding_challenges set max_attempts = max_attempts + 1
-     where created_by = '11111111-1111-1111-1111-111111111111'
-       and provider_tenant = 'tenant-x'
+     where id = 'd1111111-1111-1111-1111-111111111111'
   $sql$),
   '27000', 'max_attempts cannot increase');
 select is(
   pg_temp.sqlstate_of($sql$
     delete from public.identity_binding_challenges
-     where created_by = '11111111-1111-1111-1111-111111111111'
-       and provider_tenant = 'tenant-x'
+     where id = 'd1111111-1111-1111-1111-111111111111'
   $sql$),
   '27000', 'challenge rows cannot be physically deleted');
 
@@ -534,6 +567,38 @@ select ok(
                and a.grantee in ('anon'::regrole, 'authenticated'::regrole, 'service_role'::regrole)
                and a.privilege_type = 'EXECUTE'),
   'anon/authenticated/service_role have no execute on identity_binding_challenges_immutable');
+
+-- ---------------------------------------------------------------------------
+-- 11. Real parent-record deletion behavior (not just pg_constraint metadata).
+--     T is the challenge target, C a DIFFERENT creator user. Deleting T must
+--     fail with 23503 because of the target FK RESTRICT — the created_by FK
+--     (pointing at C, which still exists) cannot be the failing constraint.
+-- ---------------------------------------------------------------------------
+insert into public.app_users (id, status) values
+  ('99999999-9999-9999-9999-999999999999', 'active');
+insert into public.identity_binding_challenges (
+  id, target_user_id, provider, provider_tenant, challenge_hash, expires_at, created_by
+) values (
+  'f2222222-2222-2222-2222-222222222222',
+  '99999999-9999-9999-9999-999999999999', 'supabase_auth', 'tenant-x',
+  '9999999999999999999999999999999999999999999999999999999999999999',
+  now() + interval '10 minutes', '22222222-2222-2222-2222-222222222222'
+);
+select is(
+  pg_temp.sqlstate_of($sql$
+    delete from public.app_users where id = '99999999-9999-9999-9999-999999999999'
+  $sql$),
+  '23503', 'deleting the challenge target user is blocked by the target FK RESTRICT');
+select is(
+  (select count(*) from public.identity_binding_challenges
+    where target_user_id = '99999999-9999-9999-9999-999999999999'
+      and created_by = '22222222-2222-2222-2222-222222222222'),
+  1::bigint,
+  'the challenge row survives the blocked delete (no cascade)');
+select is(
+  (select count(*) from public.app_users where id = '22222222-2222-2222-2222-222222222222'),
+  1::bigint,
+  'the creator user survives the blocked delete (created_by FK not implicated)');
 
 select * from finish();
 rollback;

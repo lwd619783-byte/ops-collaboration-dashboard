@@ -2,9 +2,11 @@
  * Fictional test fixtures for the unified user / multi-identity data model.
  *
  * These values exist ONLY for unit tests. They contain no real people, units,
- * AppIDs, OpenIDs, phone numbers, JWTs, binding codes or secrets. The UUIDs and
- * issuer/appid strings use obvious `fictional` markers so they can never be
- * mistaken for production data. Keep them deterministic so tests stay stable.
+ * AppIDs, OpenIDs, phone numbers, JWTs, binding codes or secrets. All UUIDs are
+ * deterministic, lowercase, valid hex test values (each is globally unique and
+ * never embeds a "fictional" text marker); issuer/tenant/subject strings use
+ * obvious fictional literals so they can never be mistaken for production
+ * data. Keep them deterministic so tests stay stable.
  */
 
 import type { Tables, TablesInsert } from '@/types/database.generated'
@@ -148,7 +150,7 @@ export const userIdentityFixtures: Tables<'user_identities'>[] = [
     updated_at: '2026-01-03T00:00:00+00:00',
   },
   {
-    id: 'r1111111-1111-1111-1111-111111111111',
+    id: 'd1111111-1111-1111-1111-111111111111',
     user_id: '11111111-1111-1111-1111-111111111111',
     provider: 'supabase_auth',
     provider_tenant: 'rev_tenant',
@@ -163,7 +165,7 @@ export const userIdentityFixtures: Tables<'user_identities'>[] = [
   // different users under two different providers. Provider is part of the
   // uniqueness key and of resolution — these rows must never collapse.
   {
-    id: 'i1111111-1111-1111-1111-111111111111',
+    id: 'e1111111-1111-1111-1111-111111111111',
     user_id: '11111111-1111-1111-1111-111111111111',
     provider: 'supabase_auth',
     provider_tenant: 'iso_tenant',
@@ -175,7 +177,7 @@ export const userIdentityFixtures: Tables<'user_identities'>[] = [
     updated_at: '2026-01-01T00:00:00+00:00',
   },
   {
-    id: 'i2222222-2222-2222-2222-222222222222',
+    id: 'f1111111-1111-1111-1111-111111111111',
     user_id: '22222222-2222-2222-2222-222222222222',
     provider: 'wechat_miniprogram',
     provider_tenant: 'iso_tenant',

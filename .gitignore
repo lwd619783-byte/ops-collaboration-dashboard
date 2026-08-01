@@ -16,6 +16,9 @@ supabase/.branches/
 # Vercel local state
 .vercel/
 
+# WorkBuddy local state
+.workbuddy/
+
 # Logs and temporary files
 *.log
 *.tmp

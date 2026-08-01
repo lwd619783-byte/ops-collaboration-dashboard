@@ -154,7 +154,11 @@ comment on column public.user_identities.provider_subject is
 
 create table public.identity_binding_challenges (
   id uuid primary key default gen_random_uuid(),
-  target_user_id uuid not null references public.app_users (id) on delete cascade,
+  -- RESTRICT (not CASCADE): a challenge row must never be silently removed by
+  -- deleting the target user; challenges are append-only and require an
+  -- explicit, separately-audited cleanup path. The DELETE trigger below also
+  -- rejects physical deletion, so CASCADE could never complete anyway.
+  target_user_id uuid not null references public.app_users (id) on delete restrict,
   provider public.identity_provider not null,
   provider_tenant text not null,
   challenge_hash text not null,
@@ -182,7 +186,9 @@ create table public.identity_binding_challenges (
 );
 
 comment on table public.identity_binding_challenges is
-  'Server-side one-time account-binding challenges. Stores only SHA-256 digests; no raw secrets.';
+  'Server-side one-time account-binding challenges. Stores only SHA-256 digests; no raw secrets. '
+  'Both user FKs (target_user_id, created_by) are RESTRICT; rows are append-only and '
+  'cannot be physically deleted (trigger), and the challenge id is immutable.';
 comment on column public.identity_binding_challenges.challenge_hash is
   'Lowercase SHA-256 hex digest (64 chars) of the binding challenge; the raw value is never persisted.';
 
@@ -287,8 +293,10 @@ begin
       using errcode = '27000';
   end if;
 
-  -- Challenge identity/ownership fields are immutable after creation.
-  if new.challenge_hash is distinct from old.challenge_hash
+  -- Challenge identity/ownership fields are immutable after creation,
+  -- including the primary key id (no re-keying of a challenge).
+  if new.id is distinct from old.id
+     or new.challenge_hash is distinct from old.challenge_hash
      or new.target_user_id is distinct from old.target_user_id
      or new.provider is distinct from old.provider
      or new.provider_tenant is distinct from old.provider_tenant

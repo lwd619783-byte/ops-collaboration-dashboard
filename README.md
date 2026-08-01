@@ -1,16 +1,16 @@
 # 运维协同看板
 
-> 当前代码已包含 Task 0.1 工程基线以及 Task 0.2 设计系统和响应式页面骨架。尚未接入登录、数据库或真实业务数据；后续页面必须复用现有 AppLayout 与基础 UI 组件。正式上线仍以独立远端审计、PR CI 和 Squash 合并为准。
+> Task 0.2 设计系统和响应式页面骨架已经封板。Task 1.1 当前提供可复现的本地 Supabase migration、类型生成、数据库测试与系统健康页；尚未接入登录、业务表或真实业务数据。正式上线仍以独立远端审计、PR CI 和 Squash 合并为准。
 
 一个面向互联网部署的轻量化运维协同看板前端工程。
 
 ## 当前状态
 
-已建立 Task 0.1 工程基线：可运行的 React 单页应用、基础布局、首页与 404 页面、自动化检查、GitHub Actions 和 Vercel SPA 配置均已建立。正式完成以远端独立审计和 PR 合并为准。
+Task 0.1 工程基线和 Task 0.2 设计系统已建立。Task 1.1 增加 Supabase JavaScript 客户端、本地 CLI 项目、基础 migration、pgTAP、生成数据库类型、类型漂移门禁、独立数据库 CI，以及 `/system-health` 健康页。正式完成以远端独立审计和 PR 合并为准。
 
 ## 第一阶段边界
 
-当前仅提供工程基线与静态占位页面，不包含登录、数据库、Supabase、项目/成员/模块/任务管理、提醒、个人待办、日志或模拟后端与业务数据。
+当前数据库只包含通用 `updated_at` trigger function 与不读取业务数据的健康检查 RPC，不包含登录、profiles、工作空间、项目/成员/模块/任务管理、提醒、个人待办、业务审计日志或真实业务数据。
 
 ## 技术栈
 
@@ -24,6 +24,7 @@
 
 - Node.js 22.22.0 或更高版本
 - npm 10 或更高版本
+- Docker Desktop 或兼容 Docker API 的容器运行时（数据库开发需要）
 
 ## 本地运行
 
@@ -38,6 +39,15 @@ npm run dev
 npm run build
 npm run preview
 ```
+
+需要验证数据库或系统健康页时，先启动本地 Supabase：
+
+```bash
+npm run db:start
+npm run db:verify
+```
+
+完整流程、环境变量边界与 migration 规范见 [Supabase 本地开发](docs/supabase-development.md)。
 
 ## 质量检查
 
@@ -57,7 +67,11 @@ npm run check
 
 ## 环境变量
 
-将 `.env.example` 复制为本地 `.env` 后按需调整。当前唯一示例变量是 `VITE_APP_NAME`，应用不依赖它即可启动。不要在仓库提交真实密钥、令牌、账号或绝对路径；`.env`、`.env.local` 与 `.env.*.local` 已被忽略。
+将 `.env.example` 复制为本地 `.env.local` 后按需调整。所有 `.env` 和 `.env.[mode]` 文件均默认忽略，`.env.example` 是唯一允许提交的环境示例。应用不依赖 Supabase 配置也可启动；未配置时系统健康页会显示安全的未配置状态。
+
+Vite 会在构建阶段把使用到的 `VITE_*` 值写入客户端包，因此生产环境只能配置 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_PUBLISHABLE_KEY`。部分配置、无效 URL、secret key、service-role JWT 或高权限数据库变量会让 Vite 在启动或构建前直接失败，错误不会输出变量值。客户端工厂不接受调用方传入的 URL 或 key，只能读取并使用通过共享验证器的环境配置。
+
+数据库 migration 已撤销未来 `public` schema 函数的默认执行权限；每个需要公开的 RPC 都必须在创建后显式、审阅并授予目标角色。当前仍未连接远端 Supabase、未配置生产 Vercel，也未实现登录、业务表或业务 RLS。
 
 ## 目录结构
 
@@ -84,4 +98,4 @@ src/
 
 ## 当前未实现功能
 
-本仓库尚未实现任何业务能力；后续仅在新的、明确授权的任务中增加设计系统、项目协同、任务管理、提醒及相关能力。
+本仓库尚未实现登录、RLS 业务表、项目协同、任务管理、提醒或远端 Supabase 部署；这些能力只能在新的、明确授权的任务中增加。

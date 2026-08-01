@@ -7,6 +7,7 @@ export const appNavigation = [
   { label: '个人空间', path: '/personal', title: '个人空间' },
   { label: '成员管理', path: '/members', title: '成员管理' },
   { label: '设置', path: '/settings', title: '设置' },
+  { label: '系统健康', path: '/system-health', title: '系统健康' },
 ] as const
 
 export type AppNavigationItem = (typeof appNavigation)[number]

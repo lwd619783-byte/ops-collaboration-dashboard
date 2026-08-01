@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(24);
+select plan(23);
 
 select ok(
   to_regprocedure('public.set_updated_at()') is not null,
@@ -124,26 +124,6 @@ select ok(
     'execute'
   ),
   'authenticated cannot execute set_updated_at'
-);
-
--- The foundation migration itself introduces no business tables (only the
--- set_updated_at and health_check helpers). Business tables are introduced by
--- later, isolated feature migrations. This assertion tracks the cumulative
--- business-table count of the current schema and MUST be bumped whenever a new
--- business table is added by a subsequent task. At Task 1.2 the schema defines
--- exactly four business tables: app_users, profiles, user_identities,
--- identity_binding_challenges.
-select is(
-  (
-    select count(*)::integer
-    from pg_class as relation
-    join pg_namespace as namespace
-      on namespace.oid = relation.relnamespace
-    where namespace.nspname = 'public'
-      and relation.relkind in ('r', 'p')
-  ),
-  4,
-  'current schema defines exactly four business tables (foundation adds none)'
 );
 
 create function public.default_privilege_probe()

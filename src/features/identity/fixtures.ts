@@ -159,6 +159,33 @@ export const userIdentityFixtures: Tables<'user_identities'>[] = [
     created_at: '2026-01-01T00:00:00+00:00',
     updated_at: '2026-01-10T00:00:00+00:00',
   },
+  // Provider isolation pair: the SAME (tenant, subject) is bound to two
+  // different users under two different providers. Provider is part of the
+  // uniqueness key and of resolution — these rows must never collapse.
+  {
+    id: 'i1111111-1111-1111-1111-111111111111',
+    user_id: '11111111-1111-1111-1111-111111111111',
+    provider: 'supabase_auth',
+    provider_tenant: 'iso_tenant',
+    provider_subject: 'iso_subject',
+    verified_at: '2026-01-01T00:00:00+00:00',
+    last_used_at: null,
+    revoked_at: null,
+    created_at: '2026-01-01T00:00:00+00:00',
+    updated_at: '2026-01-01T00:00:00+00:00',
+  },
+  {
+    id: 'i2222222-2222-2222-2222-222222222222',
+    user_id: '22222222-2222-2222-2222-222222222222',
+    provider: 'wechat_miniprogram',
+    provider_tenant: 'iso_tenant',
+    provider_subject: 'iso_subject',
+    verified_at: '2026-01-02T00:00:00+00:00',
+    last_used_at: null,
+    revoked_at: null,
+    created_at: '2026-01-02T00:00:00+00:00',
+    updated_at: '2026-01-02T00:00:00+00:00',
+  },
 ]
 
 /**

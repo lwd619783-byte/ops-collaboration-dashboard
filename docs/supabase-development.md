@@ -58,11 +58,11 @@ npm run db:lint
 
 数据模型、解析边界、RLS 与权限矩阵的完整说明见 [统一身份模型](docs/identity-model.md)。相关产物：
 
-- Migration：`supabase/migrations/20260801120000_unified_user_identity_schema.sql`（表与枚举）、`20260801120100_unified_user_identity_security.sql`（解析函数、RLS、授权）；
-- pgTAP：`supabase/tests/database/identity_schema_constraints.test.sql`（`plan(33)`）、`supabase/tests/database/identity_resolution_rls.test.sql`（`plan(32)`）；
+- Migration：`supabase/migrations/20260801120000_unified_user_identity_schema.sql`（表、枚举、约束、只追加/单向状态触发器）、`20260801120100_unified_user_identity_security.sql`（解析函数、RLS、最小权限授权）；
+- pgTAP：`supabase/tests/database/identity_schema_constraints.test.sql`（`plan(71)`）、`supabase/tests/database/identity_resolution_rls.test.sql`（`plan(66)`）；
 - 前端夹具：`src/features/identity/fixtures.ts`、`src/tests/identity-fixtures.test.ts`。
 
-业务表只允许引用 `app_users.id`，绝不引用外部 ID，也绝不接受客户端传入的 `user_id` 或 subject；外部主体到内部用户的映射集中在 `resolve_app_user_id()`，调用方边界为 `current_app_user_id()`。
+业务表只允许引用 `app_users.id`，绝不引用外部 ID，也绝不接受客户端传入的 `user_id` 或 subject；外部主体到内部用户的映射集中在 `resolve_app_user_id()`（参数 `p_provider` / `p_tenant` / `p_subject`，避免同名遮蔽），调用方边界为 `current_app_user_id()`。解析要求身份已 `verified_at`、未撤销且用户 `active`。所有 `SECURITY DEFINER` 与触发器函数使用封闭的 `set search_path = ''`，并全部以 `public.` / `pg_catalog.` 限定；`user_identities` 绑定主体不可修改、撤销不可逆、行不可物理删除（`service_role` 无 `DELETE`/`ALL`，仅保留 SELECT / INSERT / 受限状态列 UPDATE）。
 
 ## 数据库类型
 

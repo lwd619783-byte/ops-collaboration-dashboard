@@ -8,35 +8,42 @@
 
 -- ---------------------------------------------------------------------------
 -- resolve_app_user_id: internal, restricted resolver.
--- Maps (provider, tenant, subject) to the active internal user id, or null.
--- Granted ONLY to service_role — never to anon/authenticated/public. This is
--- the single place that translates an external subject into a business key.
+-- Maps (provider, tenant, subject) to the active, VERIFIED internal user id,
+-- or null. Granted ONLY to service_role — never to anon/authenticated/public.
+-- This is the single place that translates an external subject into a business
+-- key.
 -- ---------------------------------------------------------------------------
 
 create function public.resolve_app_user_id(
-  provider public.identity_provider,
-  tenant text,
-  subject text
+  p_provider public.identity_provider,
+  p_tenant text,
+  p_subject text
 )
 returns uuid
 language sql
+stable
 security definer
-set search_path = pg_catalog, public
+set search_path = ''
 as $function$
   select u.id
   from public.user_identities as i
   join public.app_users as u on u.id = i.user_id
-  where i.provider = provider
-    and i.provider_tenant = tenant
-    and i.provider_subject = subject
+  where i.provider = p_provider
+    and i.provider_tenant = p_tenant
+    and i.provider_subject = p_subject
+    and i.verified_at is not null
     and i.revoked_at is null
-    and u.status = 'active'
-  limit 1;
+    and u.status = 'active';
 $function$;
 
 comment on function public.resolve_app_user_id(public.identity_provider, text, text) is
-  'Internal resolver: (provider, tenant, subject) -> active app_users.id or null. '
-  'SECURITY DEFINER; execute granted to service_role only.';
+  'Internal resolver: (provider, tenant, subject) -> active, verified app_users.id or null. '
+  'Parameters are prefixed p_ so they cannot be shadowed by same-named columns in the SQL '
+  'body. The non-partial unique(provider, provider_tenant, provider_subject) constraint '
+  'guarantees at most one row, so no LIMIT is needed (omitting it also surfaces duplicate-'
+  'binding bugs in tests). SECURITY DEFINER with a closed search_path; execute is granted to '
+  'service_role only. It never accepts a client-supplied app_user_id and never resolves by '
+  'email, username or profile.';
 
 revoke execute on function public.resolve_app_user_id(public.identity_provider, text, text)
   from public, anon, authenticated;
@@ -57,16 +64,23 @@ grant execute on function public.resolve_app_user_id(public.identity_provider, t
 create function public.current_app_user_id()
 returns uuid
 language plpgsql
+stable
 security definer
-set search_path = pg_catalog, public
+set search_path = ''
 as $function$
 declare
-  v_claims json := null;
+  v_claims pg_catalog.json := null;
   v_subject text := '';
   v_issuer text := '';
 begin
   begin
-    v_claims := nullif(current_setting('request.jwt.claims', true), '')::json;
+    -- NULLIF/COALESCE are SQL grammar constructs (not pg_catalog functions) and
+    -- are unaffected by the closed search_path; current_setting/json are
+    -- pg_catalog-qualified.
+    v_claims := nullif(
+      pg_catalog.current_setting('request.jwt.claims', true),
+      ''
+    )::pg_catalog.json;
   exception
     when others then
       v_claims := null;
@@ -89,8 +103,9 @@ $function$;
 
 comment on function public.current_app_user_id() is
   'Resolves the JWT-authenticated caller to the internal app_users.id. '
-  'Returns null for unauthenticated, unbound, revoked, invited, suspended or merged users. '
-  'SECURITY DEFINER; granted to authenticated and service_role only.';
+  'Returns null for unauthenticated, unbound, unverified, revoked, invited, '
+  'suspended or merged users. SECURITY DEFINER with a closed search_path '
+  '(pg_catalog-qualified built-ins); granted to authenticated and service_role only.';
 
 revoke execute on function public.current_app_user_id() from public, anon;
 grant execute on function public.current_app_user_id() to authenticated, service_role;
@@ -126,8 +141,12 @@ create policy profiles_update_own on public.profiles
 -- denied by both RLS (no policy) and explicit privilege revocation below.
 
 -- ---------------------------------------------------------------------------
--- Table privileges: explicit, default-deny. service_role keeps full control
--- for admin/test paths; anon/authenticated get only what they need.
+-- Table privileges: explicit, default-deny. anon/authenticated get only what
+-- they need; service_role gets the MINIMUM privileges required by the
+-- server-side identity paths (no DELETE, no ALL, no rebinding of subjects or
+-- ownership). The append-only / one-way-state invariants are enforced by
+-- triggers for every role (including service_role), so the column grants here
+-- are a second line of defense, not the only one.
 -- ---------------------------------------------------------------------------
 
 -- app_users
@@ -148,10 +167,28 @@ grant update (
 ) on public.profiles to authenticated;
 grant all on public.profiles to service_role;
 
--- user_identities: never directly accessible to anon/authenticated.
-revoke all on public.user_identities from anon, authenticated;
-grant all on public.user_identities to service_role;
+-- user_identities: never directly accessible to anon/authenticated. service_role
+-- may insert new bindings and move only the one-way status columns
+-- (verified_at, last_used_at, revoked_at); it cannot DELETE history and cannot
+-- change id/user_id/provider/provider_tenant/provider_subject/created_at.
+revoke all on public.user_identities from public, anon, authenticated, service_role;
+grant select, insert on public.user_identities to service_role;
+grant update (
+  verified_at,
+  last_used_at,
+  revoked_at
+) on public.user_identities to service_role;
 
 -- identity_binding_challenges: never directly accessible to anon/authenticated.
-revoke all on public.identity_binding_challenges from anon, authenticated;
-grant all on public.identity_binding_challenges to service_role;
+-- service_role may create challenges and move only their state columns
+-- (attempt_count, consumed_at, expires_at, max_attempts); it cannot DELETE and
+-- cannot change challenge_hash/target_user_id/provider/provider_tenant/
+-- created_by/created_at.
+revoke all on public.identity_binding_challenges from public, anon, authenticated, service_role;
+grant select, insert on public.identity_binding_challenges to service_role;
+grant update (
+  attempt_count,
+  consumed_at,
+  expires_at,
+  max_attempts
+) on public.identity_binding_challenges to service_role;

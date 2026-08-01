@@ -10,6 +10,13 @@
 --     WeChat ids) are NEVER used as business keys and live only in
 --     user_identities.
 --   * Business tables must reference app_users.id, never an external id.
+--   * user_identities rows are append-only: binding identity/ownership fields
+--     are immutable, revocation (revoked_at) is one-way and irreversible, and
+--     rows are never physically deleted; the user_id FK is RESTRICT so an
+--     app_user with identity history cannot be deleted and cascade-removed.
+--   * Only a verified (verified_at not null), non-revoked identity of an active
+--     user resolves to an internal user id; an identity row existing does NOT
+--     mean the identity is effective.
 
 -- ---------------------------------------------------------------------------
 -- Controlled enumerations (stronger than free-text provider/status columns).
@@ -106,7 +113,7 @@ comment on column public.profiles.contact_info is
 
 create table public.user_identities (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references public.app_users (id) on delete cascade,
+  user_id uuid not null references public.app_users (id) on delete restrict,
   provider public.identity_provider not null,
   provider_tenant text not null,
   provider_subject text not null,
@@ -160,8 +167,8 @@ create table public.identity_binding_challenges (
   updated_at timestamptz not null default now(),
   constraint identity_binding_challenges_tenant_not_blank
     check (btrim(provider_tenant) <> ''),
-  constraint identity_binding_challenges_hash_length
-    check (char_length(challenge_hash) = 64),
+  constraint identity_binding_challenges_hash_hex
+    check (challenge_hash ~ '^[0-9a-f]{64}$'),
   constraint identity_binding_challenges_hash_unique
     unique (challenge_hash),
   constraint identity_binding_challenges_expires_after_created
@@ -177,7 +184,7 @@ create table public.identity_binding_challenges (
 comment on table public.identity_binding_challenges is
   'Server-side one-time account-binding challenges. Stores only SHA-256 digests; no raw secrets.';
 comment on column public.identity_binding_challenges.challenge_hash is
-  'SHA-256 hex digest (64 chars) of the binding challenge; the raw value is never persisted.';
+  'Lowercase SHA-256 hex digest (64 chars) of the binding challenge; the raw value is never persisted.';
 
 -- ---------------------------------------------------------------------------
 -- updated_at maintenance via the existing Task 1.1 trigger function.
@@ -200,3 +207,136 @@ create trigger user_identities_set_updated_at
 create trigger identity_binding_challenges_set_updated_at
   before update on public.identity_binding_challenges
   for each row execute function public.set_updated_at();
+
+-- ---------------------------------------------------------------------------
+-- Append-only / one-way-state integrity guards for the two identity tables.
+-- These enforce data invariants for EVERY role (including service_role) at the
+-- database layer: immutable binding/ownership fields, one-way verified_at /
+-- revoked_at / consumed_at transitions, monotonic counters, no physical
+-- deletion. Security invoker + empty search_path: no privilege escalation and
+-- no reliance on the caller's search_path. All rejections use the stable
+-- SQLSTATE 27000 (triggered_action_exception); messages are static and never
+-- interpolate provider subjects or other sensitive values.
+-- ---------------------------------------------------------------------------
+
+create function public.user_identities_immutable()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+begin
+  if tg_op = 'DELETE' then
+    raise exception 'user_identities rows are append-only and cannot be deleted'
+      using errcode = '27000';
+  end if;
+
+  -- Binding identity and ownership fields are immutable after creation.
+  if new.id is distinct from old.id
+     or new.user_id is distinct from old.user_id
+     or new.provider is distinct from old.provider
+     or new.provider_tenant is distinct from old.provider_tenant
+     or new.provider_subject is distinct from old.provider_subject
+     or new.created_at is distinct from old.created_at
+  then
+    raise exception 'binding identity fields are immutable'
+      using errcode = '27000';
+  end if;
+
+  -- verified_at: the only allowed transition is null -> a timestamp (set once).
+  if new.verified_at is distinct from old.verified_at
+     and not (old.verified_at is null and new.verified_at is not null)
+  then
+    raise exception 'verified_at can only move from null to a timestamp once'
+      using errcode = '27000';
+  end if;
+
+  -- revoked_at: the only allowed transition is null -> a timestamp (irreversible).
+  if new.revoked_at is distinct from old.revoked_at
+     and not (old.revoked_at is null and new.revoked_at is not null)
+  then
+    raise exception 'revoked_at can only be set once and never cleared'
+      using errcode = '27000';
+  end if;
+
+  -- last_used_at must never move backwards.
+  if old.last_used_at is not null
+     and (new.last_used_at is null or new.last_used_at < old.last_used_at)
+  then
+    raise exception 'last_used_at cannot move backwards'
+      using errcode = '27000';
+  end if;
+
+  return new;
+end;
+$function$;
+
+create trigger user_identities_immutable
+  before update or delete on public.user_identities
+  for each row execute function public.user_identities_immutable();
+
+create function public.identity_binding_challenges_immutable()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+begin
+  if tg_op = 'DELETE' then
+    raise exception 'binding challenges are append-only and cannot be deleted'
+      using errcode = '27000';
+  end if;
+
+  -- Challenge identity/ownership fields are immutable after creation.
+  if new.challenge_hash is distinct from old.challenge_hash
+     or new.target_user_id is distinct from old.target_user_id
+     or new.provider is distinct from old.provider
+     or new.provider_tenant is distinct from old.provider_tenant
+     or new.created_by is distinct from old.created_by
+     or new.created_at is distinct from old.created_at
+  then
+    raise exception 'binding challenge identity fields are immutable'
+      using errcode = '27000';
+  end if;
+
+  -- attempt_count may only increase.
+  if new.attempt_count < old.attempt_count then
+    raise exception 'attempt_count cannot decrease'
+      using errcode = '27000';
+  end if;
+
+  -- consumed_at: the only allowed transition is null -> a timestamp.
+  if new.consumed_at is distinct from old.consumed_at
+     and not (old.consumed_at is null and new.consumed_at is not null)
+  then
+    raise exception 'consumed_at can only be set once and never cleared'
+      using errcode = '27000';
+  end if;
+
+  -- An expired challenge must not be resurrected by extending expires_at.
+  if new.expires_at > old.expires_at then
+    raise exception 'expires_at cannot be extended'
+      using errcode = '27000';
+  end if;
+
+  -- max_attempts must not be raised after creation.
+  if new.max_attempts > old.max_attempts then
+    raise exception 'max_attempts cannot increase'
+      using errcode = '27000';
+  end if;
+
+  return new;
+end;
+$function$;
+
+create trigger identity_binding_challenges_immutable
+  before update or delete on public.identity_binding_challenges
+  for each row execute function public.identity_binding_challenges_immutable();
+
+-- The guard functions are invoked internally by triggers only; no role may call
+-- them directly. Task 1.1 already revoked default EXECUTE for new functions;
+-- make it explicit.
+revoke all on function public.user_identities_immutable()
+  from public, anon, authenticated, service_role;
+revoke all on function public.identity_binding_challenges_immutable()
+  from public, anon, authenticated, service_role;

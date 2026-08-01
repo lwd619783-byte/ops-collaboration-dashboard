@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  FICTIONAL_ISSUER,
+  FICTIONAL_WECHAT_APPID,
   VALID_APP_USER_STATUSES,
   VALID_IDENTITY_PROVIDERS,
   appUserFixtures,
@@ -10,6 +12,15 @@ import {
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// Every provider_tenant used by the fixtures must be an obvious fictional
+// literal — no real issuer domains or WeChat AppIDs.
+const FICTIONAL_TENANTS = new Set([
+  FICTIONAL_ISSUER,
+  FICTIONAL_WECHAT_APPID,
+  'rev_tenant',
+  'iso_tenant',
+])
 
 const appUserIds = new Set(appUserFixtures.map((u) => u.id))
 
@@ -93,31 +104,51 @@ describe('统一身份模型测试夹具', () => {
       }
     })
 
-    it('revoked_at 与是否撤销保持一致', () => {
-      for (const identity of userIdentityFixtures) {
-        if (identity.revoked_at === null) {
-          expect(identity.revoked_at).toBeNull()
-        } else {
-          expect(identity.revoked_at).not.toBeNull()
-        }
+    it('revoked_at 非空时满足时间一致且仅撤销行有值', () => {
+      const revokedRows = userIdentityFixtures.filter(
+        (identity) => identity.revoked_at !== null,
+      )
+      expect(revokedRows.length).toBe(1)
+      for (const identity of revokedRows) {
+        expect(identity.revoked_at).not.toBeNull()
+        expect(
+          new Date(identity.revoked_at as string).getTime(),
+        ).toBeGreaterThanOrEqual(new Date(identity.created_at).getTime())
       }
     })
 
-    it('未撤销身份在 (provider, tenant, subject) 上唯一', () => {
+    it('全部身份（含已撤销）在 (provider, tenant, subject) 上唯一', () => {
+      // Mirrors the non-partial unique constraint: revoked rows still occupy
+      // the key, so a revoked identity can never be rebound to another user.
       const seen = new Set<string>()
       for (const identity of userIdentityFixtures) {
-        if (identity.revoked_at !== null) continue
         const key = `${identity.provider}|${identity.provider_tenant}|${identity.provider_subject}`
-        expect(seen.has(key), `duplicate active identity ${key}`).toBe(false)
+        expect(seen.has(key), `duplicate identity key ${key}`).toBe(false)
         seen.add(key)
       }
+    })
+
+    it('跨 provider 的隔离夹具共享 (tenant, subject) 但归属不同用户', () => {
+      const isoRows = userIdentityFixtures.filter(
+        (identity) =>
+          identity.provider_tenant === 'iso_tenant' &&
+          identity.provider_subject === 'iso_subject',
+      )
+      expect(isoRows.length).toBe(2)
+      const providers = new Set(isoRows.map((row) => row.provider))
+      const users = new Set(isoRows.map((row) => row.user_id))
+      expect(providers.size).toBe(2)
+      expect(users.size).toBe(2)
+      expect(providers.has('supabase_auth')).toBe(true)
+      expect(providers.has('wechat_miniprogram')).toBe(true)
     })
   })
 
   describe('identity_binding_challenges 夹具', () => {
-    it('challenge_hash 是 64 位十六进制摘要', () => {
+    it('challenge_hash 是 64 位小写十六进制摘要', () => {
+      // Must match the database CHECK exactly: ^[0-9a-f]{64}$ (lowercase only).
       for (const challenge of identityBindingChallengeInsertFixtures) {
-        expect(challenge.challenge_hash).toMatch(/^[0-9a-f]{64}$/i)
+        expect(challenge.challenge_hash).toMatch(/^[0-9a-f]{64}$/)
       }
     })
 
@@ -141,11 +172,12 @@ describe('统一身份模型测试夹具', () => {
   })
 
   describe('不含真实数据', () => {
-    it('微信身份使用虚构 AppID 前缀', () => {
+    it('所有 provider_tenant 都是已知虚构值', () => {
       for (const identity of userIdentityFixtures) {
-        if (identity.provider === 'wechat_miniprogram') {
-          expect(identity.provider_tenant.startsWith('wx_fictional')).toBe(true)
-        }
+        expect(
+          FICTIONAL_TENANTS.has(identity.provider_tenant),
+          `provider_tenant ${identity.provider_tenant} must be fictional`,
+        ).toBe(true)
       }
     })
 

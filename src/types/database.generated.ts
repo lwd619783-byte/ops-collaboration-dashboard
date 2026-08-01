@@ -207,9 +207,9 @@ export type Database = {
       }
       resolve_app_user_id: {
         Args: {
-          provider: Database["public"]["Enums"]["identity_provider"]
-          subject: string
-          tenant: string
+          p_provider: Database["public"]["Enums"]["identity_provider"]
+          p_subject: string
+          p_tenant: string
         }
         Returns: string
       }

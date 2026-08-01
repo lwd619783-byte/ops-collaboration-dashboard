@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(24);
+select plan(23);
 
 select ok(
   to_regprocedure('public.set_updated_at()') is not null,
@@ -124,19 +124,6 @@ select ok(
     'execute'
   ),
   'authenticated cannot execute set_updated_at'
-);
-
-select is(
-  (
-    select count(*)::integer
-    from pg_class as relation
-    join pg_namespace as namespace
-      on namespace.oid = relation.relnamespace
-    where namespace.nspname = 'public'
-      and relation.relkind in ('r', 'p')
-  ),
-  0,
-  'foundation migration creates no business tables'
 );
 
 create function public.default_privilege_probe()

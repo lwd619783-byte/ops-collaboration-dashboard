@@ -1,16 +1,16 @@
 # 运维协同看板
 
-> Task 0.2 设计系统和响应式页面骨架已经封板。Task 1.1 当前提供可复现的本地 Supabase migration、类型生成、数据库测试与系统健康页；尚未接入登录、业务表或真实业务数据。正式上线仍以独立远端审计、PR CI 和 Squash 合并为准。
+> Task 0.2 设计系统和响应式页面骨架已经封板。Task 1.1 建立可复现的本地 Supabase migration、类型生成、数据库测试与系统健康页。Task 1.2 在登录之前落地统一系统用户与多身份数据模型（`app_users` / `profiles` / `user_identities` / `identity_binding_challenges` 及解析边界、RLS 与权限矩阵），但**不含登录页面、受保护路由或真实的绑定 / 认证 / 微信 / CloudBase 流程**，也不含真实业务数据。正式上线仍以独立远端审计、PR CI 和 Squash 合并为准。
 
 一个面向互联网部署的轻量化运维协同看板前端工程。
 
 ## 当前状态
 
-Task 0.1 工程基线和 Task 0.2 设计系统已建立。Task 1.1 增加 Supabase JavaScript 客户端、本地 CLI 项目、基础 migration、pgTAP、生成数据库类型、类型漂移门禁、独立数据库 CI，以及 `/system-health` 健康页。正式完成以远端独立审计和 PR 合并为准。
+Task 0.1 工程基线和 Task 0.2 设计系统已建立。Task 1.1 增加 Supabase JavaScript 客户端、本地 CLI 项目、基础 migration、pgTAP、生成数据库类型、类型漂移门禁、独立数据库 CI，以及 `/system-health` 健康页。Task 1.2 增加统一身份数据模型、解析函数、RLS 与权限矩阵，以及对应的 pgTAP 与前端夹具测试（详见 [统一身份模型](docs/identity-model.md)）。正式完成以远端独立审计和 PR 合并为准。
 
 ## 第一阶段边界
 
-当前数据库只包含通用 `updated_at` trigger function 与不读取业务数据的健康检查 RPC，不包含登录、profiles、工作空间、项目/成员/模块/任务管理、提醒、个人待办、业务审计日志或真实业务数据。
+当前数据库包含通用 `updated_at` trigger function、不读取业务数据的健康检查 RPC，以及 Task 1.2 的统一身份模型（`app_users`、`profiles`、`user_identities`、`identity_binding_challenges` 及相关解析函数与 RLS）。它**不包含**登录页面、受保护路由、真实的绑定 / 认证 / 微信 / CloudBase 流程、工作空间、项目 / 成员 / 模块 / 任务管理、提醒、个人待办、业务审计日志或真实业务数据。
 
 ## 技术栈
 
@@ -71,7 +71,7 @@ npm run check
 
 Vite 会在构建阶段把使用到的 `VITE_*` 值写入客户端包，因此生产环境只能配置 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_PUBLISHABLE_KEY`。部分配置、无效 URL、secret key、service-role JWT 或高权限数据库变量会让 Vite 在启动或构建前直接失败，错误不会输出变量值。客户端工厂不接受调用方传入的 URL 或 key，只能读取并使用通过共享验证器的环境配置。
 
-数据库 migration 已撤销未来 `public` schema 函数的默认执行权限；每个需要公开的 RPC 都必须在创建后显式、审阅并授予目标角色。当前仍未连接远端 Supabase、未配置生产 Vercel，也未实现登录、业务表或业务 RLS。
+数据库 migration 已撤销未来 `public` schema 函数的默认执行权限；每个需要公开的 RPC 都必须在创建后显式、审阅并授予目标角色。当前仍未连接远端 Supabase、未配置生产 Vercel，也未实现登录页面、受保护路由或真实的绑定 / 认证 / 微信 / CloudBase 流程。
 
 ## 目录结构
 
@@ -98,4 +98,4 @@ src/
 
 ## 当前未实现功能
 
-本仓库尚未实现登录、RLS 业务表、项目协同、任务管理、提醒或远端 Supabase 部署；这些能力只能在新的、明确授权的任务中增加。
+本仓库已实现身份模型的数据结构、解析边界与 RLS，但**尚未实现**登录页面、受保护路由、真实的绑定 / 认证 / 微信 / CloudBase 流程、项目协同、任务管理、提醒或远端 Supabase 部署；这些能力只能在新的、明确授权的任务中增加。

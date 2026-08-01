@@ -9,12 +9,195 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      [_ in never]: never
+      app_users: {
+        Row: {
+          created_at: string
+          disabled_at: string | null
+          id: string
+          merged_into_user_id: string | null
+          status: Database["public"]["Enums"]["app_user_status"]
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          disabled_at?: string | null
+          id?: string
+          merged_into_user_id?: string | null
+          status?: Database["public"]["Enums"]["app_user_status"]
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          disabled_at?: string | null
+          id?: string
+          merged_into_user_id?: string | null
+          status?: Database["public"]["Enums"]["app_user_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "app_users_merged_into_user_id_fkey"
+            columns: ["merged_into_user_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      identity_binding_challenges: {
+        Row: {
+          attempt_count: number
+          challenge_hash: string
+          consumed_at: string | null
+          created_at: string
+          created_by: string
+          expires_at: string
+          id: string
+          max_attempts: number
+          provider: Database["public"]["Enums"]["identity_provider"]
+          provider_tenant: string
+          target_user_id: string
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          challenge_hash: string
+          consumed_at?: string | null
+          created_at?: string
+          created_by: string
+          expires_at: string
+          id?: string
+          max_attempts?: number
+          provider: Database["public"]["Enums"]["identity_provider"]
+          provider_tenant: string
+          target_user_id: string
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          challenge_hash?: string
+          consumed_at?: string | null
+          created_at?: string
+          created_by?: string
+          expires_at?: string
+          id?: string
+          max_attempts?: number
+          provider?: Database["public"]["Enums"]["identity_provider"]
+          provider_tenant?: string
+          target_user_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "identity_binding_challenges_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "identity_binding_challenges_target_user_id_fkey"
+            columns: ["target_user_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          contact_info: Json | null
+          created_at: string
+          display_name: string
+          organization_name: string | null
+          title: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          contact_info?: Json | null
+          created_at?: string
+          display_name: string
+          organization_name?: string | null
+          title?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          avatar_url?: string | null
+          contact_info?: Json | null
+          created_at?: string
+          display_name?: string
+          organization_name?: string | null
+          title?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profiles_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_identities: {
+        Row: {
+          created_at: string
+          id: string
+          last_used_at: string | null
+          provider: Database["public"]["Enums"]["identity_provider"]
+          provider_subject: string
+          provider_tenant: string
+          revoked_at: string | null
+          updated_at: string
+          user_id: string
+          verified_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          last_used_at?: string | null
+          provider: Database["public"]["Enums"]["identity_provider"]
+          provider_subject: string
+          provider_tenant: string
+          revoked_at?: string | null
+          updated_at?: string
+          user_id: string
+          verified_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_used_at?: string | null
+          provider?: Database["public"]["Enums"]["identity_provider"]
+          provider_subject?: string
+          provider_tenant?: string
+          revoked_at?: string | null
+          updated_at?: string
+          user_id?: string
+          verified_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_identities_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      current_app_user_id: { Args: never; Returns: string }
       health_check: {
         Args: never
         Returns: {
@@ -22,9 +205,21 @@ export type Database = {
           status: string
         }[]
       }
+      resolve_app_user_id: {
+        Args: {
+          p_provider: Database["public"]["Enums"]["identity_provider"]
+          p_subject: string
+          p_tenant: string
+        }
+        Returns: string
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_user_status: "invited" | "active" | "suspended" | "merged"
+      identity_provider:
+        | "supabase_auth"
+        | "wechat_miniprogram"
+        | "enterprise_wechat"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -151,6 +346,13 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_user_status: ["invited", "active", "suspended", "merged"],
+      identity_provider: [
+        "supabase_auth",
+        "wechat_miniprogram",
+        "enterprise_wechat",
+      ],
+    },
   },
 } as const

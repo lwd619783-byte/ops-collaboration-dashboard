@@ -53,6 +53,16 @@ export function ProtectedRoute() {
     )
   }
 
+  if (status === 'authenticated_recovery_only') {
+    // A valid recovery (password reset) session that cannot resolve an
+    // internal identity yet. Do NOT show protected content, do NOT run an
+    // account-unavailable sign-out and do NOT show a permanent "signing out"
+    // state: send the user back to the reset-password page, which is a public
+    // route outside this guard, so no redirect loop is possible. The recovery
+    // marker stays untouched so the password form remains usable.
+    return <Navigate replace to="/reset-password" />
+  }
+
   if (status === 'authenticated_error') {
     return (
       <div className="route-loading">

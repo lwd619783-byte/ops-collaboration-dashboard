@@ -115,7 +115,20 @@ export function AuthProvider({
     authEpochRef.current += 1
   }, [])
 
-  const clearLocalAuthState = useCallback(() => {
+  /**
+   * ATOMIC "session is gone" transition (fix #1): clears EVERY piece of local
+   * auth state — appUser, appUserRef, profile, profileMissing, authError, the
+   * recovery marker + isRecoverySession — and sets status to `unauthenticated`.
+   * It first invalidates the auth epoch so every in-flight identity resolution
+   * becomes stale and can never re-write an authorized state afterwards.
+   *
+   * This must be used for session-loss detection (getSession() → null) and for
+   * the local half of every sign-out, so that a stale user's data can never
+   * survive a transition and a normal session expiry is never reported as an
+   * account being disabled.
+   */
+  const transitionToUnauthenticated = useCallback(() => {
+    invalidateAuthEpoch()
     setAppUser(null)
     appUserRef.current = null
     setProfile(null)
@@ -123,7 +136,7 @@ export function AuthProvider({
     setAuthError(null)
     clearRecoverySession()
     setStatus('unauthenticated')
-  }, [clearRecoverySession])
+  }, [clearRecoverySession, invalidateAuthEpoch])
 
   /** True when the resolution captured by `epoch` is still the latest one. */
   const isCurrentEpoch = useCallback(
@@ -151,23 +164,39 @@ export function AuthProvider({
    * Confirmed account-unavailable: the identity resolution returned a
    * definitive "no usable internal identity". Centralized sign-out lives here
    * (explicit local scope); route components must NOT sign out during render.
+   *
+   * Sign-out ordering (fix #2):
+   *   1. Invalidate the epoch and clear the local user data IMMEDIATELY — the
+   *      UI must never keep showing protected content while the network
+   *      sign-out is in flight, even if that call fails.
+   *   2. best-effort `signOutOfSupabase` afterwards.
+   *   3. After the await, finish the transition ONLY if this transition's
+   *      epoch is still current. If a new SIGNED_IN / PASSWORD_RECOVERY /
+   *      other authoritative event landed meanwhile, the new session owns the
+   *      state and this stale sign-out must NOT overwrite it.
    */
   const handleConfirmedUnavailable = useCallback(
     async (client: SupabaseClient<Database>) => {
       invalidateAuthEpoch()
+      const transitionEpoch = authEpochRef.current
+      // Local data (including the recovery marker) is cleared IMMEDIATELY so
+      // protected content never lingers while the network sign-out is in
+      // flight. The notice is kept so the login page can show the unified
+      // "account unavailable" message.
       setAuthError(null)
       setAppUser(null)
       appUserRef.current = null
       setProfile(null)
       setProfileMissing(false)
+      clearRecoverySession()
       setNotice(identityUnavailableMessage)
       setStatus('authenticated_unavailable')
       await signOutOfSupabase(client, SIGN_OUT_SCOPE)
-      if (!disposedRef.current) {
-        clearLocalAuthState()
+      if (isCurrentEpoch(transitionEpoch)) {
+        setStatus('unauthenticated')
       }
     },
-    [clearLocalAuthState, invalidateAuthEpoch],
+    [clearRecoverySession, invalidateAuthEpoch, isCurrentEpoch],
   )
 
   /**
@@ -209,7 +238,10 @@ export function AuthProvider({
       }
       const session = sessionResult.data?.session
       if (!session) {
-        setStatus('unauthenticated')
+        // Session is gone (expired / revoked / user deleted). Atomically clear
+        // EVERY piece of local auth state — never just flip the status, and
+        // never report a plain session expiry as an account being disabled.
+        transitionToUnauthenticated()
         return { ok: false, error: createSafeAuthError('session_expired') }
       }
 
@@ -225,9 +257,13 @@ export function AuthProvider({
       const appUserId = appUserIdResult.data
       if (!appUserId) {
         if (options?.isRecovery) {
-          // Recovery sessions may exist before an internal identity is bound;
-          // keep the recovery flow working without authorizing business pages.
-          setStatus('authenticated_unavailable')
+          // Recovery-only session: the user may set a new password even though
+          // no internal identity is resolvable yet. Keep the recovery session
+          // (marker + isRecoverySession) and mark the state explicitly so
+          // business routes redirect to /reset-password instead of showing a
+          // permanent "signing out" state or authorizing protected content.
+          // NO account-unavailable sign-out happens here.
+          setStatus('authenticated_recovery_only')
           return {
             ok: false,
             error: createSafeAuthError('identity_unavailable'),
@@ -280,7 +316,12 @@ export function AuthProvider({
       setStatus('authenticated_authorized')
       return { ok: true, data: undefined }
     },
-    [enterRecoverableError, handleConfirmedUnavailable, isCurrentEpoch],
+    [
+      enterRecoverableError,
+      handleConfirmedUnavailable,
+      isCurrentEpoch,
+      transitionToUnauthenticated,
+    ],
   )
 
   // Initial session restore + subscription.
@@ -315,7 +356,7 @@ export function AuthProvider({
       .then(({ data }) => {
         if (disposedRef.current) return
         if (!data.session) {
-          setStatus('unauthenticated')
+          transitionToUnauthenticated()
           return
         }
         const wasRecovery =
@@ -327,7 +368,7 @@ export function AuthProvider({
         })
       })
       .catch(() => {
-        if (!disposedRef.current) setStatus('unauthenticated')
+        if (!disposedRef.current) transitionToUnauthenticated()
       })
 
     const {
@@ -338,8 +379,7 @@ export function AuthProvider({
         // Token refresh failure, user deletion and explicit sign-out all land
         // here; the UI must drop protected content immediately and every
         // in-flight resolution becomes stale.
-        invalidateAuthEpoch()
-        clearLocalAuthState()
+        transitionToUnauthenticated()
         return
       }
       if (event === 'PASSWORD_RECOVERY') {
@@ -384,13 +424,13 @@ export function AuthProvider({
       subscription.unsubscribe()
     }
   }, [
-    clearLocalAuthState,
     clearRecoverySession,
     invalidateAuthEpoch,
     markRecoverySession,
     recoveryStorage,
     resolveClient,
     resolveIdentity,
+    transitionToUnauthenticated,
   ])
 
   const signIn = useCallback(
@@ -420,16 +460,25 @@ export function AuthProvider({
     [configState],
   )
 
+  /**
+   * Explicit user sign-out (fix #2). Ordering:
+   *   1. transitionToUnauthenticated() FIRST — atomically clears every piece
+   *      of local auth state and invalidates the epoch, so protected content
+   *      disappears immediately, before any network call.
+   *   2. best-effort Supabase sign-out afterwards (explicit local scope).
+   *   3. After the await, NO unconditional state write happens. If a new
+   *      SIGNED_IN (user B) landed while the network sign-out was in flight,
+   *      its epoch owns the state; this stale sign-out must not clear it.
+   *      The SIGNED_OUT event (if the client emits one) is idempotent with
+   *      the local transition we already performed.
+   */
   const signOut = useCallback(async () => {
     const client = clientRef.current
-    invalidateAuthEpoch()
+    transitionToUnauthenticated()
     if (client) {
       await signOutOfSupabase(client, SIGN_OUT_SCOPE)
     }
-    if (!disposedRef.current) {
-      clearLocalAuthState()
-    }
-  }, [clearLocalAuthState, invalidateAuthEpoch])
+  }, [transitionToUnauthenticated])
 
   const requestPasswordReset = useCallback(
     async (email: string): Promise<AuthServiceResult> => {
@@ -468,23 +517,28 @@ export function AuthProvider({
       const result = await updateUserPassword(client, password)
       if (!result.ok) return result
       // Clean up the recovery state and local session; the login page shows
-      // the success notice via `notice`. The epoch bump here invalidates any
-      // USER_UPDATED-triggered resolution that could otherwise re-authorize
-      // after the sign-out below.
+      // the success notice via `notice`.
+      // Ordering (fix #2): set the notice and atomically clear local state
+      // IMMEDIATELY (epoch bump included) so a USER_UPDATED-triggered
+      // resolution cannot re-authorize, then best-effort sign-out. After the
+      // await we only finish the transition if this epoch is still current —
+      // a new sign-in must not be cleared by this stale password-update exit.
       setNotice('密码已更新，请使用新密码登录。')
-      clearRecoverySession()
       invalidateAuthEpoch()
+      const transitionEpoch = authEpochRef.current
+      transitionToUnauthenticated()
       await signOutOfSupabase(client, SIGN_OUT_SCOPE)
-      if (!disposedRef.current) {
-        clearLocalAuthState()
+      if (isCurrentEpoch(transitionEpoch)) {
+        // Idempotent with the transition above / any SIGNED_OUT event.
+        setStatus('unauthenticated')
       }
       return { ok: true, data: undefined }
     },
     [
-      clearLocalAuthState,
-      clearRecoverySession,
       configState,
       invalidateAuthEpoch,
+      isCurrentEpoch,
+      transitionToUnauthenticated,
     ],
   )
 

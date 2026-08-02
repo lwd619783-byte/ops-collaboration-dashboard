@@ -407,3 +407,94 @@ describe('公开 404 与健康页', () => {
     expect(supabase.getSession).not.toHaveBeenCalled()
   })
 })
+
+describe('recovery-only 会话与受保护路由', () => {
+  beforeEach(() => window.sessionStorage.clear())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    window.sessionStorage.clear()
+  })
+
+  it('recovery-only 用户访问 /projects 跳转 /reset-password，不显示加载态或 AppLayout', async () => {
+    const supabase = createSupabaseClientMock({
+      hasSession: true,
+      currentAppUserId: null,
+    })
+    render(
+      <MemoryRouter initialEntries={['/projects']}>
+        <AppRouter
+          resolveClient={() => ({ status: 'ready', client: supabase.client })}
+        />
+      </MemoryRouter>,
+    )
+    // A valid recovery session exists but the internal identity cannot be
+    // resolved — this is the recovery-only state.
+    act(() => supabase.emitAuthEvent('PASSWORD_RECOVERY'))
+
+    // The user is redirected to /reset-password, which renders the password
+    // form (recovery marker kept), NOT a permanent "signing out" loader and
+    // NOT the business AppLayout.
+    expect(
+      await screen.findByRole('heading', { level: 2, name: '重置密码' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('正在安全退出')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('navigation', { name: '主导航' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { level: 1, name: '项目' }),
+    ).not.toBeInTheDocument()
+    // Recovery marker is preserved so the password form stays usable.
+    expect(window.sessionStorage.getItem('ops-auth-recovery-session')).toBe('1')
+    // No account-unavailable sign-out happens for a recovery-only session.
+    expect(supabase.signOut).not.toHaveBeenCalled()
+  })
+
+  it('recovery-only 用户不会形成 /reset-password 与业务路由的跳转循环', async () => {
+    const supabase = createSupabaseClientMock({
+      hasSession: true,
+      currentAppUserId: null,
+    })
+    render(
+      <MemoryRouter initialEntries={['/tasks']}>
+        <AppRouter
+          resolveClient={() => ({ status: 'ready', client: supabase.client })}
+        />
+      </MemoryRouter>,
+    )
+    act(() => supabase.emitAuthEvent('PASSWORD_RECOVERY'))
+
+    expect(
+      await screen.findByRole('heading', { level: 2, name: '重置密码' }),
+    ).toBeInTheDocument()
+    // The page stays on /reset-password (form visible), no loader, no loop.
+    expect(screen.queryByText('正在验证登录状态')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('navigation', { name: '主导航' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('普通非 recovery 的身份不可用账号仍执行原有退出流程', async () => {
+    const supabase = createSupabaseClientMock({
+      hasSession: true,
+      currentAppUserId: null,
+    })
+    render(
+      <MemoryRouter initialEntries={['/projects']}>
+        <AppRouter
+          resolveClient={() => ({ status: 'ready', client: supabase.client })}
+        />
+      </MemoryRouter>,
+    )
+    // NO PASSWORD_RECOVERY event: this is a plain unusable account.
+    expect(
+      await screen.findByText('该账号尚未激活或暂不可使用，请联系系统管理员。'),
+    ).toBeInTheDocument()
+    await waitFor(() => expect(supabase.signOut).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('heading', { level: 1, name: '项目' }),
+      ).not.toBeInTheDocument(),
+    )
+  })
+})

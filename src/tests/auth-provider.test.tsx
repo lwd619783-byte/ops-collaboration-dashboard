@@ -787,3 +787,400 @@ describe('AuthProvider 竞态防护（epoch）', () => {
     expect(result.current.appUser).toBeNull()
   })
 })
+
+describe('会话丢失时原子清理（无 SIGNED_OUT 事件）', () => {
+  beforeEach(() => window.sessionStorage.clear())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    window.sessionStorage.clear()
+  })
+
+  async function renderAuthorizedWithRecoveryMarker() {
+    const supabase = createSupabaseClientMock({ hasSession: true })
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <AuthProvider
+        resolveClient={() => ({ status: 'ready', client: supabase.client })}
+      >
+        {children}
+      </AuthProvider>
+    )
+    const { result } = renderHook(() => useAuth(), { wrapper })
+    await waitFor(() =>
+      expect(result.current.status).toBe('authenticated_authorized'),
+    )
+    expect(result.current.appUser?.id).toBe(fictionalAppUser.id)
+    expect(result.current.profile?.user_id).toBe(fictionalProfile.user_id)
+    // Establish a recovery marker that must also be cleared atomically.
+    act(() => supabase.emitAuthEvent('PASSWORD_RECOVERY'))
+    await waitFor(() => expect(result.current.isRecoverySession).toBe(true))
+    expect(window.sessionStorage.getItem(RECOVERY_SESSION_STORAGE_KEY)).toBe(
+      '1',
+    )
+    return { supabase, result }
+  }
+
+  it('TOKEN_REFRESHED 重检时 getSession 返回 null → 原子清理全部状态', async () => {
+    const { supabase, result } = await renderAuthorizedWithRecoveryMarker()
+    // Session is now gone; NO SIGNED_OUT event will be emitted.
+    supabase.getSession.mockResolvedValue({
+      data: { session: null },
+      error: null,
+    })
+
+    act(() => supabase.emitAuthEvent('TOKEN_REFRESHED'))
+    await waitFor(() => expect(result.current.status).toBe('unauthenticated'))
+
+    expect(result.current.appUser).toBeNull()
+    expect(result.current.profile).toBeNull()
+    expect(result.current.profileMissing).toBe(false)
+    expect(result.current.isRecoverySession).toBe(false)
+    expect(
+      window.sessionStorage.getItem(RECOVERY_SESSION_STORAGE_KEY),
+    ).toBeNull()
+    expect(result.current.notice).not.toBe(
+      '该账号尚未激活或暂不可使用，请联系系统管理员。',
+    )
+  })
+
+  it('USER_UPDATED 重检时 getSession 返回 null → 原子清理全部状态', async () => {
+    const { supabase, result } = await renderAuthorizedWithRecoveryMarker()
+    supabase.getSession.mockResolvedValue({
+      data: { session: null },
+      error: null,
+    })
+
+    act(() => supabase.emitAuthEvent('USER_UPDATED'))
+    await waitFor(() => expect(result.current.status).toBe('unauthenticated'))
+
+    expect(result.current.appUser).toBeNull()
+    expect(result.current.profile).toBeNull()
+    expect(result.current.profileMissing).toBe(false)
+    expect(result.current.isRecoverySession).toBe(false)
+    expect(
+      window.sessionStorage.getItem(RECOVERY_SESSION_STORAGE_KEY),
+    ).toBeNull()
+    expect(result.current.notice).not.toBe(
+      '该账号尚未激活或暂不可使用，请联系系统管理员。',
+    )
+  })
+
+  it('retryAuthCheck 重检时 getSession 返回 null → 原子清理全部状态', async () => {
+    const { supabase, result } = await renderAuthorizedWithRecoveryMarker()
+    supabase.getSession.mockResolvedValue({
+      data: { session: null },
+      error: null,
+    })
+
+    await act(async () => result.current.retryAuthCheck())
+    await waitFor(() => expect(result.current.status).toBe('unauthenticated'))
+
+    expect(result.current.appUser).toBeNull()
+    expect(result.current.profile).toBeNull()
+    expect(result.current.profileMissing).toBe(false)
+    expect(result.current.isRecoverySession).toBe(false)
+    expect(
+      window.sessionStorage.getItem(RECOVERY_SESSION_STORAGE_KEY),
+    ).toBeNull()
+    expect(result.current.notice).not.toBe(
+      '该账号尚未激活或暂不可使用，请联系系统管理员。',
+    )
+  })
+})
+
+describe('旧退出不能清除新的登录状态', () => {
+  beforeEach(() => window.sessionStorage.clear())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    window.sessionStorage.clear()
+  })
+
+  it('用户主动退出挂起期间新 SIGNED_IN 登录，旧退出完成不能清除新用户', async () => {
+    const supabase = createSupabaseClientMock({ hasSession: true })
+    // Defer the network sign-out so we can interleave a new sign-in.
+    let resolveSignOut: ((value: { error: null }) => void) | undefined
+    supabase.signOut.mockImplementation(
+      () =>
+        new Promise<{ error: null }>((resolve) => {
+          resolveSignOut = resolve
+        }),
+    )
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <AuthProvider
+        resolveClient={() => ({ status: 'ready', client: supabase.client })}
+      >
+        {children}
+      </AuthProvider>
+    )
+    const { result } = renderHook(() => useAuth(), { wrapper })
+    await waitFor(() =>
+      expect(result.current.status).toBe('authenticated_authorized'),
+    )
+    const userAId = result.current.appUser?.id
+    expect(userAId).toBe(fictionalAppUser.id)
+
+    // Start the sign-out; the local transition must happen immediately.
+    let signOutPromise: Promise<void> | undefined
+    await act(async () => {
+      signOutPromise = result.current.signOut()
+      await Promise.resolve()
+    })
+    expect(result.current.status).toBe('unauthenticated')
+    expect(result.current.appUser).toBeNull()
+    expect(supabase.signOut).toHaveBeenCalled()
+
+    // A new user B signs in while the old network sign-out is still pending.
+    const userBRow = {
+      ...fictionalAppUser,
+      id: '22222222-2222-2222-2222-222222222222',
+    }
+    supabase.rpc.mockImplementation(async (name: string) => {
+      if (name === 'current_app_user_id') {
+        return { data: userBRow.id, error: null }
+      }
+      return { data: null, error: null }
+    })
+    supabase.from.mockImplementation((table: 'app_users' | 'profiles') => {
+      if (table === 'app_users') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: userBRow, error: null }),
+            }),
+          }),
+          update: () => ({
+            eq: () => ({
+              select: () => ({
+                maybeSingle: async () => ({ data: null, error: null }),
+              }),
+            }),
+          }),
+        }
+      }
+      return {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({
+              data: { ...fictionalProfile, user_id: userBRow.id },
+              error: null,
+            }),
+          }),
+        }),
+        update: () => ({
+          eq: () => ({
+            select: () => ({
+              maybeSingle: async () => ({
+                data: { ...fictionalProfile, user_id: userBRow.id },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }
+    })
+    act(() => supabase.emitAuthEvent('SIGNED_IN'))
+    await waitFor(() =>
+      expect(result.current.status).toBe('authenticated_authorized'),
+    )
+    expect(result.current.appUser?.id).toBe(userBRow.id)
+    expect(result.current.profile?.user_id).toBe(userBRow.id)
+
+    // Now the OLD sign-out network call completes; it must NOT clear user B.
+    await act(async () => {
+      resolveSignOut?.({ error: null })
+      await signOutPromise
+    })
+    expect(result.current.status).toBe('authenticated_authorized')
+    expect(result.current.appUser?.id).toBe(userBRow.id)
+    expect(result.current.profile?.user_id).toBe(userBRow.id)
+    expect(result.current.appUser?.id).not.toBe(userAId)
+  })
+
+  it('账号不可用自动退出挂起期间新 SIGNED_IN 登录，旧退出不能清除新用户', async () => {
+    const supabase = createSupabaseClientMock({
+      hasSession: true,
+      currentAppUserId: null,
+    })
+    let resolveSignOut: ((value: { error: null }) => void) | undefined
+    supabase.signOut.mockImplementation(
+      () =>
+        new Promise<{ error: null }>((resolve) => {
+          resolveSignOut = resolve
+        }),
+    )
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <AuthProvider
+        resolveClient={() => ({ status: 'ready', client: supabase.client })}
+      >
+        {children}
+      </AuthProvider>
+    )
+    const { result } = renderHook(() => useAuth(), { wrapper })
+    // Unavailable sign-out is in flight (network deferred).
+    await waitFor(() => expect(supabase.signOut).toHaveBeenCalled())
+    expect(result.current.status).toBe('authenticated_unavailable')
+
+    // A new user B signs in while the unavailable sign-out is still pending.
+    const userBRow = {
+      ...fictionalAppUser,
+      id: '22222222-2222-2222-2222-222222222222',
+    }
+    supabase.rpc.mockImplementation(async (name: string) => {
+      if (name === 'current_app_user_id') {
+        return { data: userBRow.id, error: null }
+      }
+      return { data: null, error: null }
+    })
+    supabase.from.mockImplementation((table: 'app_users' | 'profiles') => {
+      if (table === 'app_users') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: userBRow, error: null }),
+            }),
+          }),
+          update: () => ({
+            eq: () => ({
+              select: () => ({
+                maybeSingle: async () => ({ data: null, error: null }),
+              }),
+            }),
+          }),
+        }
+      }
+      return {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({
+              data: { ...fictionalProfile, user_id: userBRow.id },
+              error: null,
+            }),
+          }),
+        }),
+        update: () => ({
+          eq: () => ({
+            select: () => ({
+              maybeSingle: async () => ({
+                data: { ...fictionalProfile, user_id: userBRow.id },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }
+    })
+    act(() => supabase.emitAuthEvent('SIGNED_IN'))
+    await waitFor(() =>
+      expect(result.current.status).toBe('authenticated_authorized'),
+    )
+    expect(result.current.appUser?.id).toBe(userBRow.id)
+
+    // The stale unavailable sign-out completes; it must NOT clear user B.
+    await act(async () => {
+      resolveSignOut?.({ error: null })
+      await Promise.resolve()
+    })
+    expect(result.current.status).toBe('authenticated_authorized')
+    expect(result.current.appUser?.id).toBe(userBRow.id)
+  })
+
+  it('密码更新退出挂起期间新 SIGNED_IN 登录，旧退出不能清除新用户', async () => {
+    const supabase = createSupabaseClientMock({ hasSession: true })
+    let resolveSignOut: ((value: { error: null }) => void) | undefined
+    supabase.signOut.mockImplementation(
+      () =>
+        new Promise<{ error: null }>((resolve) => {
+          resolveSignOut = resolve
+        }),
+    )
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <AuthProvider
+        resolveClient={() => ({ status: 'ready', client: supabase.client })}
+      >
+        {children}
+      </AuthProvider>
+    )
+    const { result } = renderHook(() => useAuth(), { wrapper })
+    await waitFor(() =>
+      expect(result.current.status).toBe('authenticated_authorized'),
+    )
+    act(() => supabase.emitAuthEvent('PASSWORD_RECOVERY'))
+    await waitFor(() => expect(result.current.isRecoverySession).toBe(true))
+
+    let updatePromise:
+      | Promise<Awaited<ReturnType<AuthContextValue['updatePassword']>>>
+      | undefined
+    await act(async () => {
+      updatePromise = result.current.updatePassword('new-password-123')
+      await Promise.resolve()
+    })
+    // Local state is cleared immediately; network sign-out is deferred.
+    expect(result.current.status).toBe('unauthenticated')
+    expect(result.current.isRecoverySession).toBe(false)
+    expect(supabase.updateUser).toHaveBeenCalledWith({
+      password: 'new-password-123',
+    })
+
+    // A new user B signs in while the old network sign-out is still pending.
+    const userBRow = {
+      ...fictionalAppUser,
+      id: '22222222-2222-2222-2222-222222222222',
+    }
+    supabase.rpc.mockImplementation(async (name: string) => {
+      if (name === 'current_app_user_id') {
+        return { data: userBRow.id, error: null }
+      }
+      return { data: null, error: null }
+    })
+    supabase.from.mockImplementation((table: 'app_users' | 'profiles') => {
+      if (table === 'app_users') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: userBRow, error: null }),
+            }),
+          }),
+          update: () => ({
+            eq: () => ({
+              select: () => ({
+                maybeSingle: async () => ({ data: null, error: null }),
+              }),
+            }),
+          }),
+        }
+      }
+      return {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({
+              data: { ...fictionalProfile, user_id: userBRow.id },
+              error: null,
+            }),
+          }),
+        }),
+        update: () => ({
+          eq: () => ({
+            select: () => ({
+              maybeSingle: async () => ({
+                data: { ...fictionalProfile, user_id: userBRow.id },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }
+    })
+    act(() => supabase.emitAuthEvent('SIGNED_IN'))
+    await waitFor(() =>
+      expect(result.current.status).toBe('authenticated_authorized'),
+    )
+    expect(result.current.appUser?.id).toBe(userBRow.id)
+
+    // The stale password-update sign-out completes; it must NOT clear user B.
+    await act(async () => {
+      resolveSignOut?.({ error: null })
+      await updatePromise
+    })
+    expect(result.current.status).toBe('authenticated_authorized')
+    expect(result.current.appUser?.id).toBe(userBRow.id)
+  })
+})

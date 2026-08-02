@@ -24,6 +24,14 @@ export type AuthStatus =
    * retry action.
    */
   | 'authenticated_error'
+  /**
+   * A valid recovery (password reset) session whose internal identity cannot
+   * be resolved. The session is KEPT so the user can set a new password, but
+   * business routes must never be authorized: ProtectedRoute redirects these
+   * users back to /reset-password instead of showing protected content or a
+   * permanent "signing out" state. No account-unavailable sign-out happens.
+   */
+  | 'authenticated_recovery_only'
 
 export type AuthConfigState = 'unconfigured' | 'invalid' | null
 

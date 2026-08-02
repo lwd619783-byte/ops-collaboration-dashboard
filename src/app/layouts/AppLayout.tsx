@@ -7,9 +7,51 @@ import {
   type PropsWithChildren,
   type RefObject,
 } from 'react'
-import { Link, NavLink, useLocation } from 'react-router'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router'
 import { appNavigation } from '@/app/navigation/appNavigation'
 import { Button } from '@/components/ui/Button'
+import { useAuth } from '@/features/auth'
+
+function SignOutButton() {
+  const { signOut, profile } = useAuth()
+  const navigate = useNavigate()
+  const [isSigningOut, setIsSigningOut] = useState(false)
+
+  const handleSignOut = async () => {
+    if (isSigningOut) return
+    setIsSigningOut(true)
+    try {
+      await signOut()
+      navigate('/login', { replace: true })
+    } catch {
+      // Never leak tokens or raw errors; the provider already cleared local
+      // state so protected content is not shown even if the remote call fails.
+    } finally {
+      setIsSigningOut(false)
+    }
+  }
+
+  return (
+    <div className="user-menu">
+      <div className="user-menu-info">
+        <span className="user-menu-name">
+          {profile?.display_name ?? '当前用户'}
+        </span>
+        <span className="user-menu-role">已登录</span>
+      </div>
+      <Button
+        aria-label="退出登录"
+        disabled={isSigningOut}
+        loading={isSigningOut}
+        onClick={() => void handleSignOut()}
+        size="sm"
+        variant="secondary"
+      >
+        退出登录
+      </Button>
+    </div>
+  )
+}
 
 function Navigation({
   label = '主导航',
@@ -35,6 +77,7 @@ function Navigation({
           </NavLink>
         ))}
       </div>
+      <SignOutButton />
     </nav>
   )
 }
@@ -159,7 +202,7 @@ function AppLayoutShell({
   )
 }
 
-export function AppLayout({ children }: PropsWithChildren) {
+export function AppLayout() {
   const { pathname } = useLocation()
   const mainContentRef = useRef<HTMLElement>(null)
   const previousPathRef = useRef(pathname)
@@ -173,7 +216,7 @@ export function AppLayout({ children }: PropsWithChildren) {
 
   return (
     <AppLayoutShell key={pathname} mainContentRef={mainContentRef}>
-      {children}
+      <Outlet />
     </AppLayoutShell>
   )
 }

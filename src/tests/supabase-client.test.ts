@@ -110,9 +110,10 @@ describe('Supabase 客户端工厂安全边界', () => {
       'sb_publishable_client-fixture',
       {
         auth: {
-          autoRefreshToken: false,
-          detectSessionInUrl: false,
-          persistSession: false,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+          persistSession: true,
+          flowType: 'pkce',
         },
       },
     )

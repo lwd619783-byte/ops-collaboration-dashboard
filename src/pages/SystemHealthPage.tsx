@@ -101,71 +101,119 @@ export function SystemHealthPage({
 
   if (configResult.status === 'unconfigured') {
     return (
-      <EmptyState
-        title="Supabase 尚未配置"
-        description="请在本地环境中配置 Supabase URL 和 publishable key 后重新打开此页面。"
-      />
+      <div className="public-page">
+        <header className="page-header">
+          <p className="eyebrow">系统状态</p>
+          <h1>系统健康</h1>
+        </header>
+        <div className="public-page-body">
+          <EmptyState
+            title="Supabase 尚未配置"
+            description="请在本地环境中配置 Supabase URL 和 publishable key 后重新打开此页面。"
+          />
+        </div>
+      </div>
     )
   }
 
   if (configResult.status === 'invalid') {
     return (
-      <ErrorState
-        title="Supabase 配置无效"
-        description={configResult.message}
-      />
+      <div className="public-page">
+        <header className="page-header">
+          <p className="eyebrow">系统状态</p>
+          <h1>系统健康</h1>
+        </header>
+        <div className="public-page-body">
+          <ErrorState
+            title="Supabase 配置无效"
+            description={configResult.message}
+          />
+        </div>
+      </div>
     )
   }
 
   if (!clientResult || clientResult.status !== 'ready') {
     return (
-      <FailureState
-        message={genericConnectionError}
-        retry={() => {
-          setHealthState({ status: 'checking' })
-          setAttempt((current) => current + 1)
-        }}
-      />
+      <div className="public-page">
+        <header className="page-header">
+          <p className="eyebrow">系统状态</p>
+          <h1>系统健康</h1>
+        </header>
+        <div className="public-page-body">
+          <FailureState
+            message={genericConnectionError}
+            retry={() => {
+              setHealthState({ status: 'checking' })
+              setAttempt((current) => current + 1)
+            }}
+          />
+        </div>
+      </div>
     )
   }
 
   if (healthState.status === 'checking') {
     return (
-      <section className="health-card" aria-label="数据库连接状态">
-        <LoadingState title="正在检查数据库连接" />
-      </section>
+      <div className="public-page">
+        <header className="page-header">
+          <p className="eyebrow">系统状态</p>
+          <h1>系统健康</h1>
+        </header>
+        <div className="public-page-body">
+          <section className="health-card" aria-label="数据库连接状态">
+            <LoadingState title="正在检查数据库连接" />
+          </section>
+        </div>
+      </div>
     )
   }
 
   if (healthState.status === 'error') {
     return (
-      <FailureState
-        message={healthState.message}
-        retry={() => {
-          setHealthState({ status: 'checking' })
-          setAttempt((current) => current + 1)
-        }}
-      />
+      <div className="public-page">
+        <header className="page-header">
+          <p className="eyebrow">系统状态</p>
+          <h1>系统健康</h1>
+        </header>
+        <div className="public-page-body">
+          <FailureState
+            message={healthState.message}
+            retry={() => {
+              setHealthState({ status: 'checking' })
+              setAttempt((current) => current + 1)
+            }}
+          />
+        </div>
+      </div>
     )
   }
 
   return (
-    <section className="health-card" aria-live="polite">
-      <div className="health-heading">
-        <div>
-          <p className="eyebrow">连接状态</p>
-          <h2>数据库连接正常</h2>
-        </div>
-        <Badge className="badge-success">正常</Badge>
+    <div className="public-page">
+      <header className="page-header">
+        <p className="eyebrow">系统状态</p>
+        <h1>系统健康</h1>
+      </header>
+      <div className="public-page-body">
+        <section className="health-card" aria-live="polite">
+          <div className="health-heading">
+            <div>
+              <p className="eyebrow">连接状态</p>
+              <h2>数据库连接正常</h2>
+            </div>
+            <Badge className="badge-success">正常</Badge>
+          </div>
+          <dl className="health-details">
+            <div>
+              <dt>数据库检查时间</dt>
+              <dd>
+                <DateDisplay kind="date-time" value={healthState.checkedAt} />
+              </dd>
+            </div>
+          </dl>
+        </section>
       </div>
-      <dl className="health-details">
-        <div>
-          <dt>数据库检查时间</dt>
-          <dd>
-            <DateDisplay kind="date-time" value={healthState.checkedAt} />
-          </dd>
-        </div>
-      </dl>
-    </section>
+    </div>
   )
 }

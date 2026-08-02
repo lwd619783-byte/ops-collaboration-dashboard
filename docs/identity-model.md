@@ -88,11 +88,14 @@
 
 所有夹具均为虚构数据：无真实 AppID、OpenID、手机号、JWT、绑定码或密钥；UUID 为确定性、合法、全局唯一的测试值（不内嵌 `fictional` 文本标记），issuer / tenant / subject 使用明显虚构标识。
 
+## Task 1.3 接入方式
+
+网页登录（Task 1.3）严格复用本模型：AuthProvider 初始化时恢复 Supabase 会话，经 `current_app_user_id()`（读取已验证 JWT 的 `request.jwt.claims` 的 `sub` / `iss`）解析内部 `app_users.id`，再按 RLS 读取当前用户自己的 `app_users` / `profiles`；Auth UUID 只存于 `user_identities.provider_subject`，浏览器从不把它当作业务键。任何解析失败、未验证、已撤销或 `invited` / `suspended` / `merged` 用户统一按"账号暂不可使用"处理（安全退出 + 登录页通用提示），不向前端泄露具体内部状态。受保护路由、错误脱敏映射、profile 白名单更新（`display_name` / `organization_name` / `title`）均不改动本模型的任何表、函数、RLS 或权限矩阵。
+
 ## 明确未实现
 
 本任务只落地数据模型与安全边界。以下能力**不在**本任务范围，只能在未来明确授权的任务中引入：
 
-- 登录页面、受保护路由、会话持久化；
-- 真实的绑定 / 认证 / 微信小程序 / CloudBase 流程（含真实绑定 RPC、发送绑定码）；
-- 工作空间、项目、任务、提醒等业务表；
+- 真实的绑定 / 认证 / 微信小程序 / CloudBase 流程（含真实绑定 RPC、发送绑定码）、账号合并 / 解绑；
+- 公开注册、管理员邀请与成员管理、工作空间、项目、任务、提醒等业务表；
 - 远端 Supabase 推送、生产 Vercel 配置、PR 创建或 main 合并（由远端独立审计与授权人员执行）。

@@ -39,11 +39,16 @@ export function getSupabaseClient(): SupabaseClientResolution {
     return { status: 'ready', client: cachedClient.client }
   }
 
+  // Task 1.3: the web auth flow requires session persistence, automatic token
+  // refresh and URL-based callback detection (PKCE recovery flow). The client
+  // stays a singleton that only reads the two public, low-privilege variables
+  // from the shared validator; it never accepts caller-supplied credentials.
   const client = createClient<Database>(config.url, config.publishableKey, {
     auth: {
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-      persistSession: false,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      persistSession: true,
+      flowType: 'pkce',
     },
   })
   cachedClient = { config, client }

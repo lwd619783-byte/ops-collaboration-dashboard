@@ -145,9 +145,19 @@ describe('应用壳层与路由', () => {
     ).toBeInTheDocument()
   })
 
-  it('系统健康路由保持公开并在无配置时安全降级', () => {
+  it('导航中显示任务入口为 /tasks', async () => {
+    render(<App />)
+    await screen.findByRole('navigation', { name: '主导航' })
+    const tasksLink = screen.getAllByRole('link', { name: '我的任务' })[0]
+    expect(tasksLink).toHaveAttribute('href', '/tasks')
+  })
+
+  it('系统健康路由保持公开且在无配置时不启动身份初始化', () => {
     vi.stubEnv('VITE_SUPABASE_URL', '')
     vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', '')
+    // Do NOT install an authorized client: /system-health must not read
+    // session state at all.
+    getSupabaseClientMock.mockReset()
     window.history.pushState({}, '', '/system-health')
     render(<App />)
     expect(

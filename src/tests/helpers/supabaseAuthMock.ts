@@ -3,8 +3,14 @@
  *
  * The mock exposes `vi.fn()` implementations so tests can assert the REAL
  * arguments passed to signIn / signOut / resetPasswordForEmail / updateUser /
- * rpc / table reads, and can emit auth state events through `emitAuthEvent` to
- * exercise the AuthProvider subscription. All fixtures are fictional.
+ * rpc / table reads. Like the real Supabase client, sign-in emits SIGNED_IN,
+ * password update emits USER_UPDATED and sign-out emits SIGNED_OUT through the
+ * registered onAuthStateChange listeners, so the AuthProvider subscription and
+ * its concurrency logic are exercised with realistic event ordering.
+ *
+ * Tests may also emit events manually via `emitAuthEvent`, and may replace any
+ * method implementation (e.g. with a controllable deferred promise) through
+ * the exposed `vi.fn` handles.
  */
 
 import { vi } from 'vitest'
@@ -65,8 +71,20 @@ export type AuthEventName =
 export type MockClientOptions = {
   hasSession?: boolean
   session?: typeof fictionalSession | null
-  /** Return value of rpc('current_app_user_id') */
+  /** Return value of rpc('current_app_user_id'); null → identity unavailable */
   currentAppUserId?: string | null
+  /** rpc('current_app_user_id') error object */
+  currentAppUserIdError?: unknown
+  /** rpc('current_app_user_id') network-like failure */
+  rpcNetworkFailure?: boolean
+  /** app_users read error */
+  appUserReadError?: unknown
+  /** app_users row returned by read; null → row missing */
+  appUserRow?: typeof fictionalAppUser | null
+  /** profiles read error */
+  profileReadError?: unknown
+  /** profiles row returned by read; null → row missing */
+  profileRow?: typeof fictionalProfile | null
   /** Throw a network-like failure on auth calls */
   networkFailure?: boolean
   /** error object returned by signInWithPassword */
@@ -77,10 +95,6 @@ export type MockClientOptions = {
   updateUserError?: unknown
   /** error object returned by profile update */
   profileUpdateError?: unknown
-  /** profile row returned by update and read */
-  profileRow?: typeof fictionalProfile | null
-  /** app_users row returned by read */
-  appUserRow?: typeof fictionalAppUser | null
 }
 
 export type SupabaseClientMock = {
@@ -100,14 +114,33 @@ function tableQuery(
   options: MockClientOptions,
   table: 'app_users' | 'profiles',
 ) {
+  const readResult =
+    table === 'app_users'
+      ? options.appUserReadError
+        ? { data: null, error: options.appUserReadError }
+        : {
+            data:
+              options.appUserRow === undefined
+                ? fictionalAppUser
+                : options.appUserRow,
+            error: null,
+          }
+      : options.profileReadError
+        ? { data: null, error: options.profileReadError }
+        : {
+            data:
+              options.profileRow === undefined
+                ? fictionalProfile
+                : options.profileRow,
+            error: null,
+          }
+
   return {
     select: vi.fn(() => ({
       eq: vi.fn(() => ({
         maybeSingle: vi.fn(async () => {
-          if (table === 'app_users') {
-            return { data: options.appUserRow ?? fictionalAppUser, error: null }
-          }
-          return { data: options.profileRow ?? fictionalProfile, error: null }
+          if (options.networkFailure) throw new Error('Failed to fetch')
+          return readResult
         }),
       })),
     })),
@@ -118,7 +151,13 @@ function tableQuery(
             if (options.profileUpdateError) {
               return { data: null, error: options.profileUpdateError }
             }
-            return { data: options.profileRow ?? fictionalProfile, error: null }
+            return {
+              data:
+                options.profileRow === undefined
+                  ? fictionalProfile
+                  : options.profileRow,
+              error: null,
+            }
           }),
         })),
       })),
@@ -133,6 +172,16 @@ export function createSupabaseClientMock(
   let hasSessionState =
     options.hasSession === undefined ? false : options.hasSession
 
+  const emit = (event: AuthEventName) => {
+    // Mirror the real client: SIGNED_OUT implies the session is gone, so any
+    // later getSession() must return null even if the event was emitted
+    // directly by the test (not through signOut()).
+    if (event === 'SIGNED_OUT') {
+      hasSessionState = false
+    }
+    for (const listener of authEventListeners) listener(event)
+  }
+
   const getSession = vi.fn(async () => {
     if (options.networkFailure) throw new Error('Failed to fetch')
     const session = hasSessionState
@@ -146,12 +195,14 @@ export function createSupabaseClientMock(
     if (options.signInError)
       return { data: { user: null }, error: options.signInError }
     hasSessionState = true
+    emit('SIGNED_IN')
     return { data: { user: fictionalSession.user }, error: null }
   })
 
   const signOut = vi.fn(async () => {
     if (options.networkFailure) throw new Error('Failed to fetch')
     hasSessionState = false
+    emit('SIGNED_OUT')
     return { error: null }
   })
 
@@ -165,11 +216,17 @@ export function createSupabaseClientMock(
     if (options.networkFailure) throw new Error('Failed to fetch')
     if (options.updateUserError)
       return { data: null, error: options.updateUserError }
+    emit('USER_UPDATED')
     return { data: { user: fictionalSession.user }, error: null }
   })
 
   const rpc = vi.fn(async (name: string) => {
+    if (options.networkFailure || options.rpcNetworkFailure)
+      throw new Error('Failed to fetch')
     if (name === 'current_app_user_id') {
+      if (options.currentAppUserIdError) {
+        return { data: null, error: options.currentAppUserIdError }
+      }
       return {
         data:
           options.currentAppUserId === undefined
@@ -205,9 +262,7 @@ export function createSupabaseClientMock(
 
   return {
     client,
-    emitAuthEvent: (event) => {
-      for (const listener of authEventListeners) listener(event)
-    },
+    emitAuthEvent: emit,
     authEventListeners,
     signInWithPassword,
     signOut,

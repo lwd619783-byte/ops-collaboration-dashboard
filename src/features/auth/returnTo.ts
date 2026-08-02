@@ -10,18 +10,23 @@
  * are allowed. Anything else falls back to `/`.
  */
 
-import { appNavigation } from '@/app/navigation/appNavigation'
+import {
+  appNavigation,
+  legacyBusinessPathRedirects,
+} from '@/app/navigation/appNavigation'
 
 /**
  * Known business paths that a user may be returned to after login.
- * Built from the app navigation plus the task-specified /tasks route.
+ * Built solely from the app navigation (including the canonical `/tasks`
+ * route) plus the legacy protected redirect SOURCES so that a login flow
+ * triggered from an old `/my-tasks` link still returns inside the app.
  */
 const businessPaths = new Set<string>([
   '/',
-  '/tasks',
   ...appNavigation
     .filter((item) => item.path !== '/system-health')
     .map((item) => item.path),
+  ...legacyBusinessPathRedirects.map((item) => item.from),
 ])
 
 /** Public auth paths that would create a redirect loop and are never valid return targets. */

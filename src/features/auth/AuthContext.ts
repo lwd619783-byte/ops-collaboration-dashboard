@@ -9,6 +9,7 @@ import type {
   AppUser,
   Profile,
 } from '@/features/auth/authService'
+import type { SafeAuthError } from '@/features/auth/errors'
 
 export type AuthStatus =
   | 'initializing'
@@ -16,11 +17,26 @@ export type AuthStatus =
   | 'authenticated_checking_identity'
   | 'authenticated_authorized'
   | 'authenticated_unavailable'
+  /**
+   * Recoverable, safe error state: a network / configuration / profile read
+   * failure that must NOT be reported as "account disabled" and must NOT
+   * trigger a permanent sign-out. The UI shows a fixed safe message with a
+   * retry action.
+   */
+  | 'authenticated_error'
+
+export type AuthConfigState = 'unconfigured' | 'invalid' | null
 
 export type AuthContextValue = {
   status: AuthStatus
   appUser: AppUser | null
   profile: Profile | null
+  /** Safe error for the recoverable `authenticated_error` state. */
+  authError: SafeAuthError | null
+  /** True when the profile row is missing but the identity is valid. */
+  profileMissing: boolean
+  /** Preserved reason when the Supabase client could not be built. */
+  configState: AuthConfigState
   isRecoverySession: boolean
   notice: string | null
   clearNotice: () => void
@@ -32,6 +48,8 @@ export type AuthContextValue = {
     input: Pick<Profile, 'display_name' | 'organization_name' | 'title'>,
   ) => Promise<AuthServiceResult<Profile>>
   refreshProfile: () => Promise<void>
+  /** Re-run the identity / profile resolution from the current session. */
+  retryAuthCheck: () => void
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null)

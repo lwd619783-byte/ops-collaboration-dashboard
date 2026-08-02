@@ -1,12 +1,20 @@
 /**
  * ProtectedRoute: guards business routes behind a fully resolved internal
- * identity. Unauthenticated visitors are redirected to /login with a safe
- * returnTo; during session/identity checks only a loading state is shown (no
- * business content flash). Unavailable accounts are signed out and the login
- * page shows the unified safe message.
+ * identity.
+ *
+ * - Unauthenticated visitors are redirected to /login with a safe returnTo.
+ * - During session/identity checks only a loading state is shown (no business
+ *   content flash).
+ * - Confirmed-unavailable accounts are handled centrally by the AuthProvider
+ *   (which performs the sign-out); this component only renders a neutral
+ *   loading state until the provider transitions to unauthenticated. It NEVER
+ *   calls signOut during render.
+ * - Recoverable errors render a fixed safe message with a retry action.
  */
 
 import { Navigate, Outlet, useLocation } from 'react-router'
+import { Button } from '@/components/ui/Button'
+import { ErrorState } from '@/components/feedback/ErrorState'
 import { LoadingState } from '@/components/feedback/LoadingState'
 import { useAuth } from '@/features/auth'
 import { sanitizeReturnTo } from '@/features/auth/returnTo'
@@ -17,7 +25,7 @@ function buildReturnTo(pathname: string, search: string, hash: string) {
 }
 
 export function ProtectedRoute() {
-  const { status, signOut } = useAuth()
+  const { status, authError, retryAuthCheck } = useAuth()
   const location = useLocation()
 
   if (
@@ -36,12 +44,27 @@ export function ProtectedRoute() {
   }
 
   if (status === 'authenticated_unavailable') {
-    // Unified safe handling: clear the session and show the login page with
-    // the generic "account unavailable" notice. signOut is idempotent.
-    void signOut()
+    // The AuthProvider is performing the centralized sign-out; stay neutral
+    // until it transitions to unauthenticated and redirects to /login.
     return (
       <div className="route-loading">
         <LoadingState title="正在安全退出" />
+      </div>
+    )
+  }
+
+  if (status === 'authenticated_error') {
+    return (
+      <div className="route-loading">
+        <ErrorState
+          title="暂时无法完成验证"
+          description={authError?.message ?? '操作未能完成，请稍后重试。'}
+          action={
+            <Button onClick={retryAuthCheck} variant="secondary">
+              重试
+            </Button>
+          }
+        />
       </div>
     )
   }

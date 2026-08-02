@@ -2,7 +2,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
-import { AuthProvider } from '@/features/auth/AuthProvider'
 import { AppRouter } from '@/app/router/AppRouter'
 import {
   createSupabaseClientMock,
@@ -14,13 +13,11 @@ function renderProfile(
 ) {
   const supabase = createSupabaseClientMock({ hasSession: true, ...options })
   render(
-    <AuthProvider
-      resolveClient={() => ({ status: 'ready', client: supabase.client })}
-    >
-      <MemoryRouter initialEntries={['/settings']}>
-        <AppRouter />
-      </MemoryRouter>
-    </AuthProvider>,
+    <MemoryRouter initialEntries={['/settings']}>
+      <AppRouter
+        resolveClient={() => ({ status: 'ready', client: supabase.client })}
+      />
+    </MemoryRouter>,
   )
   return supabase
 }
@@ -181,6 +178,64 @@ describe('个人资料页', () => {
 
     await waitFor(() =>
       expect(screen.getByText('个人资料已保存。')).toBeInTheDocument(),
+    )
+  })
+
+  it('profile 缺失时显示明确错误态且不无限加载', async () => {
+    renderProfile({ profileRow: null })
+    expect(await screen.findByText('个人资料暂不可用')).toBeInTheDocument()
+    expect(screen.queryByText('正在加载个人资料')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+  })
+
+  it('profile 读取失败显示可恢复错误态，不暴露原始错误', async () => {
+    renderProfile({
+      profileReadError: {
+        code: 'db_error',
+        message: 'secret sql',
+        name: 'PostgrestError',
+      },
+    })
+    // The route-level guard shows a recoverable error state (never protected
+    // content) with a retry action and no raw error details.
+    expect(await screen.findByText('暂时无法完成验证')).toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent('secret sql')
+    expect(screen.queryByText('正在加载个人资料')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+  })
+
+  it('profile 读取失败后重试可恢复编辑', async () => {
+    // First render with a failing profile read.
+    const supabase = createSupabaseClientMock({
+      hasSession: true,
+      profileReadError: {
+        code: 'db_error',
+        message: 'secret sql',
+        name: 'PostgrestError',
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/settings']}>
+        <AppRouter
+          resolveClient={() => ({ status: 'ready', client: supabase.client })}
+        />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('暂时无法完成验证')).toBeInTheDocument()
+
+    // Replace the mock with a healthy one and retry.
+    const healthy = createSupabaseClientMock({ hasSession: true })
+    supabase.from.mockImplementation(
+      healthy.from.getMockImplementation() ?? (() => null),
+    )
+    supabase.rpc.mockImplementation(
+      healthy.rpc.getMockImplementation() ?? (() => null),
+    )
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '重试' }))
+
+    expect(await screen.findByLabelText(/显示名称/)).toHaveValue(
+      fictionalProfile.display_name,
     )
   })
 })

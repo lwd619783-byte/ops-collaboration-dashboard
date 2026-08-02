@@ -6,10 +6,16 @@
  * subject, and no raw contact_info JSON editor. The database RLS remains the
  * final authorization boundary; even a known foreign user id cannot be
  * modified because RLS scopes updates to the caller's own row.
+ *
+ * The page distinguishes: loading / recoverable load error (with retry) /
+ * profile row missing (with retry) / editable / save failed / saved — it never
+ * shows an endless spinner when the profile is null.
  */
 
 import { useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/Button'
+import { ErrorState } from '@/components/feedback/ErrorState'
+import { LoadingState } from '@/components/feedback/LoadingState'
 import { InputField } from '@/components/forms/InputField'
 import { useAuth } from '@/features/auth'
 import {
@@ -115,19 +121,78 @@ function ProfileForm({ profile }: { profile: Profile }) {
 }
 
 export function ProfilePage() {
-  const { appUser, profile, status } = useAuth()
+  const {
+    status,
+    appUser,
+    profile,
+    profileMissing,
+    authError,
+    retryAuthCheck,
+  } = useAuth()
 
-  if (status !== 'authenticated_authorized' || !appUser || !profile) {
+  // Loading: identity still being resolved.
+  if (
+    status === 'initializing' ||
+    status === 'authenticated_checking_identity'
+  ) {
     return (
       <section className="page-stack" aria-busy="true">
-        <p role="status">正在加载个人资料…</p>
+        <LoadingState title="正在加载个人资料" />
+      </section>
+    )
+  }
+
+  // Recoverable load error: fixed safe message + retry (no endless spinner).
+  // The route-level error (authError) reaches this page because ProtectedRoute
+  // keeps rendering the outlet tree? No — ProtectedRoute intercepts
+  // authenticated_error and shows its own error state, so this branch only
+  // matters when the page is reached with an authorized-but-failed profile.
+  // The profile_read_failed path goes through authenticated_error and is
+  // handled by ProtectedRoute; this branch covers any remaining recoverable
+  // cases rendered directly.
+  if (status === 'authenticated_error') {
+    return (
+      <section className="page-stack">
+        <ErrorState
+          title="暂时无法读取个人资料"
+          description={authError?.message ?? '无法读取个人资料，请稍后重试。'}
+          action={
+            <Button onClick={retryAuthCheck} variant="secondary">
+              重试
+            </Button>
+          }
+        />
+      </section>
+    )
+  }
+
+  // Authorized but the profile row is missing: distinct, retryable state.
+  if (status === 'authenticated_authorized' && (!appUser || !profile)) {
+    if (profileMissing || !profile) {
+      return (
+        <section className="page-stack">
+          <ErrorState
+            title="个人资料暂不可用"
+            description="未找到您的个人资料，请稍后重试或联系系统管理员。"
+            action={
+              <Button onClick={retryAuthCheck} variant="secondary">
+                重试
+              </Button>
+            }
+          />
+        </section>
+      )
+    }
+    return (
+      <section className="page-stack" aria-busy="true">
+        <LoadingState title="正在加载个人资料" />
       </section>
     )
   }
 
   return (
     <section className="page-stack">
-      <ProfileForm key={profile.user_id} profile={profile} />
+      <ProfileForm key={profile?.user_id} profile={profile as Profile} />
     </section>
   )
 }

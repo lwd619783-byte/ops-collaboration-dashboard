@@ -2,7 +2,6 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
-import { AuthProvider } from '@/features/auth/AuthProvider'
 import { AppRouter } from '@/app/router/AppRouter'
 import { createSupabaseClientMock } from '@/tests/helpers/supabaseAuthMock'
 
@@ -11,13 +10,11 @@ function renderLogin(
 ) {
   const supabase = createSupabaseClientMock({ hasSession: false, ...options })
   render(
-    <AuthProvider
-      resolveClient={() => ({ status: 'ready', client: supabase.client })}
-    >
-      <MemoryRouter initialEntries={['/login']}>
-        <AppRouter />
-      </MemoryRouter>
-    </AuthProvider>,
+    <MemoryRouter initialEntries={['/login']}>
+      <AppRouter
+        resolveClient={() => ({ status: 'ready', client: supabase.client })}
+      />
+    </MemoryRouter>,
   )
   return supabase
 }

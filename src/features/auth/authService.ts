@@ -3,6 +3,14 @@
  * that only expose safe results. Raw tokens, the full error object and any
  * internal diagnostics never leave this module. Identity resolution is done
  * exclusively through the database boundary `current_app_user_id()`.
+ *
+ * Every query returns an explicit `QueryResult`:
+ *   - `{ ok: true, data: T }`   — the query succeeded; `data` may be null when
+ *                                 the absence itself is a meaningful business
+ *                                 result (e.g. no bound identity, no profile).
+ *   - `{ ok: false, error }`    — the query FAILED (network / RPC / DB error).
+ *                                 Callers must never confuse a failure with an
+ *                                 "account unavailable" result.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -21,6 +29,13 @@ export const RECOVERY_SESSION_STORAGE_KEY = 'ops-auth-recovery-session'
 
 export type AuthServiceResult<T = undefined> =
   { ok: true; data: T } | { ok: false; error: SafeAuthError }
+
+/** Explicit query outcome; `ok: false` is a real failure, never null data. */
+export type QueryResult<T> =
+  { ok: true; data: T } | { ok: false; error: SafeAuthError }
+
+/** Sign-out scope. Task 1.3 explicitly requires an explicit, reviewed scope. */
+export type SignOutScope = 'local' | 'global'
 
 /** Editable profile fields — the ONLY whitelist the browser may submit. */
 export const PROFILE_EDITABLE_FIELDS = [
@@ -100,15 +115,24 @@ export async function signInWithEmailAndPassword(
   }
 }
 
-/** Formal Supabase sign-out; local auth state is cleared by the caller. */
+/**
+ * Formal Supabase sign-out with an EXPLICIT scope (never the implicit default).
+ * `scope: 'local'` only clears the current browser session — used for the
+ * ordinary "sign out" button and for account-unavailable sign-out, because a
+ * locally-revoked UI must stop showing protected content even if the remote
+ * call fails. `scope: 'global'` revokes the session everywhere and is only
+ * used where the product explicitly requires cross-device revocation.
+ * Sign-out is best-effort: callers clear local state regardless so the UI
+ * never keeps showing protected content after a failed network call.
+ */
 export async function signOutOfSupabase(
   client: SupabaseClient<Database>,
+  scope: SignOutScope = 'local',
 ): Promise<void> {
   try {
-    await client.auth.signOut()
+    await client.auth.signOut({ scope })
   } catch {
-    // Sign-out is best-effort; the caller clears local state regardless so the
-    // UI never keeps showing protected content after a failed network call.
+    // Best-effort; the caller clears local state regardless.
   }
 }
 
@@ -145,54 +169,72 @@ export async function updateUserPassword(
 
 /**
  * Resolve the current internal app user id through the database boundary.
- * Returns null when the caller has no usable internal identity (unbound,
- * unverified, revoked, invited/suspended/merged). RLS protects the reads.
+ * - `{ ok: true, data: null }`  → query succeeded but there is NO usable
+ *   internal identity (unbound / unverified / revoked / invited / suspended /
+ *   merged). This is the ONLY valid signal for "account unavailable".
+ * - `{ ok: false, error }`      → RPC or network failure; must NOT be reported
+ *   as account disabled and must NOT trigger a permanent sign-out.
  */
 export async function fetchCurrentAppUserId(
   client: SupabaseClient<Database>,
-): Promise<string | null> {
+): Promise<QueryResult<string | null>> {
   try {
     const { data, error } = await client.rpc('current_app_user_id')
-    if (error) return null
-    return typeof data === 'string' && data.length > 0 ? data : null
-  } catch {
-    return null
+    if (error) return { ok: false, error: mapAuthError(error) }
+    const appUserId = typeof data === 'string' && data.length > 0 ? data : null
+    return { ok: true, data: appUserId }
+  } catch (error) {
+    return { ok: false, error: mapAuthError(error) }
   }
 }
 
-/** Read the caller's own app_users row (RLS: id = current_app_user_id()). */
+/**
+ * Read the caller's own app_users row (RLS: id = current_app_user_id()).
+ * `ok: true, data: null` means the query succeeded but the caller has no own
+ * row — a data-integrity or identity state to handle as unavailable. A failed
+ * query is `ok: false` with a safe temporary error.
+ */
 export async function fetchOwnAppUser(
   client: SupabaseClient<Database>,
   appUserId: string,
-): Promise<AppUser | null> {
+): Promise<QueryResult<AppUser | null>> {
   try {
     const { data, error } = await client
       .from('app_users')
       .select('*')
       .eq('id', appUserId)
       .maybeSingle()
-    if (error) return null
-    return data
-  } catch {
-    return null
+    if (error) return { ok: false, error: mapAuthError(error) }
+    return { ok: true, data: data ?? null }
+  } catch (error) {
+    return { ok: false, error: mapAuthError(error) }
   }
 }
 
-/** Read the caller's own profile row (RLS: user_id = current_app_user_id()). */
+/**
+ * Read the caller's own profile row (RLS: user_id = current_app_user_id()).
+ * `ok: true, data: null` means the row does not exist (profile missing);
+ * a failed read is `ok: false` with `profile_read_failed` / network error.
+ */
 export async function fetchOwnProfile(
   client: SupabaseClient<Database>,
   appUserId: string,
-): Promise<Profile | null> {
+): Promise<QueryResult<Profile | null>> {
   try {
     const { data, error } = await client
       .from('profiles')
       .select('*')
       .eq('user_id', appUserId)
       .maybeSingle()
-    if (error) return null
-    return data
+    if (error) {
+      return {
+        ok: false,
+        error: createSafeAuthError('profile_read_failed'),
+      }
+    }
+    return { ok: true, data: data ?? null }
   } catch {
-    return null
+    return { ok: false, error: createSafeAuthError('profile_read_failed') }
   }
 }
 

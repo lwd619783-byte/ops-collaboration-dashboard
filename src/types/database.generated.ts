@@ -192,17 +192,281 @@ export type Database = {
           },
         ]
       }
+      workspace_invitations: {
+        Row: {
+          accepted_at: string | null
+          created_at: string
+          display_name: string
+          email_hash: string
+          email_hint: string
+          expires_at: string
+          failed_at: string | null
+          failure_code: string | null
+          id: string
+          idempotency_key: string
+          invited_by: string
+          invitee_user_id: string | null
+          revoked_at: string | null
+          role: Database["public"]["Enums"]["workspace_role"]
+          sent_at: string | null
+          status: Database["public"]["Enums"]["workspace_invitation_status"]
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          created_at?: string
+          display_name: string
+          email_hash: string
+          email_hint: string
+          expires_at: string
+          failed_at?: string | null
+          failure_code?: string | null
+          id?: string
+          idempotency_key: string
+          invited_by: string
+          invitee_user_id?: string | null
+          revoked_at?: string | null
+          role: Database["public"]["Enums"]["workspace_role"]
+          sent_at?: string | null
+          status?: Database["public"]["Enums"]["workspace_invitation_status"]
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          accepted_at?: string | null
+          created_at?: string
+          display_name?: string
+          email_hash?: string
+          email_hint?: string
+          expires_at?: string
+          failed_at?: string | null
+          failure_code?: string | null
+          id?: string
+          idempotency_key?: string
+          invited_by?: string
+          invitee_user_id?: string | null
+          revoked_at?: string | null
+          role?: Database["public"]["Enums"]["workspace_role"]
+          sent_at?: string | null
+          status?: Database["public"]["Enums"]["workspace_invitation_status"]
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_invitations_invited_by_fkey"
+            columns: ["invited_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_invitations_invitee_user_id_fkey"
+            columns: ["invitee_user_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_invitations_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_members: {
+        Row: {
+          created_at: string
+          disabled_at: string | null
+          invited_by: string
+          joined_at: string | null
+          role: Database["public"]["Enums"]["workspace_role"]
+          status: Database["public"]["Enums"]["workspace_member_status"]
+          updated_at: string
+          user_id: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          disabled_at?: string | null
+          invited_by: string
+          joined_at?: string | null
+          role: Database["public"]["Enums"]["workspace_role"]
+          status: Database["public"]["Enums"]["workspace_member_status"]
+          updated_at?: string
+          user_id: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          disabled_at?: string | null
+          invited_by?: string
+          joined_at?: string | null
+          role?: Database["public"]["Enums"]["workspace_role"]
+          status?: Database["public"]["Enums"]["workspace_member_status"]
+          updated_at?: string
+          user_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_members_invited_by_fkey"
+            columns: ["invited_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_members_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_members_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspaces: {
+        Row: {
+          bootstrap_key: string | null
+          created_at: string
+          created_by: string
+          id: string
+          name: string
+          owner_id: string
+          updated_at: string
+        }
+        Insert: {
+          bootstrap_key?: string | null
+          created_at?: string
+          created_by: string
+          id?: string
+          name: string
+          owner_id: string
+          updated_at?: string
+        }
+        Update: {
+          bootstrap_key?: string | null
+          created_at?: string
+          created_by?: string
+          id?: string
+          name?: string
+          owner_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspaces_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspaces_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      accept_workspace_invitation: {
+        Args: { p_invitation_id: string }
+        Returns: {
+          already_accepted: boolean
+          invitation_id: string
+          membership_status: Database["public"]["Enums"]["workspace_member_status"]
+          workspace_id: string
+        }[]
+      }
+      bootstrap_default_workspace: {
+        Args: { p_idempotency_key: string; p_name: string; p_owner_id: string }
+        Returns: string
+      }
+      can_manage_workspace_members: {
+        Args: { p_workspace_id: string }
+        Returns: boolean
+      }
       current_app_user_id: { Args: never; Returns: string }
       health_check: {
         Args: never
         Returns: {
           checked_at: string
           status: string
+        }[]
+      }
+      is_active_workspace_member: {
+        Args: { p_workspace_id: string }
+        Returns: boolean
+      }
+      list_my_pending_workspace_invitations: {
+        Args: never
+        Returns: {
+          expires_at: string
+          invitation_id: string
+          role: Database["public"]["Enums"]["workspace_role"]
+          status: Database["public"]["Enums"]["workspace_invitation_status"]
+          workspace_id: string
+          workspace_name: string
+        }[]
+      }
+      list_my_workspaces: {
+        Args: never
+        Returns: {
+          joined_at: string
+          role: Database["public"]["Enums"]["workspace_role"]
+          status: Database["public"]["Enums"]["workspace_member_status"]
+          workspace_id: string
+          workspace_name: string
+        }[]
+      }
+      list_workspace_members: {
+        Args: { p_workspace_id: string }
+        Returns: {
+          avatar_url: string
+          disabled_at: string
+          display_name: string
+          joined_at: string
+          organization_name: string
+          role: Database["public"]["Enums"]["workspace_role"]
+          status: Database["public"]["Enums"]["workspace_member_status"]
+          title: string
+          user_id: string
+        }[]
+      }
+      mark_workspace_invitation_failed: {
+        Args: { p_failure_code: string; p_invitation_id: string }
+        Returns: Database["public"]["Enums"]["workspace_invitation_status"]
+      }
+      prepare_workspace_invitation: {
+        Args: {
+          p_display_name: string
+          p_email_hash: string
+          p_email_hint: string
+          p_expires_at: string
+          p_idempotency_key: string
+          p_role: Database["public"]["Enums"]["workspace_role"]
+          p_workspace_id: string
+        }
+        Returns: {
+          invitation_id: string
+          invitation_status: Database["public"]["Enums"]["workspace_invitation_status"]
+          should_send: boolean
         }[]
       }
       resolve_app_user_id: {
@@ -213,6 +477,35 @@ export type Database = {
         }
         Returns: string
       }
+      set_workspace_member_role: {
+        Args: {
+          p_role: Database["public"]["Enums"]["workspace_role"]
+          p_user_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          role: Database["public"]["Enums"]["workspace_role"]
+          status: Database["public"]["Enums"]["workspace_member_status"]
+          user_id: string
+        }[]
+      }
+      set_workspace_member_status: {
+        Args: {
+          p_status: Database["public"]["Enums"]["workspace_member_status"]
+          p_user_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          disabled_at: string
+          role: Database["public"]["Enums"]["workspace_role"]
+          status: Database["public"]["Enums"]["workspace_member_status"]
+          user_id: string
+        }[]
+      }
+      workspace_role_for_current_user: {
+        Args: { p_workspace_id: string }
+        Returns: Database["public"]["Enums"]["workspace_role"]
+      }
     }
     Enums: {
       app_user_status: "invited" | "active" | "suspended" | "merged"
@@ -220,6 +513,14 @@ export type Database = {
         | "supabase_auth"
         | "wechat_miniprogram"
         | "enterprise_wechat"
+      workspace_invitation_status:
+        | "prepared"
+        | "sent"
+        | "accepted"
+        | "failed"
+        | "revoked"
+      workspace_member_status: "invited" | "active" | "suspended"
+      workspace_role: "owner" | "admin" | "member" | "external_collaborator"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -353,6 +654,15 @@ export const Constants = {
         "wechat_miniprogram",
         "enterprise_wechat",
       ],
+      workspace_invitation_status: [
+        "prepared",
+        "sent",
+        "accepted",
+        "failed",
+        "revoked",
+      ],
+      workspace_member_status: ["invited", "active", "suspended"],
+      workspace_role: ["owner", "admin", "member", "external_collaborator"],
     },
   },
 } as const

@@ -542,6 +542,34 @@ export function AuthProvider({
     ],
   )
 
+  const setInitialPassword = useCallback(
+    async (password: string): Promise<AuthServiceResult> => {
+      const client = clientRef.current
+      if (!client) {
+        return {
+          ok: false,
+          error: createSafeAuthError(
+            configState === 'invalid'
+              ? 'supabase_config_invalid'
+              : 'supabase_unconfigured',
+          ),
+        }
+      }
+      // Invitation activation must keep the verified invite session alive long
+      // enough to accept the workspace invitation. The activation page signs
+      // out explicitly only after both steps have succeeded.
+      return updateUserPassword(client, password)
+    },
+    [configState],
+  )
+
+  const completeAccountActivationSignOut = useCallback(async () => {
+    const client = clientRef.current
+    transitionToUnauthenticated()
+    setNotice('账号已激活，请使用新密码登录。')
+    if (client) await signOutOfSupabase(client, SIGN_OUT_SCOPE)
+  }, [transitionToUnauthenticated])
+
   const updateProfile = useCallback(
     async (
       input: ProfileEditableInput,
@@ -609,6 +637,8 @@ export function AuthProvider({
       signOut,
       requestPasswordReset,
       updatePassword,
+      setInitialPassword,
+      completeAccountActivationSignOut,
       updateProfile,
       refreshProfile,
       retryAuthCheck,
@@ -627,6 +657,8 @@ export function AuthProvider({
       signOut,
       requestPasswordReset,
       updatePassword,
+      setInitialPassword,
+      completeAccountActivationSignOut,
       updateProfile,
       refreshProfile,
       retryAuthCheck,

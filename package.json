@@ -24,6 +24,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
+    "test:edge": "vitest run supabase/functions/invite-workspace-member/handler.test.ts",
     "test:watch": "vitest",
     "security:build": "node scripts/check-supabase-build-gate.mjs",
     "security:audit": "npm audit --audit-level=high",

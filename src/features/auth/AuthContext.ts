@@ -52,6 +52,8 @@ export type AuthContextValue = {
   signOut: () => Promise<void>
   requestPasswordReset: (email: string) => Promise<AuthServiceResult>
   updatePassword: (password: string) => Promise<AuthServiceResult>
+  setInitialPassword: (password: string) => Promise<AuthServiceResult>
+  completeAccountActivationSignOut: () => Promise<void>
   updateProfile: (
     input: Pick<Profile, 'display_name' | 'organization_name' | 'title'>,
   ) => Promise<AuthServiceResult<Profile>>

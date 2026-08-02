@@ -167,6 +167,12 @@ site_url = "http://127.0.0.1:3000"
 additional_redirect_urls = [
   "http://127.0.0.1:3000/reset-password",
   "http://localhost:3000/reset-password",
+  "http://127.0.0.1:3000/activate-account",
+  "http://localhost:3000/activate-account",
+  "http://127.0.0.1:5173/reset-password",
+  "http://localhost:5173/reset-password",
+  "http://127.0.0.1:5173/activate-account",
+  "http://localhost:5173/activate-account",
 ]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
@@ -224,9 +230,10 @@ web3 = 30
 # secret = ""
 
 [auth.email]
-# Allow/disallow new user signups via email to your project. Task 1.3 forbids public
-# self-registration; accounts are provisioned by authorized server-side flows only.
-enable_signup = false
+# Keep the email provider available for existing-account login, password recovery
+# and trusted Auth Admin invitations. Public self-registration remains blocked by
+# the enclosing auth.enable_signup = false gate above.
+enable_signup = true
 # If enabled, a user will be required to confirm any email change on both the old, and new email
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true
@@ -380,7 +387,7 @@ authorization_url_path = "/oauth/consent"
 allow_dynamic_registration = false
 
 [edge_runtime]
-enabled = false
+enabled = true
 # Supported request policies: `oneshot`, `per_worker`.
 # `per_worker` (default) — enables hot reload during local development.
 # `oneshot` — fallback mode if hot reload causes issues (e.g. in large repos or with symlinks).
@@ -389,6 +396,11 @@ policy = "per_worker"
 inspector_port = 8083
 # The Deno major version to use.
 deno_version = 2
+
+[functions.invite-workspace-member]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/invite-workspace-member/index.ts"
 
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"

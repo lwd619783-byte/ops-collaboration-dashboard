@@ -1,16 +1,16 @@
 # 运维协同看板
 
-> Task 0.2 设计系统和响应式页面骨架已经封板。Task 1.1 建立可复现的本地 Supabase migration、类型生成、数据库测试与系统健康页。Task 1.2 在登录之前落地统一系统用户与多身份数据模型（`app_users` / `profiles` / `user_identities` / `identity_binding_challenges` 及解析边界、RLS 与权限矩阵）。Task 1.3 落地网页登录（邮箱 + 密码）、密码找回 / 重置、个人资料编辑与受保护路由：业务页面只允许通过 `current_app_user_id()` 解析到有效内部身份的会话访问，登录 / 找回 / 重置使用独立认证布局，配置了本地 Auth（禁匿名、禁公开注册、仅 loopback 站点与回调地址、本地邮件捕获）。仍不含工作空间、项目 / 任务 / 提醒等业务数据。正式上线仍以独立远端审计、PR CI 和 Squash 合并为准。
+> Task 0.2 设计系统和响应式页面骨架已经封板。Task 1.1 建立可复现的本地 Supabase migration、类型生成、数据库测试与系统健康页。Task 1.2 落地统一系统用户与多身份解析边界。Task 1.3 落地网页登录、密码恢复、个人资料与受保护路由。Task 1.4 新增工作空间、成员角色和状态、默认工作空间受控初始化、服务端邀请、首次激活及成员管理页；业务身份仍只通过 `current_app_user_id()` 解析，浏览器不持有高权限凭据。项目 / 任务 / 提醒等业务数据仍未实现。正式上线仍以独立远端审计、PR CI 和 Squash 合并为准。
 
 一个面向互联网部署的轻量化运维协同看板前端工程。
 
 ## 当前状态
 
-Task 0.1 工程基线和 Task 0.2 设计系统已建立。Task 1.1 增加 Supabase JavaScript 客户端、本地 CLI 项目、基础 migration、pgTAP、生成数据库类型、类型漂移门禁、独立数据库 CI，以及 `/system-health` 健康页。Task 1.2 增加统一身份数据模型、解析函数、RLS 与权限矩阵，以及对应的 pgTAP 与前端夹具测试（详见 [统一身份模型](docs/identity-model.md)）。Task 1.3 增加网页认证闭环：AuthProvider 状态机、安全错误映射、安全 returnTo、登录 / 忘记密码 / 重置密码页、受保护路由、个人资料编辑与退出登录；认证过程始终通过 `current_app_user_id()` 解析内部 `app_users.id`，Auth UUID 不作为业务键。正式完成以远端独立审计和 PR 合并为准。
+Task 0.1 至 Task 1.3 已建立前端、数据库、统一身份与网页登录基线。Task 1.4 增加 `workspaces`、`workspace_members`、`workspace_invitations`，四级角色与成员 / 邀请状态机，默认拒绝 RLS、最小 RPC、Auth 原子预配置 trigger，以及受信任 `invite-workspace-member` Edge Function。前端提供工作空间门禁、成员目录、owner/admin 管理入口和首次受邀激活页；邀请邮箱在业务数据库只保留 SHA-256 摘要和遮罩提示。详见 [工作空间与成员权限](docs/workspace-permissions.md)。正式完成仍以远端独立审计和 PR 合并为准。
 
 ## 第一阶段边界
 
-当前数据库包含通用 `updated_at` trigger function、不读取业务数据的健康检查 RPC，以及 Task 1.2 的统一身份模型（`app_users`、`profiles`、`user_identities`、`identity_binding_challenges` 及相关解析函数与 RLS）。前端已提供邮箱密码登录、密码重置、个人资料编辑与受保护路由；但**不含**公开注册、管理员邀请、工作空间、项目 / 成员 / 模块 / 任务管理、提醒、微信登录 / 小程序 / CloudBase、账号绑定 / 合并流程或真实业务数据。数据库仍只以 `current_app_user_id()` 作为业务访问边界，未新增业务表或弱化 Task 1.2 的安全约束。
+当前数据库包含健康检查、统一身份模型以及 Task 1.4 工作空间权限模型。前端已提供邮箱密码登录、密码恢复、个人资料、工作空间门禁、成员目录与邀请激活闭环。Task 1.4 只处理工作空间级别的成员关系，不含公开注册、项目 CRUD、项目角色 / 模块、任务 / 进展 / 验收 / 提醒、工作空间所有权转移 / 删除、成员永久删除、批量邀请、完整撤销 / 重发界面、确认 Auth 用户跨空间自动加入、账号绑定 / 合并、微信 / 小程序 / CloudBase、飞书、通用审计日志、生产 SMTP 或远端部署。
 
 ## 技术栈
 
@@ -71,7 +71,7 @@ npm run check
 
 Vite 会在构建阶段把使用到的 `VITE_*` 值写入客户端包，因此生产环境只能配置 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_PUBLISHABLE_KEY`。部分配置、无效 URL、secret key、service-role JWT 或高权限数据库变量会让 Vite 在启动或构建前直接失败，错误不会输出变量值。客户端工厂不接受调用方传入的 URL 或 key，只能读取并使用通过共享验证器的环境配置。
 
-数据库 migration 已撤销未来 `public` schema 函数的默认执行权限；每个需要公开的 RPC 都必须在创建后显式、审阅并授予目标角色。当前仍未连接远端 Supabase、未配置生产 Vercel，也未实现登录页面、受保护路由或真实的绑定 / 认证 / 微信 / CloudBase 流程。
+数据库 migration 已撤销未来 `public` schema 函数的默认执行权限；每个需要公开的 RPC 都必须在创建后显式、审阅并授予目标角色。工作空间邀请的 Auth Admin 调用只存在于 Edge Function，读取 Supabase 托管的服务端环境变量；secret key、service-role key、数据库连接串均不进入 `VITE_*`、浏览器包或仓库。当前仍未连接或修改远端 Supabase，也未配置生产 Vercel。
 
 ## 目录结构
 
@@ -98,4 +98,4 @@ src/
 
 ## 当前未实现功能
 
-本仓库已实现身份模型的数据结构、解析边界与 RLS，以及网页登录 / 密码重置 / 个人资料 / 受保护路由；但**尚未实现**公开注册、管理员邀请与成员管理、工作空间、项目协同、任务管理、提醒、微信登录 / 小程序 / CloudBase、账号绑定 / 合并流程或远端 Supabase 部署；这些能力只能在新的、明确授权的任务中增加。
+本仓库已实现身份、认证和工作空间成员权限 V1；但**尚未实现**公开注册、项目协同、项目成员 / 角色、任务 / 进展 / 验收 / 提醒、工作空间所有权转移 / 删除、成员永久删除、批量邀请、完整邀请撤销 / 重发界面、确认 Auth 用户跨工作空间自动加入、微信 / 小程序 / CloudBase、飞书、通用审计日志、生产 SMTP、Vercel 生产配置或远端 Supabase 部署。这些能力只能在新的、明确授权的任务中增加。

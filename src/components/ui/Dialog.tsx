@@ -8,12 +8,16 @@ type DialogProps = {
   title: string
   description: string
   confirmLabel?: string
+  confirmDisabled?: boolean
+  confirmLoading?: boolean
   danger?: boolean
   children?: ReactNode
 }
 export function Dialog({
   children,
   confirmLabel = '确认',
+  confirmDisabled = false,
+  confirmLoading = false,
   danger = false,
   description,
   onClose,
@@ -68,11 +72,20 @@ export function Dialog({
         <p id={descriptionId}>{description}</p>
         {children}
         <div className="dialog-actions">
-          <Button onClick={onClose} variant="secondary">
+          <Button
+            disabled={confirmLoading}
+            onClick={onClose}
+            variant="secondary"
+          >
             取消
           </Button>
           {onConfirm && (
-            <Button onClick={onConfirm} variant={danger ? 'danger' : 'primary'}>
+            <Button
+              disabled={confirmDisabled}
+              loading={confirmLoading}
+              onClick={onConfirm}
+              variant={danger ? 'danger' : 'primary'}
+            >
               {confirmLabel}
             </Button>
           )}

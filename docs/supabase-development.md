@@ -100,10 +100,21 @@ Vercel 将来同样只需要配置这两个公开变量。Vite 会在开发或�
 
 publishable key 面向低权限客户端；secret key、旧式 service role key、数据库密码和连接串都属于高权限凭据，绝不能使用 `VITE_` 前缀、进入浏览器代码或提交到仓库。失败门禁不会记录 URL、key 或完整环境对象，并会阻止失败产物留在 `dist`。
 
-本地开发可接受 `localhost` 或 `127.0.0.1` 的 HTTP URL；托管地址必须使用 HTTPS。客户端工厂只有无参数生产接口，不能接收调用方传入的 URL、key 或配置结果；只有共享验证器返回安全配置后才会创建受控单例。当前客户端关闭认证会话持久化，因为登录尚未实现。
+本地开发可接受 `localhost` 或 `127.0.0.1` 的 HTTP URL；托管地址必须使用 HTTPS。客户端工厂只有无参数生产接口，不能接收调用方传入的 URL、key 或配置结果；只有共享验证器返回安全配置后才会创建受控单例。Task 1.3 起客户端启用正式网页登录所需的会话能力：`persistSession: true`、`autoRefreshToken: true`、`detectSessionInUrl: true` 与 PKCE 流程；浏览器始终只持有低权限 publishable 凭据与会话，绝不持有 `service_role` 或任何高权限配置。
+
+## 本地 Auth
+
+`supabase/config.toml` 已启用本地 Auth（`[auth] enabled = true`），并保持安全边界：
+
+- 禁止匿名登录、禁止公开注册（`enable_signup = false`）；
+- `site_url` 与 `additional_redirect_urls` 只允许 loopback 受控地址；密码恢复流程重定向到应用受控的 `/reset-password`；
+- 本地邮件捕获（`[local_smtp] enabled = true`，Inbucket）用于验证找回 / 重置流程，不配置真实 SMTP、不提交邮件账号或密钥；
+- 不登录、不链接远端 Supabase，不执行远端 `db push`。
+
+浏览器通过 `current_app_user_id()`（读取已验证 JWT 的 `request.jwt.claims`）解析内部 `app_users.id`，随后按 RLS 读取 / 更新自己的 `app_users` / `profiles`；Auth UUID 只存在于 `user_identities.provider_subject`，不作为业务键。网页登录、找回、重置与个人资料的实现见 `src/features/auth/` 与 `src/pages/auth/`，错误统一经 `src/features/auth/errors.ts` 脱敏映射，界面不显示原始 Supabase 错误、token、表名或内部信息。
 
 ## 将来的远端连接
 
-后续独立任务在完成安全审计后，可以由获授权人员执行 `supabase login` 与 `supabase link`，再按受控流程应用 migration。本任务不登录、不链接任何远端项目，不配置生产 Vercel 环境变量，也不提前实现登录或业务 RLS。
+后续独立任务在完成安全审计后，可以由获授权人员执行 `supabase login` 与 `supabase link`，再按受控流程应用 migration。本任务不登录、不链接任何远端项目，不配置生产 Vercel 环境变量，也不提前实现业务 RLS 或远端 Auth 管理。
 
 不得对生产数据库运行 `db reset` 或其他破坏性重建命令。登录、RLS 业务表和远端部署都需要在后续任务重新进行权限与数据边界审计。

@@ -1,16 +1,16 @@
 # 运维协同看板
 
-> Task 0.2 设计系统和响应式页面骨架已经封板。Task 1.1 建立可复现的本地 Supabase migration、类型生成、数据库测试与系统健康页。Task 1.2 在登录之前落地统一系统用户与多身份数据模型（`app_users` / `profiles` / `user_identities` / `identity_binding_challenges` 及解析边界、RLS 与权限矩阵），但**不含登录页面、受保护路由或真实的绑定 / 认证 / 微信 / CloudBase 流程**，也不含真实业务数据。正式上线仍以独立远端审计、PR CI 和 Squash 合并为准。
+> Task 0.2 设计系统和响应式页面骨架已经封板。Task 1.1 建立可复现的本地 Supabase migration、类型生成、数据库测试与系统健康页。Task 1.2 在登录之前落地统一系统用户与多身份数据模型（`app_users` / `profiles` / `user_identities` / `identity_binding_challenges` 及解析边界、RLS 与权限矩阵）。Task 1.3 落地网页登录（邮箱 + 密码）、密码找回 / 重置、个人资料编辑与受保护路由：业务页面只允许通过 `current_app_user_id()` 解析到有效内部身份的会话访问，登录 / 找回 / 重置使用独立认证布局，配置了本地 Auth（禁匿名、禁公开注册、仅 loopback 站点与回调地址、本地邮件捕获）。仍不含工作空间、项目 / 任务 / 提醒等业务数据。正式上线仍以独立远端审计、PR CI 和 Squash 合并为准。
 
 一个面向互联网部署的轻量化运维协同看板前端工程。
 
 ## 当前状态
 
-Task 0.1 工程基线和 Task 0.2 设计系统已建立。Task 1.1 增加 Supabase JavaScript 客户端、本地 CLI 项目、基础 migration、pgTAP、生成数据库类型、类型漂移门禁、独立数据库 CI，以及 `/system-health` 健康页。Task 1.2 增加统一身份数据模型、解析函数、RLS 与权限矩阵，以及对应的 pgTAP 与前端夹具测试（详见 [统一身份模型](docs/identity-model.md)）。正式完成以远端独立审计和 PR 合并为准。
+Task 0.1 工程基线和 Task 0.2 设计系统已建立。Task 1.1 增加 Supabase JavaScript 客户端、本地 CLI 项目、基础 migration、pgTAP、生成数据库类型、类型漂移门禁、独立数据库 CI，以及 `/system-health` 健康页。Task 1.2 增加统一身份数据模型、解析函数、RLS 与权限矩阵，以及对应的 pgTAP 与前端夹具测试（详见 [统一身份模型](docs/identity-model.md)）。Task 1.3 增加网页认证闭环：AuthProvider 状态机、安全错误映射、安全 returnTo、登录 / 忘记密码 / 重置密码页、受保护路由、个人资料编辑与退出登录；认证过程始终通过 `current_app_user_id()` 解析内部 `app_users.id`，Auth UUID 不作为业务键。正式完成以远端独立审计和 PR 合并为准。
 
 ## 第一阶段边界
 
-当前数据库包含通用 `updated_at` trigger function、不读取业务数据的健康检查 RPC，以及 Task 1.2 的统一身份模型（`app_users`、`profiles`、`user_identities`、`identity_binding_challenges` 及相关解析函数与 RLS）。它**不包含**登录页面、受保护路由、真实的绑定 / 认证 / 微信 / CloudBase 流程、工作空间、项目 / 成员 / 模块 / 任务管理、提醒、个人待办、业务审计日志或真实业务数据。
+当前数据库包含通用 `updated_at` trigger function、不读取业务数据的健康检查 RPC，以及 Task 1.2 的统一身份模型（`app_users`、`profiles`、`user_identities`、`identity_binding_challenges` 及相关解析函数与 RLS）。前端已提供邮箱密码登录、密码重置、个人资料编辑与受保护路由；但**不含**公开注册、管理员邀请、工作空间、项目 / 成员 / 模块 / 任务管理、提醒、微信登录 / 小程序 / CloudBase、账号绑定 / 合并流程或真实业务数据。数据库仍只以 `current_app_user_id()` 作为业务访问边界，未新增业务表或弱化 Task 1.2 的安全约束。
 
 ## 技术栈
 
@@ -77,11 +77,11 @@ Vite 会在构建阶段把使用到的 `VITE_*` 值写入客户端包，因此�
 
 ```text
 src/
-  app/          # 应用组合、布局、路由与后续 Provider
+  app/          # 应用组合、布局、路由与 Provider
   components/   # 可复用的反馈、表单和 UI 组件
-  features/     # 按业务功能组织的代码
+  features/     # 按业务功能组织的代码（含 auth 认证特性）
   lib/          # 通用工具
-  pages/        # 路由页面
+  pages/        # 路由页面（含 auth 认证页面）
   tests/        # 测试初始化与应用测试
   types/        # 共享类型
 ```
@@ -94,8 +94,8 @@ src/
 
 ## Vercel 部署
 
-在 Vercel 中导入仓库后，使用默认的 Vite 构建识别即可：构建命令为 `npm run build`，输出目录为 `dist`。`vercel.json` 为 React Router 的直接访问提供 SPA 回退，不包含令牌或临时预览地址。部署需由已获授权的人员在 Vercel 中发起。
+在 Vercel 中导入仓库后，使用默认的 Vite 构建识别即可：构建命令为 `npm run build`，输出目录为 `dist`。`vercel.json` 为 React Router 的直接访问提供 SPA 回退，不包含令牌或临时预览地址。部署需由已获授权的人员在 Vercel 中发起。生产环境只需配置 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_PUBLISHABLE_KEY`。
 
 ## 当前未实现功能
 
-本仓库已实现身份模型的数据结构、解析边界与 RLS，但**尚未实现**登录页面、受保护路由、真实的绑定 / 认证 / 微信 / CloudBase 流程、项目协同、任务管理、提醒或远端 Supabase 部署；这些能力只能在新的、明确授权的任务中增加。
+本仓库已实现身份模型的数据结构、解析边界与 RLS，以及网页登录 / 密码重置 / 个人资料 / 受保护路由；但**尚未实现**公开注册、管理员邀请与成员管理、工作空间、项目协同、任务管理、提醒、微信登录 / 小程序 / CloudBase、账号绑定 / 合并流程或远端 Supabase 部署；这些能力只能在新的、明确授权的任务中增加。

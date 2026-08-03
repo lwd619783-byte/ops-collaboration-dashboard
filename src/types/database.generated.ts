@@ -414,7 +414,11 @@ export type Database = {
       }
       current_app_user_id: { Args: never; Returns: string }
       finalize_workspace_invitation_reissue: {
-        Args: { p_invitation_id: string }
+        Args: {
+          p_invitation_id: string
+          p_provider_subject: string
+          p_provider_tenant: string
+        }
         Returns: Database["public"]["Enums"]["workspace_invitation_status"]
       }
       health_check: {

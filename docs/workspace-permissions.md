@@ -66,9 +66,10 @@ reissue_prepared --------> sent -> accepted
 1. **首次邀请**（`new_auth_user_invite`）：没有可复用的受邀身份时，创建不带 `invitee_user_id` 的 `prepared` 邀请；Edge Function 调用 Auth Admin，由 `auth.users` AFTER INSERT trigger 原子预配置内部用户并推进到 `sent`。已过期的 `prepared` 邀请会在同一锁内先关闭为 `revoked`。
 2. **已有受邀身份的重发**（`existing_invitee_reissue`）：同一工作空间与邮箱摘要下存在**已过期**的 `sent`（或 `reissue_prepared`）邀请，其 `invitee_user_id`、对应 membership（仍 `invited`）、内部用户（`active`）与身份（已验证且未撤销）都仍然有效时，把旧邀请关闭为 `revoked`（写入 `revoked_at`），并创建关联 `reissue_of_invitation_id`、保留原 `invitee_user_id` 的 `reissue_prepared` 邀请。重发**不创建**第二个内部用户、第二条身份或第二条 membership，也**不重新启用**旧邀请。
 3. **无法重发的过期邀请**：invitee 已停用 / 合并、身份已撤销、或 membership 已不再是 `invited` 时，拒绝本次准备（`workspace_invitation_invitee_invalid`），旧邀请保持原状；这类用户需要受控运维流程处理。
-4. **已确认 Auth 用户冲突**：业务层无法预知 Auth 邮箱是否已确认；重发调用 Auth Admin 时若返回 `email_exists` 冲突，新邀请被补偿为 `failed`（`auth_user_conflict`），返回稳定冲突错误。**已确认账号按邮箱跨工作空间加入仍属于后续任务**，不会与本流程混为一谈。
+4. **可恢复失败（recoverable failure）**：`temporary_failure`、`auth_invite_failed` 或 finalize 失败后的安全补偿会让邀请进入 `failed` 终态，但 invitee 仍然有效。管理员使用**新幂等键**再次准备时，lineage 规则保证返回 `existing_invitee_reissue`（创建 `reissue_prepared`），**绝不退回**普通 `new_auth_user_invite`。同一网络请求重试复用旧键（不重复发信）；用户显式重新发起邀请时生成新键，新键可能再次发送一封邮件——这是显式恢复，不是网络自动重试。
+5. **稳定 Auth 冲突（auth_user_conflict）**：`failure_code = 'auth_user_conflict'` 表示 Auth 用户已确认或处于不支持的账户状态。该状态返回固定安全冲突 `workspace_invitation_auth_user_conflict`，**不创建**普通 prepared，**不重发**邮件，也不创建第二套身份。已确认账号自动绑定 / 跨工作空间加入仍不在 Task 1.4 范围。
 
-`accepted`、`failed`、`revoked` 以及尚未过期的邀请绝不会被过期流程修改；尚未过期的开放邀请仍会阻止同摘要的新邀请（普通邀请冲突）。重发请求的目标角色必须与既有邀请 / membership 一致，否则返回 `workspace_invitation_role_conflict`。
+`accepted`、`failed`、`revoked` 以及尚未过期的邀请绝不会被过期流程修改；尚未过期的开放邀请仍会阻止同摘要的新邀请（普通邀请冲突）。重发请求的目标角色必须与既有邀请 / membership 一致，否则返回 `workspace_invitation_role_conflict`。**一旦某个邮箱摘要下存在合法内部 invitee，后续准备永远不能退回普通 `new_auth_user_invite` 路径**——lineage 查找覆盖 `sent`、`reissue_prepared`、`failed`（recoverable）和带 invitee 的 `revoked` 历史。
 
 ## RLS、RPC 与最小授权
 
@@ -88,7 +89,7 @@ reissue_prepared --------> sent -> accepted
 
 - `bootstrap_default_workspace(...)`
 - `mark_workspace_invitation_failed(...)`
-- `finalize_workspace_invitation_reissue(invitation_id)`：只能由 `service_role` 执行；把处于合法 reissue 状态的邀请推进为 `sent` 并写入 `sent_at`，锁定新邀请、被替换的旧邀请、membership 与 invitee 并验证关系一致，重复调用幂等，失败返回静态错误码。浏览器与 `authenticated` 无执行权。
+- `finalize_workspace_invitation_reissue(invitation_id, provider_tenant, provider_subject)`：只能由 `service_role` 执行；把处于合法 reissue 状态的邀请推进为 `sent` 并写入 `sent_at`。在同一事务内验证 invitee 的 `supabase_auth` 身份的 `provider_tenant` 与 `provider_subject`（Auth Admin 返回的 user ID）完全匹配、身份已验证且未撤销、`app_user` active、membership 仍 invited、被替换的源邀请关系正确且未过期。重复调用幂等，任一条件不符返回静态错误码（不泄露 expected/actual user ID、邮箱或 identity 数据）。浏览器与 `authenticated` 无执行权。
 
 所有边界函数均为 `SECURITY DEFINER`、封闭 `search_path`、显式 schema 限定、静态错误文本和最小 EXECUTE 授权。成员目录仅返回显示名称、单位 / 职位、头像、角色、状态及成员时间，不返回邮箱、`contact_info`、身份 subject、JWT 或 Auth 管理数据。目录使用安全 `LEFT JOIN`：`profiles` 行缺失的成员仍然出现，显示名称回退为固定文案"未设置显示名称"，`avatar_url` / `organization_name` / `title` 返回 null，排序保持不变；`profiles` 自身的 RLS 不做任何放宽。目录额外返回 `pending_invitation` 布尔值（仅统计该成员名下未过期的 `sent` 邀请），前端据此把 `invited` 成员区分为"待激活"（存在有效邀请）与"待重新邀请"（邀请已过期、需要受控重发），避免展示一条永远无法恢复的成员。
 
@@ -153,10 +154,10 @@ git diff --check
 
 `db:verify` 从空库重建 migration，执行 pgTAP、数据库 lint 和生成类型漂移检查。`test:edge` 明确运行两个文件——`handler.test.ts`（真实 Request / Response 处理器行为：认证依赖、数据库准备、Auth Admin 调用、幂等短路、失败补偿与 reissue 分支）与 `entry.test.ts`（真实入口接线：publishable / secret 分离、调用者 Authorization 透传、provider tenant 不可伪造、补偿与 finalize 走 admin client、环境值不进日志）。CI 同时用固定版本 Deno（2.2.12）对真实 `index.ts` 执行 `deno check`。
 
-真实本地 Auth 重发集成验证（需本地栈 + 一次性安装的 pg 驱动，见脚本头部注释）：
+真实本地 Auth 重发集成验证（`pg` 已作为仓库 dev dependency，`npm ci` 后直接可跑）：
 
 ```bash
-OPS_INTEGRATION_NODE_MODULES=<pg 所在 node_modules> npm run db:reissue:verify
+npm run db:reissue:verify
 ```
 
-脚本驱动真实 `inviteUserByEmail`、真实 Mailpit 邮件与带会话角色 / JWT claims GUC 的数据库 RPC，断言首次邀请、过期重发、复用同一 Auth 用户 / 内部用户 / 身份 / membership、第二封邮件、finalize、pending 列表、接受激活与旧邀请拒绝。纯测试夹具使用 `.invalid`；本地 Auth 会拒绝该保留域，因此真实邮件闭环使用明显虚构的 `example.com` 地址，脚本输出不包含邮箱全文、链接、OTP、token 或密钥。
+脚本驱动真实 `inviteUserByEmail`、真实 Mailpit 邮件与带会话角色 / JWT claims GUC 的数据库 RPC，并**打开第二封邀请邮件的 verify 链接、建立真实 Supabase 会话**，断言会话对应的 Auth user ID 等于首次邀请的原 user ID，再用该真实会话（而非手工 claims）执行 `list_my_pending_workspace_invitations` 与 `accept_workspace_invitation`。覆盖首次邀请、过期重发、复用同一 Auth 用户 / 内部用户 / 身份 / membership、finalize 身份校验、recoverable failed reissue 恢复（`existing_invitee_reissue`，不退回普通 prepared）、`auth_user_conflict` 稳定冲突、第二封邮件、pending 列表、接受激活与旧邀请拒绝。脚本输出只显示固定检查名称与数量，不包含邮箱全文、链接、token、OTP 或密钥。该集成检查已纳入 Database CI（`db:verify` 成功后运行）。

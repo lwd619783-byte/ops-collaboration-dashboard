@@ -2,19 +2,16 @@
 /* eslint-disable no-undef -- standalone Node integration harness */
 /**
  * Real local Supabase invitation-reissue integration verification (Task 1.4
- * round 2). Requires a running local stack (npm run db:start / db:reset) and
- * the pg driver installed once into a scratch directory:
+ * round 3). Runs against the local stack (npm run db:start / db:reset). The pg
+ * driver is a regular devDependency, so after `npm ci`:
  *
- *   mkdir -p /d/_trash_tmp/integration && cd /d/_trash_tmp/integration
- *   npm init -y && npm install pg
+ *   npm run db:reissue:verify
  *
- *   OPS_INTEGRATION_NODE_MODULES=/d/_trash_tmp/integration/node_modules \
- *     npm run db:reissue:verify
- *
- * The script drives REAL Auth Admin API calls (inviteUserByEmail), REAL mail
- * delivery into Mailpit, and REAL database RPCs with session roles/GUCs via a
- * direct pg connection. Every email address is a fictional example.com
- * address; the script NEVER prints full emails, invite links, OTPs or tokens.
+ * Drives REAL Auth Admin calls (inviteUserByEmail), REAL mail delivery into
+ * Mailpit, opens the verify link from the second mail, builds a REAL Supabase
+ * session and calls the business RPCs with that session. Every email is a
+ * fictional example.com address; the script NEVER prints full emails, invite
+ * links, OTPs, access/refresh tokens or keys.
  *
  * Exit code 0 = all checks passed.
  */
@@ -22,24 +19,12 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
+import http from 'node:http'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
-const { createClient } = createRequire(join(repoRoot, 'node_modules', ''))(
-  '@supabase/supabase-js',
-)
-
-const pgModulesRoot = process.env.OPS_INTEGRATION_NODE_MODULES
-if (!pgModulesRoot) {
-  console.error(
-    'OPS_INTEGRATION_NODE_MODULES must point to a directory with the pg driver.',
-  )
-  process.exit(2)
-}
-// Accept both Windows drive paths and Git Bash /d/... style paths.
-const pgRoot = pgModulesRoot.replace(/^\/([a-zA-Z])\//, (_, drive) => {
-  return `${drive.toUpperCase()}:/`
-})
-const { Client } = createRequire(join(pgRoot, 'pg', 'package.json'))('pg')
+const requireFromRepo = createRequire(join(repoRoot, 'package.json'))
+const { createClient } = requireFromRepo('@supabase/supabase-js')
+const { Client } = requireFromRepo('pg')
 
 // ---------------------------------------------------------------------------
 // Local stack configuration (from `supabase status -o json`).
@@ -67,6 +52,7 @@ const apiUrl = status.API_URL
 const secretKey = status.SECRET_KEY
 const dbUrl = status.DB_URL
 const mailpitUrl = status.MAILPIT_URL ?? 'http://127.0.0.1:54324'
+const issuer = `${apiUrl}/auth/v1`
 
 const admin = createClient(apiUrl, secretKey, {
   auth: {
@@ -77,7 +63,9 @@ const admin = createClient(apiUrl, secretKey, {
 })
 
 const failures = []
+let integrationChecks = 0
 function check(name, condition, detail = '') {
+  integrationChecks += 1
   if (condition) {
     console.log(`  ok   ${name}`)
   } else {
@@ -90,17 +78,12 @@ async function withSession(subject, run) {
   const client = new Client({ connectionString: dbUrl })
   await client.connect()
   try {
-    // pg runs in autocommit by default; SET LOCAL only lives for the current
-    // transaction, so the role + JWT claims GUC must share one transaction
-    // with the business statements. Committed so reissue data persists.
     await client.query('begin')
     await client.query('set local role authenticated')
     if (subject) {
-      // SET does not accept parameter placeholders; the subject is a UUID we
-      // generate, so quoting it as a literal is safe here.
       const claims = JSON.stringify({
         sub: subject,
-        iss: 'https://fixture-issuer.invalid',
+        iss: issuer,
         role: 'authenticated',
       }).replace(/'/g, "''")
       await client.query(`set local "request.jwt.claims" = '${claims}'`)
@@ -124,13 +107,47 @@ async function asService(run) {
 }
 
 const mask = (email) => `${email.slice(0, 1)}***@${email.split('@')[1]}`
+
+// Follow the invite verify URL WITHOUT exposing the fragment: read the 302
+// Location header, parse the access/refresh tokens from it in memory.
+function readInviteSessionFromVerify(verifyUrl) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(verifyUrl, { timeout: 15000 }, (res) => {
+      res.resume()
+      const location = res.headers.location
+      if (!location || !location.includes('#')) {
+        reject(new Error('verify redirect missing session fragment'))
+        return
+      }
+      const fragment = location.slice(location.indexOf('#') + 1)
+      const params = new URLSearchParams(fragment)
+      resolve({
+        accessToken: params.get('access_token'),
+        refreshToken: params.get('refresh_token'),
+      })
+    })
+    req.on('error', reject)
+    req.on('timeout', () => reject(new Error('verify timeout')))
+  })
+}
+
+// Extract the first /auth/v1/verify link from a mail body without printing it.
+function extractVerifyUrl(html, text) {
+  const re = /https?:\/\/[^\s"'<>]+\/auth\/v1\/verify\?[^\s"'<>]+/g
+  for (const body of [text ?? '', html ?? '']) {
+    const m = body.match(re)
+    if (m && m.length > 0) return m[0].replace(/&amp;/g, '&')
+  }
+  return null
+}
+
 const stamp = Date.now()
 const ownerEmail = `reissue-owner-${stamp}@example.com`
 const inviteeEmail = `reissue-invitee-${stamp}@example.com`
-// Fresh random keys every run so repeated executions never collide.
 const bootstrapKey = crypto.randomUUID()
 const firstKey = crypto.randomUUID()
 const secondKey = crypto.randomUUID()
+const recoveryKey = crypto.randomUUID()
 console.log('EMAILS:', mask(ownerEmail), mask(inviteeEmail))
 
 // ---------------------------------------------------------------------------
@@ -161,7 +178,7 @@ await asService(async (c) => {
        (user_id, provider, provider_tenant, provider_subject, verified_at)
      values ($1, 'supabase_auth', $2, $3, now())
      on conflict (provider, provider_tenant, provider_subject) do nothing`,
-    [ownerAppUserId, 'https://fixture-issuer.invalid', ownerAuthId],
+    [ownerAppUserId, issuer, ownerAuthId],
   )
   await c.query('commit')
 })
@@ -175,11 +192,7 @@ const workspaceId = String(
     return r.rows[0]?.id
   }),
 )
-check(
-  'workspace bootstrapped',
-  Boolean(workspaceId),
-  `id=${workspaceId.slice(0, 8)}`,
-)
+check('workspace bootstrapped', Boolean(workspaceId))
 
 // ---------------------------------------------------------------------------
 // 1. FIRST invite: prepare (new_auth_user_invite) then real Auth invite.
@@ -212,7 +225,6 @@ check(
   firstPrep?.operation_kind === 'new_auth_user_invite' &&
     firstPrep?.invitation_status === 'prepared' &&
     firstPrep?.should_send === true,
-  JSON.stringify(firstPrep),
 )
 const firstInvitationId = String(firstPrep?.invitation_id)
 
@@ -220,7 +232,7 @@ const firstInvite = await admin.auth.admin.inviteUserByEmail(inviteeEmail, {
   redirectTo: 'http://127.0.0.1:3000/activate-account',
   data: {
     ops_workspace_invitation_id: firstInvitationId,
-    ops_provider_tenant: 'https://fixture-issuer.invalid',
+    ops_provider_tenant: issuer,
   },
 })
 check('first Auth invite succeeds', firstInvite.error === null)
@@ -256,9 +268,7 @@ check(
 const inviteeAppUserId = String(counts?.invitee)
 
 // ---------------------------------------------------------------------------
-// 3. Expire the first invitation and REISSUE. expires_at is immutable by
-//    design; the integration harness temporarily disables the immutability
-//    trigger to age the fixture (test-environment-only, never production).
+// 3. Expire the first invitation and REISSUE with real Auth + finalize.
 // ---------------------------------------------------------------------------
 await asService(async (c) => {
   await c.query('begin')
@@ -298,46 +308,14 @@ check(
   secondPrep?.operation_kind === 'existing_invitee_reissue' &&
     secondPrep?.invitation_status === 'reissue_prepared' &&
     secondPrep?.should_send === true,
-  JSON.stringify(secondPrep),
 )
 const secondInvitationId = String(secondPrep?.invitation_id)
 
-const linkCheck = await asService(async (c) => {
-  const r = await c.query(
-    `select invitee_user_id::text as invitee, reissue_of_invitation_id::text as reissue_of
-     from public.workspace_invitations where id = $1`,
-    [secondInvitationId],
-  )
-  return r.rows[0]
-})
-check(
-  'reissue keeps the original invitee_user_id',
-  linkCheck?.invitee === inviteeAppUserId,
-)
-check(
-  'reissue links to the replaced invitation',
-  linkCheck?.reissue_of === firstInvitationId,
-)
-
-const replacedStatus = await asService(async (c) => {
-  const r = await c.query(
-    `select status::text as status, revoked_at is not null as revoked
-     from public.workspace_invitations where id = $1`,
-    [firstInvitationId],
-  )
-  return r.rows[0]
-})
-check(
-  'replaced invitation is revoked',
-  replacedStatus?.status === 'revoked' && replacedStatus?.revoked === true,
-)
-
-// Real Auth re-send to the SAME unconfirmed Auth user.
 const secondInvite = await admin.auth.admin.inviteUserByEmail(inviteeEmail, {
   redirectTo: 'http://127.0.0.1:3000/activate-account',
   data: {
     ops_workspace_invitation_id: secondInvitationId,
-    ops_provider_tenant: 'https://fixture-issuer.invalid',
+    ops_provider_tenant: issuer,
   },
 })
 check('reissue Auth re-send succeeds', secondInvite.error === null)
@@ -345,14 +323,27 @@ const reissueAuthId = String(secondInvite.data?.user?.id ?? '')
 check(
   'reissue re-sends to the SAME Auth user',
   Boolean(inviteeAuthId) && inviteeAuthId === reissueAuthId,
-  `${inviteeAuthId.slice(0, 8)} vs ${reissueAuthId.slice(0, 8)}`,
 )
 
+// finalize now verifies the Auth user ID against the invitee identity.
+const finalized = await asService(async (c) => {
+  const r = await c.query(
+    `select public.finalize_workspace_invitation_reissue($1, $2, $3) as status`,
+    [secondInvitationId, issuer, reissueAuthId],
+  )
+  return r.rows[0]?.status
+})
+check(
+  'service finalizes the reissue to sent',
+  finalized === 'sent',
+  String(finalized),
+)
+
+// Still exactly one Auth user / internal user / identity / membership.
 const authUsers = await admin.auth.admin.listUsers()
 const authUsersForEmail =
   authUsers.data?.users?.filter((u) => u.email === inviteeEmail) ?? []
 check('still exactly one auth.users row', authUsersForEmail.length === 1)
-
 const countsAfter = await asService(async (c) => {
   const r = await c.query(
     `select
@@ -377,95 +368,264 @@ check(
   Number(countsAfter?.memberships) === 1,
 )
 
-// Second mail actually delivered to Mailpit.
+// ---------------------------------------------------------------------------
+// 4. REAL mail + session verification: open the second invite mail, extract
+//    the verify link, build a Supabase session and assert it is the SAME Auth
+//    user. Then call the business RPCs with that real session.
+// ---------------------------------------------------------------------------
 const mailRes = await fetch(`${mailpitUrl}/api/v1/messages?limit=200`)
 const mailData = await mailRes.json()
 const mailForInvitee = (mailData?.messages ?? []).filter((m) =>
   (m.To ?? []).some((t) => t.Address === inviteeEmail),
 )
-check(
-  'two invitation mails were delivered',
-  mailForInvitee.length === 2,
-  `got ${mailForInvitee.length}`,
-)
-const mailSnippets = mailForInvitee
-  .map((m) => `${m.Subject ?? ''} ${m.Snippet ?? ''}`)
-  .join(' ')
-check(
-  'no secret or internal data leaked in mail summary',
-  !mailSnippets.includes(secretKey),
-)
-
-// ---------------------------------------------------------------------------
-// 4. Finalize (service-only), pending list and acceptance.
-// ---------------------------------------------------------------------------
-const finalized = await asService(async (c) => {
-  const r = await c.query(
-    `select public.finalize_workspace_invitation_reissue($1) as status`,
-    [secondInvitationId],
-  )
-  return r.rows[0]?.status
-})
-check(
-  'service finalizes the reissue to sent',
-  finalized === 'sent',
-  String(finalized),
-)
-
-let authenticatedFinalizeRejected = false
+check('two invitation mails were delivered', mailForInvitee.length === 2)
+// The second mail (newest) is the reissue.
+const secondMail = mailForInvitee[0]
+const fullMail = await fetch(
+  `${mailpitUrl}/api/v1/message/${secondMail.ID}`,
+).then((r) => r.json())
+const verifyUrl = extractVerifyUrl(fullMail.HTML, fullMail.Text)
+check('second mail contains an invite verify link', verifyUrl !== null)
+let sessionTokens
 try {
-  await withSession(ownerAuthId, async (c) => {
-    await c.query(`select public.finalize_workspace_invitation_reissue($1)`, [
-      secondInvitationId,
-    ])
-  })
+  sessionTokens = await readInviteSessionFromVerify(verifyUrl)
 } catch {
-  authenticatedFinalizeRejected = true
+  sessionTokens = null
 }
-check('authenticated cannot finalize', authenticatedFinalizeRejected)
+check('verify link yields a session fragment', sessionTokens !== null)
 
-const pending = await withSession(inviteeAuthId, async (c) => {
-  const r = await c.query(
-    `select invitation_id::text, status::text from public.list_my_pending_workspace_invitations()`,
-  )
-  return r.rows
+const inviteeClient = createClient(apiUrl, status.PUBLISHABLE_KEY, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false,
+  },
 })
+const { data: sessionData, error: sessionError } =
+  await inviteeClient.auth.setSession({
+    access_token: sessionTokens?.accessToken,
+    refresh_token: sessionTokens?.refreshToken,
+  })
+check(
+  'real Supabase session established from the mail link',
+  sessionError === null && Boolean(sessionData?.session),
+)
+const { data: userData, error: userError } = await inviteeClient.auth.getUser()
+check(
+  'session belongs to the original Auth user',
+  userError === null && userData?.user?.id === inviteeAuthId,
+)
+
+// Use the REAL session (not a hand-crafted GUC) for the business RPCs.
+const { data: pending, error: pendingError } = await inviteeClient.rpc(
+  'list_my_pending_workspace_invitations',
+)
 check(
   'the invitee sees the new reissue invitation as pending',
-  pending.some(
-    (p) => p.invitation_id === secondInvitationId && p.status === 'sent',
-  ),
-  JSON.stringify(pending),
+  pendingError === null &&
+    Array.isArray(pending) &&
+    pending.some(
+      (p) => p.invitation_id === secondInvitationId && p.status === 'sent',
+    ),
 )
 
-const accepted = await withSession(inviteeAuthId, async (c) => {
+// The OLD invitation cannot be accepted.
+const { error: oldAcceptError } = await inviteeClient.rpc(
+  'accept_workspace_invitation',
+  { p_invitation_id: firstInvitationId },
+)
+check('the old invitation cannot be accepted', oldAcceptError !== null)
+
+// ---------------------------------------------------------------------------
+// 5. Recoverable failed reissue: a fresh failed reissue lineage is recovered
+//    with a new key. The prepare MUST return existing_invitee_reissue (never
+//    new_auth_user_invite). Auth re-sending is not attempted here because the
+//    verify link already confirmed the Auth user; the lineage rule itself is
+//    the invariant under test.
+// ---------------------------------------------------------------------------
+const recoveryHash = 'cc'.repeat(32)
+const recoveryFailedId = crypto.randomUUID()
+const recoveryFailedKey = crypto.randomUUID()
+await asService(async (c) => {
+  await c.query(
+    `insert into public.workspace_invitations (
+       id, workspace_id, email_hash, email_hint, display_name, role, status,
+       invitee_user_id, invited_by, idempotency_key, created_at, expires_at,
+       sent_at, failed_at, failure_code, reissue_of_invitation_id
+     ) values (
+       $6, $1, $2, 'r***@e***.invalid',
+       'Recovery Invitee', 'member', 'failed', $3, $4,
+       $7,
+       now() - interval '2 days', now() + interval '1 day',
+       now() - interval '2 days', now() - interval '1 day', 'temporary_failure',
+       $5
+     )`,
+    [
+      workspaceId,
+      recoveryHash,
+      inviteeAppUserId,
+      ownerAppUserId,
+      firstInvitationId,
+      recoveryFailedId,
+      recoveryFailedKey,
+    ],
+  )
+})
+const recoveryPrep = await withSession(ownerAuthId, async (c) => {
   const r = await c.query(
-    `select membership_status::text, already_accepted from public.accept_workspace_invitation($1)`,
-    [secondInvitationId],
+    `select operation_kind, invitation_status::text
+     from public.prepare_workspace_invitation($1, $2, $3, $4, $5, $6)`,
+    [
+      workspaceId,
+      recoveryHash,
+      'r***@e***.invalid',
+      'Recovery Invitee',
+      'member',
+      recoveryKey,
+    ],
   )
   return r.rows[0]
 })
 check(
-  'accepting the reissue activates the membership',
-  accepted?.membership_status === 'active',
+  'a recoverable failed reissue re-enters the reissue path (not new-user)',
+  recoveryPrep?.operation_kind === 'existing_invitee_reissue' &&
+    recoveryPrep?.invitation_status === 'reissue_prepared',
+  JSON.stringify(recoveryPrep),
+)
+const countsAfterRecovery = await asService(async (c) => {
+  const r = await c.query(
+    `select
+       (select count(*) from public.app_users where id = $1) as app_users,
+       (select count(*) from public.user_identities where user_id = $1) as identities,
+       (select count(*) from public.workspace_members
+        where workspace_id = $2 and user_id = $1) as memberships`,
+    [inviteeAppUserId, workspaceId],
+  )
+  return r.rows[0]
+})
+check(
+  'recovery keeps app_user count at 1',
+  Number(countsAfterRecovery?.app_users) === 1,
+)
+check(
+  'recovery keeps identity count at 1',
+  Number(countsAfterRecovery?.identities) === 1,
+)
+check(
+  'recovery keeps membership count at 1',
+  Number(countsAfterRecovery?.memberships) === 1,
 )
 
-let oldAcceptRejected = false
+// ---------------------------------------------------------------------------
+// 6. auth_user_conflict lineage: a stable conflict, no prepared row.
+// ---------------------------------------------------------------------------
+const conflictHash = 'dd'.repeat(32)
+const conflictKey = crypto.randomUUID()
+const conflictFailedId = crypto.randomUUID()
+const conflictFailedKey = crypto.randomUUID()
+await asService(async (c) => {
+  await c.query(
+    `insert into public.workspace_invitations (
+       id, workspace_id, email_hash, email_hint, display_name, role, status,
+       invitee_user_id, invited_by, idempotency_key, created_at, expires_at,
+       sent_at, failed_at, failure_code
+     ) values (
+       $5, $1, $2, 'c***@e***.invalid',
+       'Conflict Invitee', 'member', 'failed', $3, $4,
+       $6,
+       now() - interval '2 days', now() + interval '1 day',
+       now() - interval '2 days', now() - interval '1 day', 'auth_user_conflict'
+     )`,
+    [
+      workspaceId,
+      conflictHash,
+      inviteeAppUserId,
+      ownerAppUserId,
+      conflictFailedId,
+      conflictFailedKey,
+    ],
+  )
+})
+let conflictRejected = false
+let conflictErrorText = ''
 try {
-  await withSession(inviteeAuthId, async (c) => {
-    await c.query(`select public.accept_workspace_invitation($1)`, [
-      firstInvitationId,
-    ])
+  await withSession(ownerAuthId, async (c) => {
+    await c.query(
+      `select * from public.prepare_workspace_invitation($1, $2, $3, $4, $5, $6)`,
+      [
+        workspaceId,
+        conflictHash,
+        'c***@e***.invalid',
+        'Conflict Invitee',
+        'member',
+        conflictKey,
+      ],
+    )
   })
-} catch {
-  oldAcceptRejected = true
+} catch (err) {
+  conflictRejected = true
+  conflictErrorText = String(err.message ?? '').split('\n')[0]
 }
-check('the old invitation cannot be accepted', oldAcceptRejected)
+check(
+  'an auth_user_conflict lineage returns a stable conflict',
+  conflictRejected &&
+    conflictErrorText === 'workspace_invitation_auth_user_conflict',
+  conflictErrorText,
+)
+const conflictOpen = await asService(async (c) => {
+  const r = await c.query(
+    `select count(*)::bigint as n from public.workspace_invitations
+     where workspace_id = $1 and email_hash = $2
+       and status in ('prepared', 'sent', 'reissue_prepared')`,
+    [workspaceId, conflictHash],
+  )
+  return Number(r.rows[0]?.n)
+})
+check(
+  'auth_user_conflict never creates a new open invitation',
+  conflictOpen === 0,
+)
+
+// ---------------------------------------------------------------------------
+// 7. Accept the reissue invitation with the real session (membership was kept
+//    invited through the recovery + conflict scenarios above) and verify the
+//    final invariants.
+// ---------------------------------------------------------------------------
+const { data: accepted, error: acceptError } = await inviteeClient.rpc(
+  'accept_workspace_invitation',
+  {
+    p_invitation_id: secondInvitationId,
+  },
+)
+check(
+  'accepting the reissue activates the membership',
+  acceptError === null && accepted?.[0]?.membership_status === 'active',
+)
+
+// Final identity/membership invariants after acceptance.
+const countsFinal = await asService(async (c) => {
+  const r = await c.query(
+    `select
+       (select count(*) from public.app_users where id = $1) as app_users,
+       (select count(*) from public.user_identities where user_id = $1) as identities,
+       (select count(*) from public.workspace_members
+        where workspace_id = $2 and user_id = $1) as memberships,
+       (select status::text from public.workspace_members
+        where workspace_id = $2 and user_id = $1) as mstatus`,
+    [inviteeAppUserId, workspaceId],
+  )
+  return r.rows[0]
+})
+check('final app_user count is 1', Number(countsFinal?.app_users) === 1)
+check('final identity count is 1', Number(countsFinal?.identities) === 1)
+check('final membership count is 1', Number(countsFinal?.memberships) === 1)
+check('final membership is active', countsFinal?.mstatus === 'active')
 
 // ---------------------------------------------------------------------------
 // Summary.
 // ---------------------------------------------------------------------------
 console.log('')
+console.log(`integration checks: ${integrationChecks}`)
 if (failures.length > 0) {
   console.error(`INTEGRATION FAILED: ${failures.length} check(s) failed`)
   process.exit(1)

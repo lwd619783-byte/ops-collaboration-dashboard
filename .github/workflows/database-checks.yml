@@ -34,6 +34,8 @@ jobs:
         run: npx supabase db start
       - name: Verify migrations, tests, lint, and types
         run: npm run db:verify
+      - name: Run real Auth invitation-reissue integration checks
+        run: npm run db:reissue:verify
       - name: Stop local database
         if: always()
         run: npx supabase stop --no-backup

@@ -140,6 +140,18 @@ as $function$
   from public.workspace_invitations where id = p_id;
 $function$;
 
+create function pg_temp.open_invitation_count(p_workspace_id uuid, p_hash text)
+returns bigint
+language sql
+security definer
+set search_path = ''
+as $function$
+  select count(*) from public.workspace_invitations
+  where workspace_id = p_workspace_id
+    and email_hash = p_hash
+    and status in ('prepared', 'sent', 'reissue_prepared');
+$function$;
+
 grant execute on function pg_temp.sqlstate_of(text) to public;
 grant execute on function pg_temp.error_message_of(text) to public;
 grant execute on function pg_temp.invitation_status(uuid) to public;
@@ -154,8 +166,9 @@ grant execute on function pg_temp.identity_count(uuid) to public;
 grant execute on function pg_temp.app_user_count(uuid) to public;
 grant execute on function pg_temp.invitation_expiry(uuid) to public;
 grant execute on function pg_temp.invitation_ttl_remaining(uuid) to public;
+grant execute on function pg_temp.open_invitation_count(uuid, text) to public;
 
-select plan(126);
+select plan(142);
 
 -- All users, names, tenants and email addresses below are fictional.
 insert into public.app_users (id, status) values
@@ -609,12 +622,13 @@ select is(
   'the accepted invitation is not modified by re-invitation'
 );
 select is(
-  (select invitation_status::text from public.prepare_workspace_invitation(
-    '21000000-0000-4000-8000-000000000001', repeat('c',64), 'r***@e***.invalid',
-    'Fictional Re-invite Revoked', 'member', '34000000-0000-4000-8000-0000000000f3'
-  )),
-  'prepared',
-  'a revoked invitation does not block a later digest'
+  (select operation_kind || ':' || invitation_status
+   from public.prepare_workspace_invitation(
+     '21000000-0000-4000-8000-000000000001', repeat('c',64), 'r***@e***.invalid',
+     'Fictional Re-invite Revoked', 'member', '34000000-0000-4000-8000-0000000000f3'
+   )),
+  'existing_invitee_reissue:reissue_prepared',
+  'a revoked invitation with an invitee enters the reissue path'
 );
 select is(
   pg_temp.invitation_status('41000000-0000-4000-8000-00000000000c'),
@@ -622,12 +636,13 @@ select is(
   'the revoked invitation is not modified by re-invitation'
 );
 select is(
-  (select invitation_status::text from public.prepare_workspace_invitation(
-    '21000000-0000-4000-8000-000000000001', repeat('d',64), 'f***@e***.invalid',
-    'Fictional Re-invite Failed', 'member', '34000000-0000-4000-8000-0000000000f4'
-  )),
-  'prepared',
-  'a failed invitation does not block a later digest'
+  (select operation_kind || ':' || invitation_status
+   from public.prepare_workspace_invitation(
+     '21000000-0000-4000-8000-000000000001', repeat('d',64), 'f***@e***.invalid',
+     'Fictional Re-invite Failed', 'member', '34000000-0000-4000-8000-0000000000f4'
+   )),
+  'existing_invitee_reissue:reissue_prepared',
+  'a recoverable failed invitation enters the reissue path'
 );
 select is(
   pg_temp.invitation_status('41000000-0000-4000-8000-00000000000d'),
@@ -741,7 +756,9 @@ select is(
     pg_temp.invitation_id_of(
       '21000000-0000-4000-8000-000000000001',
       '34000000-0000-4000-8000-0000000000e1'
-    )
+    ),
+    'https://fixture-issuer.invalid',
+    'expired-a'
   ),
   'sent'::public.workspace_invitation_status,
   'the service can finalize a reissue invitation to sent'
@@ -761,18 +778,28 @@ select is(
     pg_temp.invitation_id_of(
       '21000000-0000-4000-8000-000000000001',
       '34000000-0000-4000-8000-0000000000e1'
-    )
+    ),
+    'https://fixture-issuer.invalid',
+    'expired-a'
   ),
   'sent'::public.workspace_invitation_status,
   'finalize is idempotent for an already-sent reissue invitation'
 );
 -- Finalize refuses an invitation that is not in the reissue state.
 select is(pg_temp.sqlstate_of($sql$
-  select public.finalize_workspace_invitation_reissue('41000000-0000-4000-8000-000000000001')
+  select public.finalize_workspace_invitation_reissue(
+    '41000000-0000-4000-8000-000000000001',
+    'https://fixture-issuer.invalid',
+    'expired-a'
+  )
 $sql$), '55000', 'finalize refuses an invitation that is not a reissue');
 -- Finalize refuses an unknown invitation.
 select is(pg_temp.sqlstate_of($sql$
-  select public.finalize_workspace_invitation_reissue('ffffffff-ffff-4fff-8fff-ffffffffffff')
+  select public.finalize_workspace_invitation_reissue(
+    'ffffffff-ffff-4fff-8fff-ffffffffffff',
+    'https://fixture-issuer.invalid',
+    'expired-a'
+  )
 $sql$), 'P0002', 'finalize refuses an unknown invitation');
 -- The old invitation stays revoked and is never resurrected.
 select is(
@@ -786,7 +813,11 @@ reset role;
 set local "request.jwt.claims" = '{"sub":"owner-a","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
 set local role authenticated;
 select is(pg_temp.sqlstate_of($sql$
-  select public.finalize_workspace_invitation_reissue('41000000-0000-4000-8000-00000000000b')
+  select public.finalize_workspace_invitation_reissue(
+    '41000000-0000-4000-8000-00000000000b',
+    'https://fixture-issuer.invalid',
+    'expired-a'
+  )
 $sql$), '42501', 'authenticated cannot finalize a reissue');
 reset role;
 
@@ -888,6 +919,217 @@ select is(
   ),
   'active',
   'the original membership becomes active after acceptance'
+);
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- Task 1.4 round 3 audit: invitee lineage across reissue failures.
+-- ---------------------------------------------------------------------------
+
+-- New fixtures:
+--   * 0c: active internal user with a live supabase_auth identity
+--         (provider_subject 'revoked-a'), membership still invited.
+--   * 0b3: active user with ONLY a non-Auth identity (no supabase_auth).
+--   * Failed first invites carry NO invitee and must stay on the plain
+--     new-user path.
+insert into public.app_users (id, status) values
+  ('11000000-0000-4000-8000-0000000000b3', 'active');
+insert into public.user_identities (user_id, provider, provider_tenant, provider_subject, verified_at) values
+  ('11000000-0000-4000-8000-0000000000b3', 'wechat_miniprogram', 'fictional-tenant', 'other-provider-subject', now());
+insert into public.workspace_members (workspace_id, user_id, role, status, invited_by) values
+  ('21000000-0000-4000-8000-000000000001', '11000000-0000-4000-8000-0000000000b3', 'member', 'invited', '11000000-0000-4000-8000-000000000001');
+insert into public.workspace_invitations (
+  id, workspace_id, email_hash, email_hint, display_name, role, status,
+  invitee_user_id, invited_by, idempotency_key, created_at, expires_at,
+  sent_at, failed_at, failure_code
+) values
+  ('41000000-0000-4000-8000-0000000000b2', '21000000-0000-4000-8000-000000000001', repeat('b2', 32), 'u***@e***.invalid', 'Conflict Invitee', 'member', 'failed', '11000000-0000-4000-8000-00000000000c', '11000000-0000-4000-8000-000000000001', '34000000-0000-4000-8000-0000000000b2', now() - interval '2 days', now() + interval '1 day', now() - interval '2 days', now() - interval '2 days', 'auth_user_conflict'),
+  ('41000000-0000-4000-8000-0000000000b3', '21000000-0000-4000-8000-000000000001', repeat('b3', 32), 'w***@e***.invalid', 'Other Provider', 'member', 'failed', '11000000-0000-4000-8000-0000000000b3', '11000000-0000-4000-8000-000000000001', '34000000-0000-4000-8000-0000000000b3', now() - interval '2 days', now() + interval '1 day', now() - interval '2 days', now() - interval '2 days', 'auth_invite_failed'),
+  ('41000000-0000-4000-8000-0000000000b4', '21000000-0000-4000-8000-000000000001', repeat('b4', 32), 'f***@e***.invalid', 'Failed First', 'member', 'failed', null, '11000000-0000-4000-8000-000000000001', '34000000-0000-4000-8000-0000000000b4', now() - interval '2 days', now() + interval '1 day', null, now() - interval '2 days', 'auth_invite_failed');
+
+set local "request.jwt.claims" = '{"sub":"owner-a","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
+set local role authenticated;
+
+-- A stable auth_user_conflict failure can never be re-sent: fixed conflict,
+-- no prepared row, no new identity.
+select is(pg_temp.sqlstate_of($sql$
+  select * from public.prepare_workspace_invitation(
+    '21000000-0000-4000-8000-000000000001', repeat('b2', 32), 'u***@e***.invalid',
+    'Conflict Invitee', 'member', '36000000-0000-4000-8000-0000000000b2'
+  )
+$sql$), '55000', 'an auth_user_conflict lineage returns a stable conflict');
+select is(
+  pg_temp.open_invitation_count(
+    '21000000-0000-4000-8000-000000000001',
+    repeat('b2', 32)
+  ),
+  0::bigint,
+  'an auth_user_conflict lineage never creates a new open invitation'
+);
+select is(
+  pg_temp.identity_count('11000000-0000-4000-8000-00000000000c'),
+  1::bigint,
+  'an auth_user_conflict lineage never creates a second identity'
+);
+-- The conflict error is static and safe (does not embed IDs).
+select is(
+  pg_temp.error_message_of($sql$
+    select * from public.prepare_workspace_invitation(
+      '21000000-0000-4000-8000-000000000001', repeat('b2', 32), 'u***@e***.invalid',
+      'Conflict Invitee', 'member', '36000000-0000-4000-8000-0000000000b2'
+    )
+  $sql$),
+  'workspace_invitation_auth_user_conflict',
+  'the auth_user_conflict error text is a static safe code'
+);
+-- A user with ONLY a non-Auth identity cannot be reissued by email.
+select is(pg_temp.sqlstate_of($sql$
+  select * from public.prepare_workspace_invitation(
+    '21000000-0000-4000-8000-000000000001', repeat('b3', 32), 'w***@e***.invalid',
+    'Other Provider', 'member', '36000000-0000-4000-8000-0000000000b3'
+  )
+$sql$), '55000', 'a lineage without a live supabase_auth identity is refused');
+select is(
+  pg_temp.open_invitation_count(
+    '21000000-0000-4000-8000-000000000001',
+    repeat('b3', 32)
+  ),
+  0::bigint,
+  'a non-Auth lineage never creates an open invitation'
+);
+-- A failed FIRST invite without an invitee keeps the plain new-user path.
+select is(
+  (select operation_kind || ':' || invitation_status
+   from public.prepare_workspace_invitation(
+     '21000000-0000-4000-8000-000000000001', repeat('b4', 32), 'f***@e***.invalid',
+     'Failed First', 'member', '36000000-0000-4000-8000-0000000000b4'
+   )),
+  'new_auth_user_invite:prepared',
+  'a failed first invite without an invitee stays on the new-user path'
+);
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- Round 3 audit: finalize verifies the Auth identity inside the transaction.
+-- The digest repeat('c',64) reissue (invitee 0c, identity subject
+-- 'revoked-a') was created by the round-2 revoked-lineage test and is still
+-- reissue_prepared; it is the subject of the mismatch checks below.
+-- ---------------------------------------------------------------------------
+set local role service_role;
+-- Subject mismatch: the invitation is NOT marked sent.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.finalize_workspace_invitation_reissue(
+      pg_temp.invitation_id_of(
+        '21000000-0000-4000-8000-000000000001',
+        '34000000-0000-4000-8000-0000000000f3'
+      ),
+      'https://fixture-issuer.invalid',
+      'wrong-subject'
+    )
+  $sql$),
+  '55000',
+  'finalize rejects a mismatched Auth subject without marking sent'
+);
+select is(
+  pg_temp.invitation_status(
+    pg_temp.invitation_id_of(
+      '21000000-0000-4000-8000-000000000001',
+      '34000000-0000-4000-8000-0000000000f3'
+    )
+  ),
+  'reissue_prepared',
+  'the invitation stays reissue_prepared after a subject mismatch'
+);
+-- Tenant mismatch: same static failure.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.finalize_workspace_invitation_reissue(
+      pg_temp.invitation_id_of(
+        '21000000-0000-4000-8000-000000000001',
+        '34000000-0000-4000-8000-0000000000f3'
+      ),
+      'https://unrelated.invalid',
+      'revoked-a'
+    )
+  $sql$),
+  '55000',
+  'finalize rejects a mismatched provider tenant'
+);
+-- Matching identity finalizes successfully.
+select is(
+  public.finalize_workspace_invitation_reissue(
+    pg_temp.invitation_id_of(
+      '21000000-0000-4000-8000-000000000001',
+      '34000000-0000-4000-8000-0000000000f3'
+    ),
+    'https://fixture-issuer.invalid',
+    'revoked-a'
+  ),
+  'sent'::public.workspace_invitation_status,
+  'finalize accepts the exact Auth subject and tenant'
+);
+-- Invalid/blank identity parameters are refused up front.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.finalize_workspace_invitation_reissue(
+      pg_temp.invitation_id_of(
+        '21000000-0000-4000-8000-000000000001',
+        '34000000-0000-4000-8000-0000000000f3'
+      ),
+      '',
+      'revoked-a'
+    )
+  $sql$),
+  '22023',
+  'finalize refuses blank identity parameters'
+);
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- Round 3 audit: a recoverable failed reissue can be re-issued again with a
+-- fresh key, still reusing the same invitee (never a second identity).
+-- ---------------------------------------------------------------------------
+-- digest repeat('d',64) failed(auth_invite_failed) invitee 0d -> the round-2
+-- test already re-issued it (key 0f4, reissue_prepared). Mark that reissue
+-- failed with the finalize compensation code, then prepare with a new key:
+-- it must return existing_invitee_reissue again.
+set local role service_role;
+select is(
+  public.mark_workspace_invitation_failed(
+    pg_temp.invitation_id_of(
+      '21000000-0000-4000-8000-000000000001',
+      '34000000-0000-4000-8000-0000000000f4'
+    ),
+    'temporary_failure'
+  ),
+  'failed'::public.workspace_invitation_status,
+  'a finalize-failure compensation marks the reissue failed'
+);
+reset role;
+set local "request.jwt.claims" = '{"sub":"owner-a","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(
+  (select operation_kind || ':' || invitation_status
+   from public.prepare_workspace_invitation(
+     '21000000-0000-4000-8000-000000000001', repeat('d', 64), 'f***@e***.invalid',
+     'Fictional Re-invite Failed', 'member', '37000000-0000-4000-8000-0000000000d1'
+   )),
+  'existing_invitee_reissue:reissue_prepared',
+  'a recoverable failed reissue can be re-issued with a fresh key'
+);
+select is(
+  pg_temp.identity_count('11000000-0000-4000-8000-00000000000d'),
+  1::bigint,
+  'repeated recovery never creates a second identity'
+);
+select is(
+  pg_temp.membership_count(
+    '21000000-0000-4000-8000-000000000001',
+    '11000000-0000-4000-8000-00000000000d'
+  ),
+  1::bigint,
+  'repeated recovery never creates a second membership'
 );
 reset role;
 

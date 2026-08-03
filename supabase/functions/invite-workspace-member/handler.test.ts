@@ -75,7 +75,10 @@ function dependencies(): InviteWorkspaceMemberDependencies {
         operationKind: 'new_auth_user_invite',
       },
     })),
-    inviteAuthUser: vi.fn(async () => ({ ok: true, data: undefined })),
+    inviteAuthUser: vi.fn(async () => ({
+      ok: true,
+      data: { authUserId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+    })),
     finalizeReissue: vi.fn(async () => ({ ok: true, data: undefined })),
     markInvitationFailed: vi.fn(async () => ({
       ok: true,
@@ -451,8 +454,13 @@ describe('invite-workspace-member Edge Function handler', () => {
     })
     // Auth Admin is called once for the re-send...
     expect(deps.inviteAuthUser).toHaveBeenCalledTimes(1)
-    // ...then the service-only finalize RPC marks the reissue invitation sent.
-    expect(deps.finalizeReissue).toHaveBeenCalledWith(invitationId)
+    // ...then the service-only finalize RPC marks the reissue invitation sent,
+    // passing the verified issuer and the Auth Admin returned user ID.
+    expect(deps.finalizeReissue).toHaveBeenCalledWith(
+      invitationId,
+      'http://127.0.0.1:54321/auth/v1',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    )
     expect(deps.markInvitationFailed).not.toHaveBeenCalled()
   })
 
@@ -567,6 +575,52 @@ describe('invite-workspace-member Edge Function handler', () => {
     expect(response.status).toBe(409)
     expect(deps.inviteAuthUser).not.toHaveBeenCalled()
     expect(deps.finalizeReissue).not.toHaveBeenCalled()
+  })
+
+  it('maps a database auth_user_conflict to a fixed safe conflict', async () => {
+    deps.prepareInvitation = vi.fn(async () => ({
+      ok: false,
+      code: 'workspace_invitation_auth_user_conflict',
+    }))
+    const handler = createInviteWorkspaceMemberHandler(deps)
+    const response = await handler(request())
+
+    expect(response.status).toBe(409)
+    expect(await json(response)).toEqual({
+      ok: false,
+      error: {
+        code: 'invitation_conflict',
+        message: '该邀请已存在或请求已发生冲突。',
+      },
+    })
+    expect(deps.inviteAuthUser).not.toHaveBeenCalled()
+  })
+
+  it('never leaks the Auth user ID in responses or logs', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      deps.prepareInvitation = vi.fn(async () => ({
+        ok: true,
+        data: {
+          invitationId,
+          status: 'reissue_prepared',
+          shouldSend: true,
+          operationKind: 'existing_invitee_reissue',
+        },
+      }))
+      const handler = createInviteWorkspaceMemberHandler(deps)
+      const response = await handler(request())
+      const text = await response.text()
+
+      expect(response.status).toBe(200)
+      expect(text).not.toContain('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+      expect(logSpy).not.toHaveBeenCalled()
+      expect(errorSpy).not.toHaveBeenCalled()
+    } finally {
+      logSpy.mockRestore()
+      errorSpy.mockRestore()
+    }
   })
 })
 

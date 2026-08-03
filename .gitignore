@@ -1,0 +1,30 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+.vite/
+
+# Local environment files (keep .env.example tracked)
+.env
+.env.*
+!.env.example
+
+# Supabase local state
+supabase/.temp/
+supabase/.branches/
+
+# Vercel local state
+.vercel/
+
+# WorkBuddy local state
+.workbuddy/
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

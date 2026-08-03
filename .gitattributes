@@ -1,0 +1,17 @@
+# Normalize repository text files and keep working-tree text as LF.
+* text=auto eol=lf
+
+# Windows command scripts retain CRLF when introduced later.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Common binary assets must never be line-normalized.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary

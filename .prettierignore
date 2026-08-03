@@ -1,9 +1,0 @@
-dist/
-coverage/
-node_modules/
-node_modules_ok/
-package-lock.json
-src/types/database.generated.ts
-# Supabase CLI local runtime state (git-ignored; never formatted)
-supabase/.temp/
-supabase/.branches/

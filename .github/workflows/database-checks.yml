@@ -30,8 +30,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Start local database
-        run: npx supabase db start
+      - name: Start local Supabase stack
+        run: npx supabase start
       - name: Verify migrations, tests, lint, and types
         run: npm run db:verify
       - name: Run real Auth invitation-reissue integration checks

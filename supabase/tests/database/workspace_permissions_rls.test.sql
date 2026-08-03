@@ -26,10 +26,32 @@ exception
 end;
 $function$;
 
+-- SECURITY DEFINER helpers so the audit section can verify raw invitation
+-- state while running as client roles (the raw tables stay client-denied).
+create function pg_temp.invitation_status(p_id uuid)
+returns text
+language sql
+security definer
+set search_path = ''
+as $function$
+  select status::text from public.workspace_invitations where id = p_id;
+$function$;
+
+create function pg_temp.invitation_revoked_at(p_id uuid)
+returns timestamptz
+language sql
+security definer
+set search_path = ''
+as $function$
+  select revoked_at from public.workspace_invitations where id = p_id;
+$function$;
+
 grant execute on function pg_temp.sqlstate_of(text) to public;
 grant execute on function pg_temp.error_message_of(text) to public;
+grant execute on function pg_temp.invitation_status(uuid) to public;
+grant execute on function pg_temp.invitation_revoked_at(uuid) to public;
 
-select plan(70);
+select plan(95);
 
 -- All users, names, tenants and email addresses below are fictional.
 insert into public.app_users (id, status) values
@@ -164,8 +186,7 @@ select is(pg_temp.sqlstate_of($sql$ select * from public.set_workspace_member_ro
 select is(
   (select invitation_status::text from public.prepare_workspace_invitation(
     '21000000-0000-4000-8000-000000000001', repeat('1',64), 'o***@e***.invalid',
-    'Fictional Admin Invite', 'admin', '32000000-0000-4000-8000-000000000001',
-    now() + interval '7 days'
+    'Fictional Admin Invite', 'admin', '32000000-0000-4000-8000-000000000001'
   )),
   'prepared',
   'owner prepares an admin invitation'
@@ -173,21 +194,18 @@ select is(
 select is(
   (select invitation_id from public.prepare_workspace_invitation(
     '21000000-0000-4000-8000-000000000001', repeat('1',64), 'o***@e***.invalid',
-    'Fictional Admin Invite', 'admin', '32000000-0000-4000-8000-000000000001',
-    now() + interval '6 days'
+    'Fictional Admin Invite', 'admin', '32000000-0000-4000-8000-000000000001'
   )),
   (select invitation_id from public.prepare_workspace_invitation(
     '21000000-0000-4000-8000-000000000001', repeat('1',64), 'o***@e***.invalid',
-    'Fictional Admin Invite', 'admin', '32000000-0000-4000-8000-000000000001',
-    now() + interval '6 days'
+    'Fictional Admin Invite', 'admin', '32000000-0000-4000-8000-000000000001'
   )),
   'same invitation idempotency key returns the existing invitation'
 );
 select is(
   (select should_send from public.prepare_workspace_invitation(
     '21000000-0000-4000-8000-000000000001', repeat('1',64), 'o***@e***.invalid',
-    'Fictional Admin Invite', 'admin', '32000000-0000-4000-8000-000000000001',
-    now() + interval '6 days'
+    'Fictional Admin Invite', 'admin', '32000000-0000-4000-8000-000000000001'
   )),
   false,
   'an idempotent retry cannot dispatch a duplicate Auth invitation'
@@ -195,7 +213,7 @@ select is(
 select is(pg_temp.sqlstate_of($sql$
   select * from public.prepare_workspace_invitation(
     '21000000-0000-4000-8000-000000000001', repeat('2',64), 'x***@e***.invalid',
-    'Changed Payload', 'member', '32000000-0000-4000-8000-000000000001', now() + interval '7 days'
+    'Changed Payload', 'member', '32000000-0000-4000-8000-000000000001'
   )
 $sql$), '23505', 'same idempotency key with conflicting payload is rejected');
 reset role;
@@ -205,7 +223,7 @@ set local role authenticated;
 select is(pg_temp.sqlstate_of($sql$
   select * from public.prepare_workspace_invitation(
     '21000000-0000-4000-8000-000000000001', repeat('3',64), 'm***@e***.invalid',
-    'Blocked Invite', 'member', '32000000-0000-4000-8000-000000000002', now() + interval '7 days'
+    'Blocked Invite', 'member', '32000000-0000-4000-8000-000000000002'
   )
 $sql$), '42501', 'member cannot prepare invitations');
 reset role;
@@ -214,22 +232,51 @@ set local "request.jwt.claims" = '{"sub":"admin-a","iss":"https://fixture-issuer
 set local role authenticated;
 select is((select invitation_status::text from public.prepare_workspace_invitation(
   '21000000-0000-4000-8000-000000000001', repeat('4',64), 'a***@e***.invalid',
-  'Admin Member Invite', 'member', '32000000-0000-4000-8000-000000000003', now() + interval '7 days'
+  'Admin Member Invite', 'member', '32000000-0000-4000-8000-000000000003'
 )), 'prepared', 'admin prepares a member invitation');
 select pg_catalog.set_config(
   'test.admin_invitation_id',
   (select invitation_id::text from public.prepare_workspace_invitation(
     '21000000-0000-4000-8000-000000000001', repeat('4',64), 'a***@e***.invalid',
-    'Admin Member Invite', 'member', '32000000-0000-4000-8000-000000000003', now() + interval '7 days'
+    'Admin Member Invite', 'member', '32000000-0000-4000-8000-000000000003'
   )),
   true
 );
 select is(pg_temp.sqlstate_of($sql$
   select * from public.prepare_workspace_invitation(
     '21000000-0000-4000-8000-000000000001', repeat('5',64), 'a***@e***.invalid',
-    'Blocked Admin Invite', 'admin', '32000000-0000-4000-8000-000000000004', now() + interval '7 days'
+    'Blocked Admin Invite', 'admin', '32000000-0000-4000-8000-000000000004'
   )
 $sql$), '42501', 'admin cannot prepare an admin invitation');
+reset role;
+
+-- Task 1.4 audit: trusted expiry computation. The TTL function and the raw
+-- invitation table are revoked from client roles, so both are asserted as the
+-- migration owner (default test identity) before switching to service_role.
+select is(
+  public.workspace_invitation_ttl_seconds(),
+  3600,
+  'business invitation TTL is aligned with the Auth email OTP expiry'
+);
+select ok(
+  exists(
+    select 1 from public.workspace_invitations
+    where workspace_id = '21000000-0000-4000-8000-000000000001'
+      and idempotency_key = '32000000-0000-4000-8000-000000000003'
+      and extract(epoch from (expires_at - created_at)) between 3599 and 3601
+  ),
+  'new invitation expiry follows the configured TTL'
+);
+select ok(
+  not exists(
+    select 1 from pg_proc p,
+      aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+    where p.oid = to_regprocedure('public.workspace_invitation_ttl_seconds()')
+      and a.grantee in (0, 'anon'::regrole, 'authenticated'::regrole, 'service_role'::regrole)
+      and a.privilege_type = 'EXECUTE'
+  ),
+  'the TTL configuration function is not executable by client roles'
+);
 reset role;
 
 -- Controlled bootstrap and service-only failure compensation.
@@ -337,6 +384,155 @@ set local role authenticated;
 select is(pg_temp.sqlstate_of($sql$ select * from public.accept_workspace_invitation('41000000-0000-4000-8000-00000000000d') $sql$), '55000', 'failed invitation cannot be accepted');
 reset role;
 
+-- Task 1.4 audit: expired open invitations are closed atomically so a fresh
+-- invitation for the same digest can be prepared, while valid and terminal
+-- invitations are never modified. Fixtures are inserted as the migration
+-- owner (raw tables are client-denied) and state is verified through the
+-- SECURITY DEFINER pg_temp helpers above.
+insert into public.workspace_invitations (
+  id, workspace_id, email_hash, email_hint, display_name, role, status,
+  invited_by, idempotency_key, created_at, expires_at
+) values (
+  '41000000-0000-4000-8000-00000000000e',
+  '21000000-0000-4000-8000-000000000001', repeat('e2', 32),
+  'p2***@e***.invalid', 'Fictional Expired Prepared', 'member', 'prepared',
+  '11000000-0000-4000-8000-000000000001',
+  '34000000-0000-4000-8000-0000000000e2', now() - interval '2 days', now() - interval '1 minute'
+);
+insert into public.workspace_invitations (
+  id, workspace_id, email_hash, email_hint, display_name, role, status,
+  invitee_user_id, invited_by, idempotency_key, expires_at, sent_at
+) values (
+  '41000000-0000-4000-8000-00000000000f',
+  '21000000-0000-4000-8000-000000000001', repeat('f', 64),
+  'v***@e***.invalid', 'Fictional Valid Sent', 'member', 'sent',
+  '11000000-0000-4000-8000-000000000007',
+  '11000000-0000-4000-8000-000000000001',
+  '34000000-0000-4000-8000-00000000000f', now() + interval '1 day', now()
+);
+
+set local "request.jwt.claims" = '{"sub":"owner-a","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
+set local role authenticated;
+
+-- Expired sent invitation: closes to revoked, then a new key can prepare.
+select is(
+  (select invitation_status::text from public.prepare_workspace_invitation(
+    '21000000-0000-4000-8000-000000000001', repeat('b',64), 'e***@e***.invalid',
+    'Fictional Re-invite', 'member', '34000000-0000-4000-8000-0000000000e1'
+  )),
+  'prepared',
+  'an expired sent invitation stops blocking a fresh invitation'
+);
+select is(
+  pg_temp.invitation_status('41000000-0000-4000-8000-00000000000b'),
+  'revoked',
+  'the expired sent invitation is closed to revoked'
+);
+select ok(
+  pg_temp.invitation_revoked_at('41000000-0000-4000-8000-00000000000b') is not null,
+  'the closed expired invitation records revoked_at'
+);
+
+-- Expired prepared invitation: closes to revoked, then a new key can prepare.
+select is(
+  (select invitation_status::text from public.prepare_workspace_invitation(
+    '21000000-0000-4000-8000-000000000001', repeat('e2', 32), 'p2***@e***.invalid',
+    'Fictional Re-invite Prepared', 'member', '34000000-0000-4000-8000-0000000000e3'
+  )),
+  'prepared',
+  'an expired prepared invitation stops blocking a fresh invitation'
+);
+select is(
+  pg_temp.invitation_status('41000000-0000-4000-8000-00000000000e'),
+  'revoked',
+  'the expired prepared invitation is closed to revoked'
+);
+select ok(
+  pg_temp.invitation_revoked_at('41000000-0000-4000-8000-00000000000e') is not null,
+  'the closed prepared invitation records revoked_at'
+);
+
+-- Still-valid sent invitation: still blocks the same digest.
+select is(pg_temp.sqlstate_of($sql$
+  select * from public.prepare_workspace_invitation(
+    '21000000-0000-4000-8000-000000000001', repeat('f', 64), 'v***@e***.invalid',
+    'Fictional Duplicate', 'member', '34000000-0000-4000-8000-0000000000f1'
+  )
+$sql$), '23505', 'a still-valid sent invitation blocks the same digest');
+select is(
+  pg_temp.invitation_status('41000000-0000-4000-8000-00000000000f'),
+  'sent',
+  'the still-valid sent invitation is untouched'
+);
+
+-- Accepted, failed and revoked invitations are terminal: never modified, and
+-- a fresh invitation for the same digest can always be prepared afterwards.
+select is(
+  (select invitation_status::text from public.prepare_workspace_invitation(
+    '21000000-0000-4000-8000-000000000001', repeat('6',64), 'i***@e***.invalid',
+    'Fictional Re-invite Accepted', 'member', '34000000-0000-4000-8000-0000000000f2'
+  )),
+  'prepared',
+  'an accepted invitation does not block a later digest'
+);
+select is(
+  pg_temp.invitation_status('41000000-0000-4000-8000-000000000001'),
+  'accepted',
+  'the accepted invitation is not modified by re-invitation'
+);
+select is(
+  (select invitation_status::text from public.prepare_workspace_invitation(
+    '21000000-0000-4000-8000-000000000001', repeat('c',64), 'r***@e***.invalid',
+    'Fictional Re-invite Revoked', 'member', '34000000-0000-4000-8000-0000000000f3'
+  )),
+  'prepared',
+  'a revoked invitation does not block a later digest'
+);
+select is(
+  pg_temp.invitation_status('41000000-0000-4000-8000-00000000000c'),
+  'revoked',
+  'the revoked invitation is not modified by re-invitation'
+);
+select is(
+  (select invitation_status::text from public.prepare_workspace_invitation(
+    '21000000-0000-4000-8000-000000000001', repeat('d',64), 'f***@e***.invalid',
+    'Fictional Re-invite Failed', 'member', '34000000-0000-4000-8000-0000000000f4'
+  )),
+  'prepared',
+  'a failed invitation does not block a later digest'
+);
+select is(
+  pg_temp.invitation_status('41000000-0000-4000-8000-00000000000d'),
+  'failed',
+  'the failed invitation is not modified by re-invitation'
+);
+reset role;
+
+-- Forged owner memberships can never elevate privileges: the database rejects
+-- the row itself, so the permission helpers never see an owner role. The
+-- constraint trigger is role-independent: the same statement-level rejection
+-- applies to every writer including service_role (which has no raw table
+-- grants at all).
+insert into public.workspaces (id, name, owner_id, created_by) values (
+  '21000000-0000-4000-8000-000000000003', 'Fictional Forged Owner',
+  '11000000-0000-4000-8000-000000000005', '11000000-0000-4000-8000-000000000005'
+);
+select is(pg_temp.sqlstate_of($sql$
+  insert into public.workspace_members (workspace_id, user_id, role, status, invited_by, joined_at)
+  values ('21000000-0000-4000-8000-000000000003', '11000000-0000-4000-8000-000000000004', 'owner', 'active', '11000000-0000-4000-8000-000000000005', now())
+$sql$), '23514', 'a forged owner membership is rejected at the database boundary');
+set local "request.jwt.claims" = '{"sub":"member-a","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(pg_temp.sqlstate_of($sql$
+  select * from public.list_workspace_members('21000000-0000-4000-8000-000000000003')
+$sql$), '42501', 'the forged user never gains directory access');
+select is(
+  public.is_active_workspace_member('21000000-0000-4000-8000-000000000003'),
+  false,
+  'the forged user never becomes an active member'
+);
+reset role;
+
 -- Auth user atomic provisioning. Business role/name/workspace come from the
 -- locked invitation row; forged metadata is ignored.
 insert into public.workspace_invitations (
@@ -394,7 +590,7 @@ select ok(
       to_regprocedure('public.list_my_pending_workspace_invitations()'),
       to_regprocedure('public.set_workspace_member_role(uuid,uuid,public.workspace_role)'),
       to_regprocedure('public.set_workspace_member_status(uuid,uuid,public.workspace_member_status)'),
-      to_regprocedure('public.prepare_workspace_invitation(uuid,text,text,text,public.workspace_role,uuid,timestamptz)'),
+      to_regprocedure('public.prepare_workspace_invitation(uuid,text,text,text,public.workspace_role,uuid)'),
       to_regprocedure('public.accept_workspace_invitation(uuid)'),
       to_regprocedure('public.bootstrap_default_workspace(uuid,text,uuid)'),
       to_regprocedure('public.mark_workspace_invitation_failed(uuid,text)')
@@ -424,6 +620,61 @@ select ok(
   and has_function_privilege('service_role','public.bootstrap_default_workspace(uuid,text,uuid)','execute'),
   'RPC execute grants match browser and trusted-service boundaries'
 );
+
+-- Task 1.4 audit: members with a missing profile must still appear in the
+-- directory with a fixed, non-sensitive display name.
+insert into public.app_users (id, status) values
+  ('11000000-0000-4000-8000-00000000000e', 'active'),
+  ('11000000-0000-4000-8000-00000000000f', 'active');
+insert into public.user_identities (user_id, provider, provider_tenant, provider_subject, verified_at) values
+  ('11000000-0000-4000-8000-00000000000e', 'supabase_auth', 'https://fixture-issuer.invalid', 'profileless-owner', now()),
+  ('11000000-0000-4000-8000-00000000000f', 'supabase_auth', 'https://fixture-issuer.invalid', 'profileless-member', now());
+insert into public.workspaces (id, name, owner_id, created_by) values (
+  '21000000-0000-4000-8000-000000000004', 'Fictional Profileless Workspace',
+  '11000000-0000-4000-8000-00000000000e', '11000000-0000-4000-8000-00000000000e'
+);
+insert into public.workspace_members (workspace_id, user_id, role, status, invited_by, joined_at) values
+  ('21000000-0000-4000-8000-000000000004', '11000000-0000-4000-8000-00000000000e', 'owner', 'active', '11000000-0000-4000-8000-00000000000e', now()),
+  ('21000000-0000-4000-8000-000000000004', '11000000-0000-4000-8000-00000000000f', 'member', 'active', '11000000-0000-4000-8000-00000000000e', now());
+
+set local "request.jwt.claims" = '{"sub":"profileless-owner","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(
+  (select count(*) from public.list_workspace_members('21000000-0000-4000-8000-000000000004')),
+  2::bigint,
+  'members without a profile still appear in the directory'
+);
+select is(
+  (select count(*) from public.list_workspace_members('21000000-0000-4000-8000-000000000004')
+   where display_name = '未设置显示名称'),
+  2::bigint,
+  'missing profiles fall back to a fixed non-sensitive display name'
+);
+select ok(
+  not exists(
+    select 1 from public.list_workspace_members('21000000-0000-4000-8000-000000000004')
+    where avatar_url is not null or organization_name is not null or title is not null
+  ),
+  'missing profiles keep avatar, organization and title null'
+);
+select is(
+  (select array_agg(k order by k) from jsonb_object_keys(
+    (select to_jsonb(t) from public.list_workspace_members('21000000-0000-4000-8000-000000000004') as t limit 1)
+  ) as k),
+  array['avatar_url','disabled_at','display_name','joined_at','organization_name','role','status','title','user_id']::text[],
+  'the directory returns only whitelisted profile fields'
+);
+reset role;
+
+set local "request.jwt.claims" = '{"sub":"owner-a","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(
+  (select display_name from public.list_workspace_members('21000000-0000-4000-8000-000000000001')
+   where user_id = '11000000-0000-4000-8000-000000000001'),
+  'Fictional Owner A',
+  'normal profile display is preserved in the directory'
+);
+reset role;
 
 select * from finish();
 rollback;

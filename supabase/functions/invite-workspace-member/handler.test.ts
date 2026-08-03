@@ -1,9 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   createInviteWorkspaceMemberHandler,
   type InviteWorkspaceMemberDependencies,
 } from './handler'
 import { resolveVerifiedProviderTenant } from './verified-issuer'
+import {
+  DEFAULT_INVITE_TTL_SECONDS,
+  MAX_INVITE_TTL_SECONDS,
+  MIN_INVITE_TTL_SECONDS,
+  parseInviteTtlSeconds,
+} from './entry'
 
 const allowedOrigin = 'http://127.0.0.1:3000'
 const workspaceId = '11111111-1111-4111-8111-111111111111'
@@ -54,7 +62,6 @@ function request(
 function dependencies(): InviteWorkspaceMemberDependencies {
   return {
     allowedOrigins: new Set([allowedOrigin]),
-    now: () => new Date('2026-08-02T00:00:00.000Z'),
     authenticate: vi.fn(async () => ({
       ok: true,
       data: { providerTenant: 'http://127.0.0.1:54321/auth/v1' },
@@ -254,7 +261,6 @@ describe('invite-workspace-member Edge Function handler', () => {
         displayName: 'Fictional Invitee',
         role: 'member',
         idempotencyKey,
-        expiresAt: '2026-08-09T00:00:00.000Z',
       }),
       authorization,
     )
@@ -262,6 +268,9 @@ describe('invite-workspace-member Edge Function handler', () => {
     expect(JSON.stringify(preparedInput)).not.toContain(
       'invitee@example.invalid',
     )
+    // Browsers cannot influence the expiry: the handler never computes or
+    // forwards one, and the database is the only expiry authority.
+    expect(JSON.stringify(preparedInput)).not.toContain('expiresAt')
   })
 
   it('uses database authorization as the final boundary for a member caller', async () => {
@@ -414,5 +423,41 @@ describe('invite-workspace-member Edge Function handler', () => {
     expect(text).not.toContain('fictional-user-token')
     expect(text).not.toContain(invitationId)
     expect(text).not.toContain('secret')
+  })
+})
+
+describe('business invitation TTL alignment', () => {
+  it('defaults to the Auth email OTP expiry configured in supabase/config.toml', () => {
+    const configToml = readFileSync(
+      join(process.cwd(), 'supabase', 'config.toml'),
+      'utf8',
+    )
+    const match = configToml.match(/otp_expiry\s*=\s*(\d+)/)
+    expect(match).not.toBeNull()
+    expect(Number(match?.[1])).toBe(DEFAULT_INVITE_TTL_SECONDS)
+  })
+
+  it('refuses startup for invalid, out-of-bounds or misaligned TTL values', () => {
+    const fakeEnv = (value: string | undefined) => ({
+      get: (name: string) =>
+        name === 'APP_INVITE_TTL_SECONDS' ? value : undefined,
+    })
+    expect(parseInviteTtlSeconds(fakeEnv(undefined))).toBe(
+      DEFAULT_INVITE_TTL_SECONDS,
+    )
+    expect(
+      parseInviteTtlSeconds(fakeEnv(String(DEFAULT_INVITE_TTL_SECONDS))),
+    ).toBe(DEFAULT_INVITE_TTL_SECONDS)
+    expect(() => parseInviteTtlSeconds(fakeEnv('not-a-number'))).toThrow()
+    expect(() => parseInviteTtlSeconds(fakeEnv('1.5'))).toThrow()
+    expect(() =>
+      parseInviteTtlSeconds(fakeEnv(String(MIN_INVITE_TTL_SECONDS - 1))),
+    ).toThrow()
+    expect(() =>
+      parseInviteTtlSeconds(fakeEnv(String(MAX_INVITE_TTL_SECONDS + 1))),
+    ).toThrow()
+    expect(() =>
+      parseInviteTtlSeconds(fakeEnv(String(DEFAULT_INVITE_TTL_SECONDS * 2))),
+    ).toThrow()
   })
 })

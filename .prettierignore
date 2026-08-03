@@ -3,3 +3,6 @@ coverage/
 node_modules/
 package-lock.json
 src/types/database.generated.ts
+# Supabase CLI local runtime state (git-ignored; never formatted)
+supabase/.temp/
+supabase/.branches/

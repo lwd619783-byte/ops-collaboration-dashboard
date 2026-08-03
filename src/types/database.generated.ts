@@ -458,7 +458,6 @@ export type Database = {
           p_display_name: string
           p_email_hash: string
           p_email_hint: string
-          p_expires_at: string
           p_idempotency_key: string
           p_role: Database["public"]["Enums"]["workspace_role"]
           p_workspace_id: string
@@ -502,6 +501,7 @@ export type Database = {
           user_id: string
         }[]
       }
+      workspace_invitation_ttl_seconds: { Args: never; Returns: number }
       workspace_role_for_current_user: {
         Args: { p_workspace_id: string }
         Returns: Database["public"]["Enums"]["workspace_role"]

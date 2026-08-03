@@ -23,8 +23,12 @@ export function AccountActivationPage() {
   const [confirmation, setConfirmation] = useState('')
   const [passwordError, setPasswordError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
-  const [passwordWasUpdated, setPasswordWasUpdated] = useState(false)
   const [isSubmitting, setSubmitting] = useState(false)
+  // The "password already set" fact lives in the AuthProvider (backed by
+  // controlled sessionStorage), so it survives USER_UPDATED identity
+  // re-resolution, React re-renders, this page being unmounted/remounted and
+  // page refreshes. The page never stores it locally.
+  const passwordWasUpdated = auth.activationPasswordSet
 
   if (workspace.status === 'idle' || workspace.status === 'loading') {
     return <LoadingState title="正在读取邀请" />
@@ -81,7 +85,8 @@ export function AccountActivationPage() {
         setSubmitting(false)
         return
       }
-      setPasswordWasUpdated(true)
+      // The AuthProvider marks the activation phase after a successful
+      // password update; this component only observes it.
     }
 
     const acceptance = await workspace.acceptInvitation(

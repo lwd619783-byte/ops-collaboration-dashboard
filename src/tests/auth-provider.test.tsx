@@ -8,7 +8,10 @@ import {
   fictionalAppUser,
   fictionalProfile,
 } from '@/tests/helpers/supabaseAuthMock'
-import { RECOVERY_SESSION_STORAGE_KEY } from '@/features/auth/authService'
+import {
+  ACTIVATION_PHASE_STORAGE_KEY,
+  RECOVERY_SESSION_STORAGE_KEY,
+} from '@/features/auth/authService'
 
 function renderAuth(options: Parameters<typeof createSupabaseClientMock>[0]) {
   const supabase = createSupabaseClientMock(options)
@@ -1182,5 +1185,142 @@ describe('旧退出不能清除新的登录状态', () => {
     })
     expect(result.current.status).toBe('authenticated_authorized')
     expect(result.current.appUser?.id).toBe(userBRow.id)
+  })
+})
+
+describe('首次激活阶段（activation phase）', () => {
+  beforeEach(() => {
+    window.sessionStorage.clear()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    window.sessionStorage.clear()
+  })
+
+  it('setInitialPassword 成功后标记激活阶段', async () => {
+    const { rendered } = renderAuth({ hasSession: true })
+    await waitFor(() =>
+      expect(rendered.result.current.status).toBe('authenticated_authorized'),
+    )
+    await act(async () => {
+      await rendered.result.current.setInitialPassword('strong-pass-123')
+    })
+    expect(rendered.result.current.activationPasswordSet).toBe(true)
+    expect(window.sessionStorage.getItem(ACTIVATION_PHASE_STORAGE_KEY)).toBe(
+      '1',
+    )
+  })
+
+  it('密码更新失败不会标记为已设置', async () => {
+    const { supabase, rendered } = renderAuth({
+      hasSession: true,
+      updateUserError: { message: 'fictional failure' },
+    })
+    await waitFor(() =>
+      expect(rendered.result.current.status).toBe('authenticated_authorized'),
+    )
+    await act(async () => {
+      await rendered.result.current.setInitialPassword('strong-pass-123')
+    })
+    expect(rendered.result.current.activationPasswordSet).toBe(false)
+    expect(
+      window.sessionStorage.getItem(ACTIVATION_PHASE_STORAGE_KEY),
+    ).toBeNull()
+    expect(supabase.updateUser).toHaveBeenCalledTimes(1)
+  })
+
+  it('显式退出与完成激活退出都会清除激活阶段', async () => {
+    const { supabase, rendered } = renderAuth({ hasSession: true })
+    await waitFor(() =>
+      expect(rendered.result.current.status).toBe('authenticated_authorized'),
+    )
+    await act(async () => {
+      await rendered.result.current.setInitialPassword('strong-pass-123')
+    })
+    expect(rendered.result.current.activationPasswordSet).toBe(true)
+
+    await act(async () => {
+      await rendered.result.current.signOut()
+    })
+    expect(rendered.result.current.activationPasswordSet).toBe(false)
+    expect(
+      window.sessionStorage.getItem(ACTIVATION_PHASE_STORAGE_KEY),
+    ).toBeNull()
+    expect(supabase.signOut).toHaveBeenCalledWith({ scope: 'local' })
+
+    const second = renderAuth({ hasSession: true })
+    await waitFor(() =>
+      expect(second.rendered.result.current.status).toBe(
+        'authenticated_authorized',
+      ),
+    )
+    await act(async () => {
+      await second.rendered.result.current.setInitialPassword('strong-pass-123')
+    })
+    expect(second.rendered.result.current.activationPasswordSet).toBe(true)
+    await act(async () => {
+      await second.rendered.result.current.completeAccountActivationSignOut()
+    })
+    expect(second.rendered.result.current.activationPasswordSet).toBe(false)
+    expect(
+      window.sessionStorage.getItem(ACTIVATION_PHASE_STORAGE_KEY),
+    ).toBeNull()
+  })
+
+  it('SIGNED_OUT（会话丢失）清除激活阶段，不能跨会话残留', async () => {
+    const { supabase, rendered } = renderAuth({ hasSession: true })
+    await waitFor(() =>
+      expect(rendered.result.current.status).toBe('authenticated_authorized'),
+    )
+    await act(async () => {
+      await rendered.result.current.setInitialPassword('strong-pass-123')
+    })
+    expect(rendered.result.current.activationPasswordSet).toBe(true)
+
+    await act(async () => {
+      supabase.emitAuthEvent('SIGNED_OUT')
+    })
+    await waitFor(() =>
+      expect(rendered.result.current.status).toBe('unauthenticated'),
+    )
+    expect(rendered.result.current.activationPasswordSet).toBe(false)
+    expect(
+      window.sessionStorage.getItem(ACTIVATION_PHASE_STORAGE_KEY),
+    ).toBeNull()
+  })
+
+  it('新用户 SIGNED_IN 与 PASSWORD_RECOVERY 都会清除旧激活阶段', async () => {
+    const { supabase, rendered } = renderAuth({ hasSession: true })
+    await waitFor(() =>
+      expect(rendered.result.current.status).toBe('authenticated_authorized'),
+    )
+    await act(async () => {
+      await rendered.result.current.setInitialPassword('strong-pass-123')
+    })
+    expect(rendered.result.current.activationPasswordSet).toBe(true)
+
+    await act(async () => {
+      supabase.emitAuthEvent('SIGNED_IN')
+    })
+    await waitFor(() =>
+      expect(rendered.result.current.activationPasswordSet).toBe(false),
+    )
+    expect(
+      window.sessionStorage.getItem(ACTIVATION_PHASE_STORAGE_KEY),
+    ).toBeNull()
+
+    await act(async () => {
+      await rendered.result.current.setInitialPassword('strong-pass-456')
+    })
+    expect(rendered.result.current.activationPasswordSet).toBe(true)
+    await act(async () => {
+      supabase.emitAuthEvent('PASSWORD_RECOVERY')
+    })
+    await waitFor(() =>
+      expect(rendered.result.current.activationPasswordSet).toBe(false),
+    )
+    expect(
+      window.sessionStorage.getItem(ACTIVATION_PHASE_STORAGE_KEY),
+    ).toBeNull()
   })
 })

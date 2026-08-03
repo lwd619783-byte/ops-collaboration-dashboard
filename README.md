@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-Task 0.1 至 Task 1.3 已建立前端、数据库、统一身份与网页登录基线。Task 1.4 增加 `workspaces`、`workspace_members`、`workspace_invitations`，四级角色与成员 / 邀请状态机，默认拒绝 RLS、最小 RPC、Auth 原子预配置 trigger，以及受信任 `invite-workspace-member` Edge Function。前端提供工作空间门禁、成员目录、owner/admin 管理入口和首次受邀激活页；邀请邮箱在业务数据库只保留 SHA-256 摘要和遮罩提示。详见 [工作空间与成员权限](docs/workspace-permissions.md)。正式完成仍以远端独立审计和 PR 合并为准。
+Task 0.1 至 Task 1.3 已建立前端、数据库、统一身份与网页登录基线。Task 1.4 增加 `workspaces`、`workspace_members`、`workspace_invitations`，四级角色与成员 / 邀请状态机，默认拒绝 RLS、最小 RPC、Auth 原子预配置 trigger，以及受信任 `invite-workspace-member` Edge Function。前端提供工作空间门禁、成员目录、owner/admin 管理入口和首次受邀激活页；邀请邮箱在业务数据库只保留 SHA-256 摘要和遮罩提示。独立审计修复已完成数据库唯一 owner 强制、邀请 TTL 与过期重邀、首次激活 `USER_UPDATED` 恢复、成员目录 profile 缺失回退、幂等并发加固与 Edge 真实入口 CI（`deno check`）。详见 [工作空间与成员权限](docs/workspace-permissions.md)。正式完成仍以远端独立审计和 PR 合并为准。
 
 ## 第一阶段边界
 
@@ -63,7 +63,7 @@ npm run build
 npm run check
 ```
 
-`npm run check` 按格式、Lint、类型、测试、生产构建的顺序执行。`npm run security:audit` 单独阻断高危和严重依赖漏洞，CI 会在项目检查前运行该命令。
+`npm run check` 按格式、Lint、类型、测试、生产构建的顺序执行。`npm run security:audit` 单独阻断高危和严重依赖漏洞，CI 会在项目检查前运行该命令。Edge Function 另有 handler / 入口接线测试（`npm run test:edge`）与真实入口类型检查（`deno check supabase/functions/invite-workspace-member/index.ts`，CI 使用固定版本 Deno 2.2.12）。
 
 ## 环境变量
 

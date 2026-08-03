@@ -32,3 +32,11 @@ jobs:
         run: npm ci
       - name: Run Edge Function handler tests
         run: npm run test:edge
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          # Fixed Deno 2 release, compatible with the Supabase Edge Runtime
+          # (hosted runtime runs Deno 2.1+). Never float an unpinned version.
+          deno-version: 2.2.12
+      - name: Type-check the real Edge Function entry
+        run: deno check supabase/functions/invite-workspace-member/index.ts

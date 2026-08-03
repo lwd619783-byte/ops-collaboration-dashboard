@@ -10,7 +10,6 @@ export type PreparationInput = {
   displayName: string
   role: InvitationRole
   idempotencyKey: string
-  expiresAt: string
 }
 
 export type PreparedInvitation = {
@@ -34,6 +33,11 @@ export type EdgeOperationResult<T> =
 
 export type InviteWorkspaceMemberDependencies = {
   allowedOrigins: ReadonlySet<string>
+  /**
+   * Invitation expiry is computed only by the trusted database boundary
+   * (workspace_invitation_ttl_seconds()); this handler never receives or
+   * computes an expiry, so browsers can never influence it.
+   */
   authenticate: (
     authorization: string,
   ) => Promise<EdgeOperationResult<{ providerTenant: string }>>
@@ -48,7 +52,6 @@ export type InviteWorkspaceMemberDependencies = {
     invitationId: string,
     failureCategory: FailureCategory,
   ) => Promise<EdgeOperationResult<undefined>>
-  now?: () => Date
 }
 
 type SafeErrorDefinition = {
@@ -252,8 +255,6 @@ async function parseRequestBody(request: Request): Promise<unknown> {
 export function createInviteWorkspaceMemberHandler(
   dependencies: InviteWorkspaceMemberDependencies,
 ): (request: Request) => Promise<Response> {
-  const now = dependencies.now ?? (() => new Date())
-
   return async (request: Request): Promise<Response> => {
     const origin = request.headers.get('Origin') ?? ''
     if (!dependencies.allowedOrigins.has(origin)) {
@@ -313,7 +314,6 @@ export function createInviteWorkspaceMemberHandler(
     } catch {
       return safeError('temporary_failure', origin)
     }
-    const expiresAt = new Date(now().getTime() + 7 * 24 * 60 * 60 * 1000)
     let preparation: EdgeOperationResult<PreparedInvitation>
     try {
       preparation = await dependencies.prepareInvitation(
@@ -324,7 +324,6 @@ export function createInviteWorkspaceMemberHandler(
           displayName,
           role,
           idempotencyKey,
-          expiresAt: expiresAt.toISOString(),
         },
         authorization,
       )

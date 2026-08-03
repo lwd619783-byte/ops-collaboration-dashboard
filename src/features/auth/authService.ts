@@ -27,6 +27,15 @@ export type Profile = Tables<'profiles'>
 /** Storage key marking an active password-recovery session. */
 export const RECOVERY_SESSION_STORAGE_KEY = 'ops-auth-recovery-session'
 
+/**
+ * Storage key for the first-activation phase. It stores only a non-sensitive
+ * boolean marker ("the initial password was set for THIS activation"), never
+ * a password, token or invitation link. It is bound to the current auth
+ * session by the AuthProvider, which clears it on sign-out, session loss,
+ * user switch, new sign-in and every other authoritative boundary.
+ */
+export const ACTIVATION_PHASE_STORAGE_KEY = 'ops-auth-activation-password-set'
+
 export type AuthServiceResult<T = undefined> =
   { ok: true; data: T } | { ok: false; error: SafeAuthError }
 

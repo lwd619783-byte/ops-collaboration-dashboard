@@ -51,7 +51,7 @@ $function$;
 grant execute on function pg_temp.sqlstate_of(text) to public;
 grant execute on function pg_temp.rows_affected(text) to public;
 
-select plan(50);
+select plan(59);
 
 select ok(to_regclass('public.workspaces') is not null, 'workspaces exists');
 select ok(to_regclass('public.workspace_members') is not null, 'workspace_members exists');
@@ -252,7 +252,8 @@ select ok(
       to_regprocedure('public.workspaces_immutable()'),
       to_regprocedure('public.workspace_members_immutable()'),
       to_regprocedure('public.workspace_invitations_immutable()'),
-      to_regprocedure('public.assert_workspace_owner_membership()')
+      to_regprocedure('public.assert_workspace_owner_membership()'),
+      to_regprocedure('public.assert_workspace_owner_user_id()')
     )
       and a.grantee in (0, 'anon'::regrole, 'authenticated'::regrole, 'service_role'::regrole)
       and a.privilege_type = 'EXECUTE'
@@ -289,6 +290,52 @@ select is(pg_temp.sqlstate_of($sql$
   insert into public.workspaces (name, owner_id, created_by, bootstrap_key)
   values ('Fictional Duplicate Bootstrap', '10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000001', '30000000-0000-4000-8000-000000000001')
 $sql$), '23505', 'bootstrap key is unique');
+
+-- Task 1.4 audit: single-owner invariants.
+select ok(
+  exists(
+    select 1 from pg_indexes
+    where schemaname = 'public' and tablename = 'workspace_members'
+      and indexname = 'workspace_members_one_owner_idx'
+  ),
+  'workspace_members has a partial unique owner index'
+);
+select is(pg_temp.sqlstate_of($sql$
+  insert into public.workspace_members (workspace_id, user_id, role, status, invited_by, joined_at)
+  values ('20000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000003', 'owner', 'active', '10000000-0000-4000-8000-000000000001', now())
+$sql$), '23505', 'a second owner membership is rejected');
+select is(pg_temp.sqlstate_of($sql$
+  insert into public.workspaces (id, name, owner_id, created_by)
+  values ('20000000-0000-4000-8000-000000000002', 'Fictional Mismatched Owner', '10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002')
+$sql$), null::text, 'a workspace row may be inserted before its deferred owner membership check');
+select is(pg_temp.sqlstate_of($sql$
+  insert into public.workspace_members (workspace_id, user_id, role, status, invited_by, joined_at)
+  values ('20000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003', 'owner', 'active', '10000000-0000-4000-8000-000000000003', now())
+$sql$), '23514', 'the sole owner membership must match workspaces.owner_id');
+select is(pg_temp.sqlstate_of($sql$
+  update public.workspace_members set role = 'owner'
+  where workspace_id = '20000000-0000-4000-8000-000000000001'
+    and user_id = '10000000-0000-4000-8000-000000000002'
+$sql$), '23505', 'a normal member cannot be promoted to owner (unique owner index)');
+
+-- Task 1.4 audit: server-side invitation TTL.
+select ok(
+  to_regprocedure('public.workspace_invitation_ttl_seconds()') is not null,
+  'workspace invitation TTL function exists'
+);
+select is(
+  public.workspace_invitation_ttl_seconds(),
+  3600,
+  'business invitation TTL is aligned with the Auth email OTP expiry'
+);
+select ok(
+  to_regprocedure('public.prepare_workspace_invitation(uuid,text,text,text,public.workspace_role,uuid)') is not null,
+  'preparation RPC no longer accepts a browser-supplied expiry'
+);
+select ok(
+  to_regprocedure('public.prepare_workspace_invitation(uuid,text,text,text,public.workspace_role,uuid,timestamptz)') is null,
+  'the old preparation signature accepting p_expires_at is removed'
+);
 
 select * from finish();
 rollback;

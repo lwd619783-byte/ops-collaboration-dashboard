@@ -635,8 +635,35 @@ describe('invite-workspace-member Edge Function handler', () => {
     expect(deps.inviteAuthUser).not.toHaveBeenCalled()
   })
 
-  it('never leaks the Auth user ID in responses or logs', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+  it('keeps internal confirmation kind/state errors out of the browser response', async () => {
+    deps.prepareInvitation = vi.fn(async () => ({
+      ok: true,
+      data: {
+        invitationId,
+        status: 'reissue_prepared',
+        shouldSend: true,
+        operationKind: 'existing_invitee_reissue',
+      },
+    }))
+    deps.confirmInvitation = vi.fn(async () => ({
+      ok: false,
+      code: 'workspace_invitation_state_conflict',
+    }))
+    const handler = createInviteWorkspaceMemberHandler(deps)
+    const response = await handler(request())
+
+    expect(response.status).toBe(503)
+    const text = await response.text()
+    expect(text).not.toContain('state_conflict')
+    expect(text).not.toContain('workspace_invitation')
+    expect(text).not.toContain(invitationId)
+    expect(deps.markInvitationFailed).toHaveBeenCalledWith(
+      invitationId,
+      'temporary_failure',
+    )
+  })
+
+  it('never leaks the Auth user ID in responses or logs', async () => {    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
       deps.prepareInvitation = vi.fn(async () => ({

@@ -514,6 +514,131 @@ check(
   'workspace A invitation is untouched',
   crossInvariants?.a_status === 'revoked',
 )
+
+// ---------------------------------------------------------------------------
+// 3b. STABLE conflict: B's auth_user_conflict is terminal. Re-preparing the
+// same digest with the SAME key or a FRESH key must raise the fixed conflict
+// without creating any new row, calling Auth Admin, or sending mail.
+// ---------------------------------------------------------------------------
+const mailBeforeRetry = await mailFor(inviteeEmail)
+const bRowsBeforeRetry = await asService(async (c) => {
+  const r = await c.query(
+    `select count(*)::bigint as n from public.workspace_invitations
+     where workspace_id = $1 and email_hash = $2`,
+    [workspaceB, emailHash],
+  )
+  return Number(r.rows[0]?.n)
+})
+
+const sameKeyRetry = await withSession(ownerBAuthId, async (c) => {
+  try {
+    await c.query(
+      `select * from public.prepare_workspace_invitation($1, $2, $3, $4, $5, $6)`,
+      [
+        workspaceB,
+        emailHash,
+        mask(inviteeEmail),
+        'Cross Space Invitee',
+        'member',
+        crossSpaceKey,
+      ],
+    )
+    return { threw: false, message: '' }
+  } catch (e) {
+    return { threw: true, message: String(e.message ?? '') }
+  }
+})
+check(
+  'same-key re-prepare raises the fixed stable conflict',
+  sameKeyRetry.threw === true &&
+    sameKeyRetry.message.includes('workspace_invitation_auth_user_conflict'),
+  String(sameKeyRetry.message).slice(0, 160),
+)
+
+const freshBKey = crypto.randomUUID()
+const freshKeyRetry = await withSession(ownerBAuthId, async (c) => {
+  try {
+    await c.query(
+      `select * from public.prepare_workspace_invitation($1, $2, $3, $4, $5, $6)`,
+      [
+        workspaceB,
+        emailHash,
+        mask(inviteeEmail),
+        'Cross Space Invitee',
+        'member',
+        freshBKey,
+      ],
+    )
+    return { threw: false, message: '' }
+  } catch (e) {
+    return { threw: true, message: String(e.message ?? '') }
+  }
+})
+check(
+  'fresh-key re-prepare raises the fixed stable conflict',
+  freshKeyRetry.threw === true &&
+    freshKeyRetry.message.includes('workspace_invitation_auth_user_conflict'),
+  String(freshKeyRetry.message).slice(0, 160),
+)
+
+const mailAfterRetry = await mailFor(inviteeEmail)
+check(
+  'no new mail was sent by the stable-conflict retries',
+  mailAfterRetry.length === mailBeforeRetry.length,
+  `before=${mailBeforeRetry.length} after=${mailAfterRetry.length}`,
+)
+const bRowsAfterRetry = await asService(async (c) => {
+  const r = await c.query(
+    `select count(*)::bigint as n from public.workspace_invitations
+     where workspace_id = $1 and email_hash = $2`,
+    [workspaceB, emailHash],
+  )
+  return Number(r.rows[0]?.n)
+})
+check(
+  'no new B invitation row was created by the stable-conflict retries',
+  bRowsAfterRetry === bRowsBeforeRetry,
+  `before=${bRowsBeforeRetry} after=${bRowsAfterRetry}`,
+)
+const bMembershipAfter = await asService(async (c) => {
+  const r = await c.query(
+    `select count(*)::bigint as n from public.workspace_members
+     where workspace_id = $1 and user_id = $2`,
+    [workspaceB, inviteeAppUserId],
+  )
+  return Number(r.rows[0]?.n)
+})
+check('workspace B still has no membership', bMembershipAfter === 0)
+const retryAuthUsers = await admin.auth.admin.listUsers()
+const retryAuthUsersForEmail =
+  retryAuthUsers.data?.users?.filter((u) => u.email === inviteeEmail) ?? []
+check(
+  'stable-conflict retries keep auth user count at 1',
+  retryAuthUsersForEmail.length === 1,
+)
+const retryInvariants = await asService(async (c) => {
+  const r = await c.query(
+    `select
+       (select count(*) from public.app_users where id = $1) as app_users,
+       (select count(*) from public.user_identities where user_id = $1) as identities,
+       (select count(*) from public.workspace_members
+        where workspace_id = $2 and user_id = $1) as memberships`,
+    [inviteeAppUserId, workspaceA],
+  )
+  return r.rows[0]
+})
+check(
+  'stable-conflict retries keep app_user count at 1',
+  Number(retryInvariants?.app_users) === 1,
+)
+check(
+  'stable-conflict retries keep identity count at 1',
+  Number(retryInvariants?.identities) === 1,
+)
+check(
+  'stable-conflict retries keep A membership count at 1',
+  Number(retryInvariants?.memberships) === 1,
+)
 const crossAuthUsers = await admin.auth.admin.listUsers()
 const crossAuthCount =
   crossAuthUsers.data?.users?.filter((u) => u.email === inviteeEmail) ?? []

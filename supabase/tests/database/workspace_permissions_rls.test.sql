@@ -176,10 +176,22 @@ as $function$
   select failure_code from public.workspace_invitations where id = p_id;
 $function$;
 
+create function pg_temp.invitation_count(p_workspace_id uuid, p_hash text)
+returns bigint
+language sql
+security definer
+set search_path = ''
+as $function$
+  select count(*) from public.workspace_invitations
+  where workspace_id = p_workspace_id
+    and email_hash = p_hash;
+$function$;
+
 grant execute on function pg_temp.invitation_failure_code(uuid) to public;
 grant execute on function pg_temp.open_invitation_count(uuid, text) to public;
+grant execute on function pg_temp.invitation_count(uuid, text) to public;
 
-select plan(160);
+select plan(178);
 
 -- All users, names, tenants and email addresses below are fictional.
 insert into public.app_users (id, status) values
@@ -1603,6 +1615,270 @@ select is(
    where user_id = '11000000-0000-4000-8000-000000000001'),
   'Fictional Owner A',
   'normal profile display is preserved in the directory'
+);
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- Round 5 audit: auth_user_conflict is a STABLE conflict (same key AND fresh
+-- key, with or without an internal invitee) and confirmation is strictly
+-- bound to the persisted operation kind.
+-- ---------------------------------------------------------------------------
+
+-- The prepared new-auth invitation e2 was compensated to
+-- failed/auth_user_conflict by the round-4 confirmation. It has NO internal
+-- invitee. A same-key prepare must raise the fixed conflict instead of
+-- returning a plain failed row (which would tell the admin to re-send).
+set local "request.jwt.claims" = '{"sub":"owner-a","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(
+  pg_temp.sqlstate_of($sql$
+    select * from public.prepare_workspace_invitation(
+      '21000000-0000-4000-8000-000000000001', repeat('f2', 32), 'p***@e***.invalid',
+      'Prepared Confirm', 'member', '38000000-0000-4000-8000-0000000000e2'
+    )
+  $sql$),
+  '55000',
+  'a same-key prepare of an auth_user_conflict raises a stable conflict'
+);
+select is(
+  pg_temp.error_message_of($sql$
+    select * from public.prepare_workspace_invitation(
+      '21000000-0000-4000-8000-000000000001', repeat('f2', 32), 'p***@e***.invalid',
+      'Prepared Confirm', 'member', '38000000-0000-4000-8000-0000000000e2'
+    )
+  $sql$),
+  'workspace_invitation_auth_user_conflict',
+  'the same-key conflict uses the fixed safe error code'
+);
+-- A FRESH key must NOT bypass the invitee-less conflict either: the stable
+-- conflict guard runs before any new prepared/reissue_prepared row is
+-- created, so no new invitation, no Auth Admin call, no mail.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select * from public.prepare_workspace_invitation(
+      '21000000-0000-4000-8000-000000000001', repeat('f2', 32), 'p***@e***.invalid',
+      'Prepared Confirm', 'member', '39000000-0000-4000-8000-0000000000e2'
+    )
+  $sql$),
+  '55000',
+  'a fresh-key prepare of an auth_user_conflict raises a stable conflict'
+);
+select is(
+  pg_temp.error_message_of($sql$
+    select * from public.prepare_workspace_invitation(
+      '21000000-0000-4000-8000-000000000001', repeat('f2', 32), 'p***@e***.invalid',
+      'Prepared Confirm', 'member', '39000000-0000-4000-8000-0000000000e2'
+    )
+  $sql$),
+  'workspace_invitation_auth_user_conflict',
+  'the fresh-key conflict uses the fixed safe error code'
+);
+select is(
+  pg_temp.invitation_count(
+    '21000000-0000-4000-8000-000000000001',
+    repeat('f2', 32)
+  ),
+  1::bigint,
+  'a stable conflict never creates a second invitation row'
+);
+select is(
+  pg_temp.open_invitation_count(
+    '21000000-0000-4000-8000-000000000001',
+    repeat('f2', 32)
+  ),
+  0::bigint,
+  'a stable conflict leaves no open invitation'
+);
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- Round 5 audit: confirmation strictly binds the operation kind to the
+-- persisted invitation structure.
+-- ---------------------------------------------------------------------------
+
+-- A reissue failed/auth_user_conflict fixture (reissue_of + invitee set) for
+-- the kind-mismatch tests below.
+insert into public.workspace_invitations (
+  id, workspace_id, email_hash, email_hint, display_name, role, status,
+  invitee_user_id, invited_by, idempotency_key, created_at, expires_at,
+  sent_at, failed_at, failure_code, reissue_of_invitation_id
+) values (
+  '41000000-0000-4000-8000-0000000000f6', '21000000-0000-4000-8000-000000000001',
+  repeat('e6', 32), 'g***@e***.invalid', 'Reissue Conflict', 'member', 'failed',
+  '11000000-0000-4000-8000-00000000000c', '11000000-0000-4000-8000-000000000001',
+  '34000000-0000-4000-8000-0000000000f6', now() - interval '2 days', now() + interval '1 day',
+  now() - interval '2 days', now() - interval '1 day', 'auth_user_conflict',
+  '41000000-0000-4000-8000-0000000000b3'
+);
+
+set local role service_role;
+
+-- NULL / blank / unknown kinds are all invalid (22023) and must never fall
+-- into the new-auth branch.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      '41000000-0000-4000-8000-0000000000e1',
+      null,
+      'https://fixture-issuer.invalid',
+      'confirm-a'
+    )
+  $sql$),
+  '22023',
+  'a NULL operation kind is refused as invalid'
+);
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      '41000000-0000-4000-8000-0000000000e1',
+      '   ',
+      'https://fixture-issuer.invalid',
+      'confirm-a'
+    )
+  $sql$),
+  '22023',
+  'a blank operation kind is refused as invalid'
+);
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      '41000000-0000-4000-8000-0000000000e1',
+      'unknown_kind',
+      'https://fixture-issuer.invalid',
+      'confirm-a'
+    )
+  $sql$),
+  '22023',
+  'an unknown operation kind is refused as invalid'
+);
+-- A new-auth sent invitation (reissue_of is null) confirmed with the reissue
+-- kind fails the structural binding.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      '41000000-0000-4000-8000-0000000000e1',
+      'existing_invitee_reissue',
+      'https://fixture-issuer.invalid',
+      'confirm-a'
+    )
+  $sql$),
+  '55000',
+  'a new-auth sent invitation with the reissue kind is refused'
+);
+-- A reissue sent invitation (key e1 was confirmed to sent in round 4)
+-- confirmed with the new-auth kind fails the structural binding.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      pg_temp.invitation_id_of(
+        '21000000-0000-4000-8000-000000000001',
+        '34000000-0000-4000-8000-0000000000e1'
+      ),
+      'new_auth_user_invite',
+      'https://fixture-issuer.invalid',
+      'expired-a'
+    )
+  $sql$),
+  '55000',
+  'a reissue sent invitation with the new-auth kind is refused'
+);
+-- A new-auth failed/auth_user_conflict (e2) with the reissue kind fails.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      '41000000-0000-4000-8000-0000000000e2',
+      'existing_invitee_reissue',
+      'https://fixture-issuer.invalid',
+      'reused-user-id'
+    )
+  $sql$),
+  '55000',
+  'a new-auth conflict with the reissue kind is refused'
+);
+-- A reissue failed/auth_user_conflict (f6) with the new-auth kind fails.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      '41000000-0000-4000-8000-0000000000f6',
+      'new_auth_user_invite',
+      'https://fixture-issuer.invalid',
+      'revoked-a'
+    )
+  $sql$),
+  '55000',
+  'a reissue conflict with the new-auth kind is refused'
+);
+-- Correct-kind idempotent confirmations still work: a sent reissue and a
+-- failed reissue conflict both re-confirm with their own kind.
+select is(
+  public.confirm_workspace_auth_invitation_result(
+    pg_temp.invitation_id_of(
+      '21000000-0000-4000-8000-000000000001',
+      '34000000-0000-4000-8000-0000000000f3'
+    ),
+    'existing_invitee_reissue',
+    'https://fixture-issuer.invalid',
+    'revoked-a'
+  ),
+  'sent',
+  'a correct-kind sent reissue confirmation stays idempotent'
+);
+select is(
+  public.confirm_workspace_auth_invitation_result(
+    '41000000-0000-4000-8000-0000000000f6',
+    'existing_invitee_reissue',
+    'https://fixture-issuer.invalid',
+    'revoked-a'
+  ),
+  'failed',
+  'a correct-kind reissue conflict confirmation stays idempotent'
+);
+-- Re-confirming a sent reissue with a wrong tenant or subject is refused: the
+-- idempotent sent branch still validates the caller parameters.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      pg_temp.invitation_id_of(
+        '21000000-0000-4000-8000-000000000001',
+        '34000000-0000-4000-8000-0000000000f3'
+      ),
+      'existing_invitee_reissue',
+      'https://unrelated.invalid',
+      'revoked-a'
+    )
+  $sql$),
+  '55000',
+  'a sent reissue re-confirmation with a wrong tenant is refused'
+);
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      pg_temp.invitation_id_of(
+        '21000000-0000-4000-8000-000000000001',
+        '34000000-0000-4000-8000-0000000000f3'
+      ),
+      'existing_invitee_reissue',
+      'https://fixture-issuer.invalid',
+      'some-other-user'
+    )
+  $sql$),
+  '55000',
+  'a sent reissue re-confirmation with a wrong subject is refused'
+);
+select is(
+  pg_temp.error_message_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      pg_temp.invitation_id_of(
+        '21000000-0000-4000-8000-000000000001',
+        '34000000-0000-4000-8000-0000000000f3'
+      ),
+      'existing_invitee_reissue',
+      'https://fixture-issuer.invalid',
+      'some-other-user'
+    )
+  $sql$),
+  'workspace_invitation_identity_mismatch',
+  'reissue confirmation failures return a static safe code'
 );
 reset role;
 

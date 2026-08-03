@@ -752,4 +752,34 @@ describe('invite-workspace-member entry wiring', () => {
     expect(response.status).toBe(503)
     expect(admin.auth.admin.inviteUserByEmail).not.toHaveBeenCalled()
   })
+
+  it('propagates a stable prepare conflict without calling Auth Admin', async () => {
+    rpcOverrides.prepare_workspace_invitation = {
+      data: null,
+      error: { message: 'workspace_invitation_auth_user_conflict' },
+    }
+    createInviteWorkspaceMemberEntry({
+      env: fakeEnv(fullEnv),
+      serve,
+      createSupabaseClient: factory,
+    })
+    const admin = clients[0] as FakeClient
+    const handler = serve.mock.calls[0]?.[0] as (
+      request: Request,
+    ) => Promise<Response>
+    const response = await handler(validRequest())
+
+    // The stable conflict is mapped to the generic 409; neither Auth Admin
+    // nor confirmation is invoked, and no mail is sent.
+    expect(response.status).toBe(409)
+    expect(admin.auth.admin.inviteUserByEmail).not.toHaveBeenCalled()
+    expect(admin.rpc).not.toHaveBeenCalledWith(
+      'confirm_workspace_auth_invitation_result',
+      expect.anything(),
+    )
+    expect(admin.rpc).not.toHaveBeenCalledWith(
+      'mark_workspace_invitation_failed',
+      expect.anything(),
+    )
+  })
 })

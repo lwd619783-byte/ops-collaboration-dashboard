@@ -663,7 +663,8 @@ describe('invite-workspace-member Edge Function handler', () => {
     )
   })
 
-  it('never leaks the Auth user ID in responses or logs', async () => {    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+  it('never leaks the Auth user ID in responses or logs', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
       deps.prepareInvitation = vi.fn(async () => ({

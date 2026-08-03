@@ -4,7 +4,7 @@
 
 本项目采用 local-first migration：数据库结构先以版本化 SQL migration 在本地从空库重建、测试和生成类型，再进入远端审计与后续部署流程。这样可以让结构变更可复现、可审阅，并让前端使用与 migration 同源的 TypeScript 类型。
 
-Task 1.1 建立基础设施与健康检查，Task 1.2 建立统一内部身份，Task 1.3 启用本地 Auth 与网页登录，Task 1.4 增加工作空间成员权限和邀请激活闭环。本地配置启用数据库、Data API、Auth、Edge Runtime 与 Inbucket 邮件捕获；Studio、Realtime、Storage 和 Analytics 仍保持关闭。所有工作空间授权仍以 `current_app_user_id()` 解析出的 `app_users.id` 为边界。Task 1.4 审计修复新增 `20260802110000_workspace_audit_hardening.sql`：数据库强制唯一 owner（部分唯一索引 + 语句级约束触发器）、服务端邀请 TTL（`workspace_invitation_ttl_seconds()`，与 Auth OTP 对齐）、`prepare_workspace_invitation()` 移除浏览器可传入的过期参数并原子关闭过期开放邀请，以及成员目录对缺失 profile 的安全 LEFT JOIN 回退。
+Task 1.1 建立基础设施与健康检查，Task 1.2 建立统一内部身份，Task 1.3 启用本地 Auth 与网页登录，Task 1.4 增加工作空间成员权限和邀请激活闭环。本地配置启用数据库、Data API、Auth、Edge Runtime 与 Inbucket 邮件捕获；Studio、Realtime、Storage 和 Analytics 仍保持关闭。所有工作空间授权仍以 `current_app_user_id()` 解析出的 `app_users.id` 为边界。Task 1.4 审计修复新增 `20260802110000_workspace_audit_hardening.sql`：数据库强制唯一 owner（部分唯一索引 + 语句级约束触发器）、服务端邀请 TTL（`workspace_invitation_ttl_seconds()`，与 Auth OTP 对齐）、`prepare_workspace_invitation()` 移除浏览器可传入的过期参数并原子关闭过期开放邀请，以及成员目录对缺失 profile 的安全 LEFT JOIN 回退。第二轮修复新增 `20260803120000_workspace_invitation_reissue_status.sql` 与 `20260803120100_workspace_invitation_reissue.sql`：`reissue_prepared` 邀请状态与 `reissue_of_invitation_id` 关联、`prepare_workspace_invitation()` 返回 `operation_kind`（`new_auth_user_invite` / `existing_invitee_reissue`）、服务专用 `finalize_workspace_invitation_reissue()`、锁后 `clock_timestamp()` 时间语义，以及成员目录 `pending_invitation` 标记。
 
 ## 环境要求
 
@@ -123,13 +123,15 @@ npm run test:edge
 deno check supabase/functions/invite-workspace-member/index.ts
 ```
 
-`test:edge` 同时运行 handler 行为测试与真实入口接线测试（`entry.test.ts` 使用假客户端：caller client 只用 publishable key 和调用者 Authorization，admin client 只持有服务端 secret，provider tenant 不可由浏览器伪造，失败补偿走 admin client，环境值不进入日志或响应）。CI 的 Edge Function workflow 安装固定版本 Deno（`denoland/setup-deno@v2`，`deno-version: 2.2.12`，与 Supabase Edge Runtime 的 Deno 2 约束兼容）并对真实 `index.ts` 执行 `deno check`，覆盖 npm: Supabase SDK 导入、环境变量读取、handler 接线与 Deno 类型；workflow 权限保持 `contents: read`。
+`test:edge` 明确运行两个文件：`handler.test.ts`（处理器行为）与 `entry.test.ts`（真实入口接线，使用假客户端：caller client 只用 publishable key 和调用者 Authorization，admin client 只持有服务端 secret，provider tenant 不可由浏览器伪造，失败补偿与 reissue finalize 走 admin client，环境值不进入日志或响应）。CI 的 Edge Function workflow 安装固定版本 Deno（`denoland/setup-deno@v2`，`deno-version: 2.2.12`，与 Supabase Edge Runtime 的 Deno 2 约束兼容）并对真实 `index.ts` 执行 `deno check`，覆盖 npm: Supabase SDK 导入、环境变量读取、handler 接线与 Deno 类型；workflow 权限保持 `contents: read`。
 
-函数入口只接受受控来源的 `POST`，使用调用者 Bearer token 调用 `auth.getUser(token)`，再把同一 Authorization 交给低权限客户端执行 `prepare_workspace_invitation`。数据库完成最终角色授权与幂等准备后，服务端管理客户端才调用 Auth Admin 邀请接口。Auth Admin 失败时只通过服务端专用 RPC 写入允许列表中的失败分类；函数响应与日志不包含邮箱全文、JWT、邀请链接、Auth 原始错误或密钥。
+函数入口只接受受控来源的 `POST`，使用调用者 Bearer token 调用 `auth.getUser(token)`，再把同一 Authorization 交给低权限客户端执行 `prepare_workspace_invitation`。数据库完成最终角色授权与幂等准备后返回 `operation_kind`：`new_auth_user_invite` 走 `auth.users` AFTER INSERT trigger 预配置；`existing_invitee_reissue` 由服务端管理客户端调用 Auth Admin `inviteUserByEmail` 对同一未确认用户重发（不产生第二个 Auth 用户，也不触发 trigger），发信成功后调用服务专用 `finalize_workspace_invitation_reissue` 把新邀请推进为 `sent`。Auth Admin 失败时只通过服务端专用 RPC 写入允许列表中的失败分类；函数响应与日志不包含邮箱全文、JWT、邀请链接、Auth 原始错误或密钥。
 
 邀请有效期完全由数据库服务端计算（`workspace_invitation_ttl_seconds()`，当前 3600 秒，与 `[auth] otp_expiry = 3600` 对齐）；RPC 不接受浏览器传入的过期时间。Edge Function 通过 `APP_INVITE_TTL_SECONDS` 做部署期校验：默认 3600，设置为安全上下限（300–86400 秒）之外、非整数或与 3600 不一致的值时拒绝启动。**托管 Supabase 的 Email OTP Expiration 必须与业务邀请 TTL 同步配置**，任何调整必须同时修改 Auth `otp_expiry`、数据库函数与 Edge 默认值并重新验证。
 
-同一工作空间的邀请准备（过期开放邀请自动关闭、幂等重读、新邀请创建）在同一事务与工作空间行锁边界内完成，不存在并发窗口；唯一冲突后会重读幂等键并返回既有邀请（payload 一致）或明确冲突。过期 `prepared` / `sent` 邀请在下一次同摘要准备请求中原子关闭为 `revoked`，之后可用新幂等键重新邀请；`accepted` / `failed` / `revoked` 与未过期邀请不会被修改。
+同一工作空间的邀请准备（过期恢复 / 重发判定、幂等重读、新邀请创建）在同一事务与工作空间行锁边界内完成，且 `clock_timestamp()` 只在**获得行锁之后**读取——过期判断、`revoked_at` 与新邀请 `expires_at` 使用同一锁后时间点，并发请求在锁等待跨越过期点后仍能正确关闭旧邀请并让新邀请获得完整 TTL；唯一冲突后会重读幂等键并返回既有邀请（payload 一致）或明确冲突。过期 `prepared` 邀请在下一次同摘要准备请求中关闭为 `revoked` 并走普通新用户邀请；过期 `sent`（或 `reissue_prepared`）邀请且 invitee 仍然有效时走**重发路径**（关闭旧邀请为 `revoked`，创建保留原 `invitee_user_id` 并关联 `reissue_of_invitation_id` 的 `reissue_prepared` 邀请，由 Edge Function 重发邮件后经 `finalize_workspace_invitation_reissue` 推进为 `sent`）；invitee 已停用 / 合并 / 身份撤销时拒绝（`workspace_invitation_invitee_invalid`）；`accepted` / `failed` / `revoked` 与未过期邀请不会被修改。
+
+真实本地 Auth 重发集成验证可重复执行（`npm run db:reissue:verify`，前置见 `scripts/verify-invitation-reissue.mjs` 头部注释）：首次邀请产生一个 Auth 用户与一套业务身份；过期后重发复用同一 Auth 用户、同一 `app_user` / `user_identities` / `workspace_members`，发送第二封邮件，`finalize` 后新邀请出现在 pending 列表并可接受激活原 membership，旧邀请不能接受，输出不含链接、token、邮箱或密钥。
 
 托管 Edge Runtime 的 provider tenant 从可信 `SUPABASE_URL` 推导。本地 Edge Runtime 会把该变量设为容器内部 Kong 地址，而本地 JWT issuer 是外部 loopback Auth URL；实现先通过官方 `auth.getUser(token)` 验证 token 和用户，再从同一已验证 JWT 读取 issuer，并只对内部 Runtime 接受严格的 loopback `/auth/v1` 例外。issuer 的 `sub` 还必须与官方验证返回的 Auth 用户一致。浏览器不能提交或覆盖 provider tenant。
 

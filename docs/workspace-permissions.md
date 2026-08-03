@@ -46,21 +46,29 @@ Task 1.4 为系统增加最上层组织边界。所有业务外键继续引用�
 邀请状态：
 
 ```text
-prepared -> sent -> accepted
-    |         |
-    +-------> failed
-    +-------> revoked
+prepared ----------------> sent -> accepted
+reissue_prepared --------> sent -> accepted
+    |         |              |
+    +-------> failed         +-------> failed
+    +-------> revoked        +-------> revoked
 ```
 
 状态只能按 migration 中允许的方向前进，不能回退；过期由 `expires_at` 判定。V1 不提供撤销 / 重发产品界面，但数据模型保留对应终态。
 
-### 过期邀请自动关闭与重新邀请
+- `prepared`：首次邀请，等待 Auth 创建新用户；此时 `invitee_user_id` 必须为空。
+- `reissue_prepared`：已有受邀身份的重发，等待 Edge Function 向 Auth 确认重发；此时 `invitee_user_id` 与 `reissue_of_invitation_id` 都非空。
+- `sent`：邀请邮件已由 Auth 接收（首次由 `auth.users` AFTER INSERT trigger 推进；重发由服务专用 finalize RPC 推进）。
 
-业务邀请有效期由受信任服务端配置决定（见下文 TTL），`expires_at` 只能由数据库计算，浏览器不能传入。当同一工作空间与邮箱摘要下存在**已过期**的 `prepared` 或 `sent` 邀请时，`prepare_workspace_invitation()` 会在同一事务与锁边界内把它们原子关闭为 `revoked`（写入 `revoked_at`），随后允许新的幂等键创建并发送新邀请。`accepted`、`failed`、`revoked` 以及尚未过期的邀请绝不会被该流程修改；尚未过期的开放邀请仍会阻止同摘要的新邀请（普通邀请冲突）。
+### 过期邀请的恢复与重发
 
-### 过期邀请自动关闭与重新邀请
+业务邀请有效期由受信任服务端配置决定（见下文 TTL），`expires_at` 只能由数据库计算，浏览器不能传入。`prepare_workspace_invitation()` 在同一事务与工作空间行锁边界内处理过期开放邀请，并按以下明确区分的流程返回 `operation_kind`：
 
-业务邀请有效期由受信任服务端配置决定（见下文 TTL），`expires_at` 只能由数据库计算，浏览器不能传入。当同一工作空间与邮箱摘要下存在**已过期**的 `prepared` 或 `sent` 邀请时，`prepare_workspace_invitation()` 会在同一事务与锁边界内把它们原子关闭为 `revoked`（写入 `revoked_at`），随后允许新的幂等键创建并发送新邀请。`accepted`、`failed`、`revoked` 以及尚未过期的邀请绝不会被该流程修改；尚未过期的开放邀请仍会阻止同摘要的新邀请（普通邀请冲突）。
+1. **首次邀请**（`new_auth_user_invite`）：没有可复用的受邀身份时，创建不带 `invitee_user_id` 的 `prepared` 邀请；Edge Function 调用 Auth Admin，由 `auth.users` AFTER INSERT trigger 原子预配置内部用户并推进到 `sent`。已过期的 `prepared` 邀请会在同一锁内先关闭为 `revoked`。
+2. **已有受邀身份的重发**（`existing_invitee_reissue`）：同一工作空间与邮箱摘要下存在**已过期**的 `sent`（或 `reissue_prepared`）邀请，其 `invitee_user_id`、对应 membership（仍 `invited`）、内部用户（`active`）与身份（已验证且未撤销）都仍然有效时，把旧邀请关闭为 `revoked`（写入 `revoked_at`），并创建关联 `reissue_of_invitation_id`、保留原 `invitee_user_id` 的 `reissue_prepared` 邀请。重发**不创建**第二个内部用户、第二条身份或第二条 membership，也**不重新启用**旧邀请。
+3. **无法重发的过期邀请**：invitee 已停用 / 合并、身份已撤销、或 membership 已不再是 `invited` 时，拒绝本次准备（`workspace_invitation_invitee_invalid`），旧邀请保持原状；这类用户需要受控运维流程处理。
+4. **已确认 Auth 用户冲突**：业务层无法预知 Auth 邮箱是否已确认；重发调用 Auth Admin 时若返回 `email_exists` 冲突，新邀请被补偿为 `failed`（`auth_user_conflict`），返回稳定冲突错误。**已确认账号按邮箱跨工作空间加入仍属于后续任务**，不会与本流程混为一谈。
+
+`accepted`、`failed`、`revoked` 以及尚未过期的邀请绝不会被过期流程修改；尚未过期的开放邀请仍会阻止同摘要的新邀请（普通邀请冲突）。重发请求的目标角色必须与既有邀请 / membership 一致，否则返回 `workspace_invitation_role_conflict`。
 
 ## RLS、RPC 与最小授权
 
@@ -80,8 +88,9 @@ prepared -> sent -> accepted
 
 - `bootstrap_default_workspace(...)`
 - `mark_workspace_invitation_failed(...)`
+- `finalize_workspace_invitation_reissue(invitation_id)`：只能由 `service_role` 执行；把处于合法 reissue 状态的邀请推进为 `sent` 并写入 `sent_at`，锁定新邀请、被替换的旧邀请、membership 与 invitee 并验证关系一致，重复调用幂等，失败返回静态错误码。浏览器与 `authenticated` 无执行权。
 
-所有边界函数均为 `SECURITY DEFINER`、封闭 `search_path`、显式 schema 限定、静态错误文本和最小 EXECUTE 授权。成员目录仅返回显示名称、单位 / 职位、头像、角色、状态及成员时间，不返回邮箱、`contact_info`、身份 subject、JWT 或 Auth 管理数据。目录使用安全 `LEFT JOIN`：`profiles` 行缺失的成员仍然出现，显示名称回退为固定文案"未设置显示名称"，`avatar_url` / `organization_name` / `title` 返回 null，排序保持不变；`profiles` 自身的 RLS 不做任何放宽。
+所有边界函数均为 `SECURITY DEFINER`、封闭 `search_path`、显式 schema 限定、静态错误文本和最小 EXECUTE 授权。成员目录仅返回显示名称、单位 / 职位、头像、角色、状态及成员时间，不返回邮箱、`contact_info`、身份 subject、JWT 或 Auth 管理数据。目录使用安全 `LEFT JOIN`：`profiles` 行缺失的成员仍然出现，显示名称回退为固定文案"未设置显示名称"，`avatar_url` / `organization_name` / `title` 返回 null，排序保持不变；`profiles` 自身的 RLS 不做任何放宽。目录额外返回 `pending_invitation` 布尔值（仅统计该成员名下未过期的 `sent` 邀请），前端据此把 `invited` 成员区分为"待激活"（存在有效邀请）与"待重新邀请"（邀请已过期、需要受控重发），避免展示一条永远无法恢复的成员。
 
 ## 默认工作空间初始化
 
@@ -91,13 +100,14 @@ prepared -> sent -> accepted
 
 1. owner/admin 在成员页提交工作空间、邮箱、显示名称、允许角色和浏览器生成的 UUID 幂等键。
 2. Edge Function 校验 Origin、方法、Bearer 会话和字段；邮箱先规范化，再计算 SHA-256 和遮罩提示。邀请有效期由数据库按服务端 TTL 计算，Edge Function 与浏览器都不参与。
-3. 携带调用者 Authorization 的低权限客户端调用 `prepare_workspace_invitation`；数据库通过 `current_app_user_id()` 校验角色、冲突和幂等性，并在同一事务锁内先关闭同摘要的过期开放邀请。
-4. 仅在数据库返回 `should_send=true` 时，服务端管理客户端调用 Auth Admin `inviteUserByEmail`。请求 metadata 只包含邀请 ID 和服务端确定的 tenant，不携带角色、工作空间或显示名称等业务事实。托管环境从可信 Supabase URL 推导 tenant；本地容器地址不等于 JWT issuer 时，只能在官方 `auth.getUser` 已验证 token、issuer `sub` 与用户一致且 issuer 为 loopback `/auth/v1` 后采用该 issuer。
+3. 携带调用者 Authorization 的低权限客户端调用 `prepare_workspace_invitation`；数据库通过 `current_app_user_id()` 校验角色、冲突和幂等性，并在同一事务与工作空间行锁内（**先获取行锁、后读取 `clock_timestamp()`**，过期判断、`revoked_at` 与新邀请 `expires_at` 都使用该锁后时间点）区分返回 `new_auth_user_invite` 或 `existing_invitee_reissue`。
+4. **首次邀请**：仅在数据库返回 `should_send=true` 时，服务端管理客户端调用 Auth Admin `inviteUserByEmail`。请求 metadata 只包含邀请 ID 和服务端确定的 tenant，不携带角色、工作空间或显示名称等业务事实。托管环境从可信 Supabase URL 推导 tenant；本地容器地址不等于 JWT issuer 时，只能在官方 `auth.getUser` 已验证 token、issuer `sub` 与用户一致且 issuer 为 loopback `/auth/v1` 后采用该 issuer。
 5. `auth.users` AFTER INSERT trigger 锁定 prepared 邀请，对 Auth 邮箱做相同规范化和 SHA-256 比对，并从邀请行读取业务值；随后原子创建 `app_users`、`profiles`、已验证 `user_identities` 和 invited membership，把邀请标为 sent。任一步失败会回滚 Auth 用户插入。
-6. 受邀者通过受控 `/activate-account` 路由建立 Supabase 会话。页面显示工作空间、角色和到期时间的安全摘要。
-7. 页面先设置首个密码，再调用 `accept_workspace_invitation`。数据库校验邀请属于当前内部用户、已发送且有效，原子激活 membership 并接受邀请；重复接受返回稳定成功结果。
-8. 两步都成功后页面执行 local scope 退出并回到登录页。若密码成功但接受失败，页面保留会话并只重试接受步骤，不重复设置密码。
-9. Auth Admin 调用失败时，Edge Function 通过服务端专用函数将邀请标为 failed，只保存允许列表分类，不保存原始错误。
+6. **已有受邀身份的重发**：数据库已把旧过期邀请关闭为 `revoked` 并创建 `reissue_prepared` 新邀请（保留原 `invitee_user_id`、关联 `reissue_of_invitation_id`）。Edge Function 调用 Auth Admin `inviteUserByEmail` 对**同一**未确认 Auth 用户重发（真实本地验证：不产生第二个 Auth 用户、不触发 AFTER INSERT trigger、不更新 `user_metadata`、确实发送第二封邮件、邮件链接仍指向受控 `/activate-account`）。发信成功后由服务专用 RPC `finalize_workspace_invitation_reissue` 把新邀请原子推进为 `sent`；发信失败走安全补偿进入 `failed`（membership 保持 `invited`，可后续恢复）；已确认用户返回 `email_exists` 冲突时按"已确认账号跨工作空间加入属后续任务"处理。
+7. 受邀者通过受控 `/activate-account` 路由建立 Supabase 会话。页面显示工作空间、角色和到期时间的安全摘要。
+8. 页面先设置首个密码，再调用 `accept_workspace_invitation`。数据库校验邀请属于当前内部用户、已发送且有效，原子激活 membership 并接受邀请；重复接受返回稳定成功结果。重发场景接受的是新邀请，激活的是**原 membership**（不创建第二条）。
+9. 两步都成功后页面执行 local scope 退出并回到登录页。若密码成功但接受失败，页面保留会话并只重试接受步骤，不重复设置密码。
+10. Auth Admin 调用失败时，Edge Function 通过服务端专用函数将邀请标为 failed，只保存允许列表分类，不保存原始错误。
 
 ### 首次激活的 USER_UPDATED 恢复语义
 
@@ -110,9 +120,9 @@ prepared -> sent -> accepted
 
 ## 幂等与邮箱最小化
 
-邀请请求必须携带 UUID 幂等键。`prepare_workspace_invitation()` 在同一工作空间上建立显式事务锁，过期清理、幂等重读与新邀请创建共享同一锁边界，不存在并发窗口。相同调用者、工作空间、邮箱摘要、显示名称和角色重试返回已有邀请且 `should_send=false`；同一键携带不同目标返回 `workspace_invitation_idempotency_conflict`；唯一冲突后会重新读取 `(workspace_id, idempotency_key)` 再决定幂等成功或冲突。同一工作空间与邮箱摘要只允许一条 open（prepared / sent）邀请，因此网络重试不会重复发信或创建成员，也不会产生第二次 Auth Admin 调用。
+邀请请求必须携带 UUID 幂等键。`prepare_workspace_invitation()` 在同一工作空间上建立显式事务锁（`SELECT ... FOR UPDATE`），并在**获取锁之后**才读取 `clock_timestamp()`：过期判断、`revoked_at` 与新邀请 `expires_at` 都使用同一个锁后时间点，因此并发请求在锁等待跨越旧邀请过期点后，仍能正确关闭旧邀请并让新邀请获得完整 TTL。过期清理、幂等重读与新邀请创建共享同一锁边界，不存在并发窗口。相同调用者、工作空间、邮箱摘要、显示名称和角色重试返回已有邀请且 `should_send=false`；同一键携带不同目标返回 `workspace_invitation_idempotency_conflict`；唯一冲突后会重新读取 `(workspace_id, idempotency_key)` 再决定幂等成功或冲突。同一工作空间与邮箱摘要只允许一条 open（prepared / reissue_prepared / sent）邀请，因此网络重试不会重复发信或创建成员，也不会产生第二次 Auth Admin 调用。`finalize_workspace_invitation_reissue` 同样幂等：对已 `sent` 的邀请重复调用直接返回 `sent`。
 
-业务数据库不保存明文邮箱、邀请链接、OTP、token 或密码。`email_hash` 是 64 位小写十六进制 SHA-256，`email_hint` 只用于安全识别。明文邮箱只在单次 Edge Function 请求内用于 Auth Admin 调用，不写日志或响应。
+业务数据库不保存明文邮箱、邀请链接、OTP、token 或密码。`email_hash` 是 64 位小写十六进制 SHA-256，`email_hint` 只用于安全识别。明文邮箱只在单次 Edge Function 请求内用于 Auth Admin 调用，不写日志或响应。重发流程返回给 Edge Function 的只有 `operation_kind`（不敏感的操作分类），Auth 用户 ID、provider subject 或其他身份内部字段从不进入响应。
 
 ## 邀请有效期（TTL）配置
 
@@ -123,9 +133,9 @@ prepared -> sent -> accepted
 ## 已知限制与后续边界
 
 - 当前 Supabase `inviteUserByEmail` 不支持 PKCE；邀请邮件不能宣称为 PKCE 流程。密码恢复仍使用 PKCE。本地真实邮件验证确认邀请使用隐式 session fragment 进入 `/activate-account`，再由页面执行密码设置和业务邀请接受；远端邮件模板、允许重定向域名和实际邮件客户端必须在部署任务中重新验证。
-- V1 不处理已有确认 Auth 用户按邮箱跨工作空间自动加入；若 Auth Admin 报冲突，返回安全邀请冲突 / 临时失败，不在浏览器查询 Auth 用户。
-- 邀请发送采用 at-most-once 幂等边界：只有首次创建 prepared 记录的请求获得发送权，并发 / 同键重试不会二次发信。若进程在 prepared 提交后、Auth Admin 调用前终止，记录可能保持 prepared；V1 不含运营恢复、撤销或重发界面（过期邀请会在下一次同摘要准备请求中自动关闭为 revoked），需要后续受控运维流程处理。
-- 本轮审计修复只恢复服务端能力：数据库唯一 owner 强制、TTL 配置与过期重邀、激活 `USER_UPDATED` 恢复、成员目录 profile 缺失回退、幂等并发加固与 Edge 真实入口 CI；仍然不包含完整撤销 / 重发产品界面、生产 SMTP 或任何远端部署。
+- V1 不处理已有确认 Auth 用户按邮箱跨工作空间自动加入：重发时若 Auth Admin 报 `email_exists` 冲突，新邀请进入 `failed`（`auth_user_conflict`）并返回稳定冲突错误；该用户不会被删除、不会创建重复内部用户，加入其他工作空间属于后续任务。已确认账号与未确认邀请过期重发是两条明确不同的路径。
+- 邀请发送采用 at-most-once 幂等边界：只有首次创建 prepared / reissue_prepared 记录的请求获得发送权，并发 / 同键重试不会二次发信。若进程在 prepared 提交后、Auth Admin 调用前终止，记录可能保持 prepared；若进程在重发邮件被 Auth 接受后、finalize 前终止，记录保持 reissue_prepared——V1 不含运营恢复、撤销或重发管理界面，这两种残留需要后续受控运维流程处理（过期残留会在下一次同摘要准备请求中按对应路径关闭为 revoked）。
+- 第二轮审计修复完成"已有受邀身份的重发"闭环：`operation_kind` 区分首次与重发、`reissue_prepared` 状态与 `reissue_of_invitation_id` 关联、服务专用 `finalize_workspace_invitation_reissue`、锁后 `clock_timestamp()` 时间语义、成员目录 `pending_invitation` 区分（"待激活"与"待重新邀请"）。仍然不包含完整撤销 / 重发产品界面、生产 SMTP 或任何远端部署。
 - 不实现项目 / 项目角色 / 模块、任务 / 进展 / 验收 / 提醒、所有权转移、工作空间删除、成员永久删除、批量邀请、完整撤销 / 重发 UI、公开注册、第三方登录、通用审计日志、生产 SMTP 或远端部署。
 
 ## 本地验证
@@ -141,4 +151,12 @@ deno check supabase/functions/invite-workspace-member/index.ts
 git diff --check
 ```
 
-`db:verify` 从空库重建 migration，执行 pgTAP、数据库 lint 和生成类型漂移检查。`test:edge` 执行真实 Request / Response 处理器测试，覆盖认证依赖、数据库准备、Auth Admin 调用、幂等短路和失败补偿；另有 `entry.test.ts` 用假客户端验证真实入口接线（publishable / secret 分离、调用者 Authorization 透传、provider tenant 不可伪造、补偿走 admin client、环境值不进日志），CI 同时用固定版本 Deno（2.2.12）对真实 `index.ts` 执行 `deno check`。纯测试夹具使用 `.invalid`；本地 Auth 会拒绝该保留域，因此 Inbucket 真实邮件闭环使用明显虚构的 `example.com` 地址，且不得复制邮件中的链接或 token。
+`db:verify` 从空库重建 migration，执行 pgTAP、数据库 lint 和生成类型漂移检查。`test:edge` 明确运行两个文件——`handler.test.ts`（真实 Request / Response 处理器行为：认证依赖、数据库准备、Auth Admin 调用、幂等短路、失败补偿与 reissue 分支）与 `entry.test.ts`（真实入口接线：publishable / secret 分离、调用者 Authorization 透传、provider tenant 不可伪造、补偿与 finalize 走 admin client、环境值不进日志）。CI 同时用固定版本 Deno（2.2.12）对真实 `index.ts` 执行 `deno check`。
+
+真实本地 Auth 重发集成验证（需本地栈 + 一次性安装的 pg 驱动，见脚本头部注释）：
+
+```bash
+OPS_INTEGRATION_NODE_MODULES=<pg 所在 node_modules> npm run db:reissue:verify
+```
+
+脚本驱动真实 `inviteUserByEmail`、真实 Mailpit 邮件与带会话角色 / JWT claims GUC 的数据库 RPC，断言首次邀请、过期重发、复用同一 Auth 用户 / 内部用户 / 身份 / membership、第二封邮件、finalize、pending 列表、接受激活与旧邀请拒绝。纯测试夹具使用 `.invalid`；本地 Auth 会拒绝该保留域，因此真实邮件闭环使用明显虚构的 `example.com` 地址，脚本输出不包含邮箱全文、链接、OTP、token 或密钥。

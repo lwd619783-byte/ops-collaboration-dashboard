@@ -1,7 +1,10 @@
 export type InvitationRole = 'admin' | 'member' | 'external_collaborator'
 
 export type InvitationStatus =
-  'prepared' | 'sent' | 'accepted' | 'failed' | 'revoked'
+  'prepared' | 'reissue_prepared' | 'sent' | 'accepted' | 'failed' | 'revoked'
+
+export type InvitationOperationKind =
+  'new_auth_user_invite' | 'existing_invitee_reissue'
 
 export type PreparationInput = {
   workspaceId: string
@@ -16,6 +19,7 @@ export type PreparedInvitation = {
   invitationId: string
   status: InvitationStatus
   shouldSend: boolean
+  operationKind: InvitationOperationKind
 }
 
 export type AuthInviteInput = {
@@ -47,6 +51,15 @@ export type InviteWorkspaceMemberDependencies = {
   ) => Promise<EdgeOperationResult<PreparedInvitation>>
   inviteAuthUser: (
     input: AuthInviteInput,
+  ) => Promise<EdgeOperationResult<undefined>>
+  /**
+   * Service-only reissue finalization. After Auth accepted the re-send for an
+   * EXISTING invitee, this moves the reissue_prepared invitation to sent. It
+   * never runs for the new-auth-user flow, whose provisioning is completed by
+   * the auth.users AFTER INSERT trigger instead.
+   */
+  finalizeReissue: (
+    invitationId: string,
   ) => Promise<EdgeOperationResult<undefined>>
   markInvitationFailed: (
     invitationId: string,
@@ -379,6 +392,37 @@ export function createInviteWorkspaceMemberHandler(
           : 'temporary_failure',
         origin,
       )
+    }
+
+    // For an EXISTING invitee the Auth user already exists: inviteUserByEmail
+    // re-sends to the SAME Auth user and never fires the AFTER INSERT
+    // provisioning trigger, so the fresh reissue invitation must be finalized
+    // by the service-only RPC instead. A failure here is a safe temporary
+    // error: the mail was already accepted by Auth, so retrying the same
+    // idempotency key will NOT send a second mail, and the invitation is
+    // compensated so the digest can be re-issued later.
+    if (preparation.data.operationKind === 'existing_invitee_reissue') {
+      let finalized: EdgeOperationResult<undefined>
+      try {
+        finalized = await dependencies.finalizeReissue(
+          preparation.data.invitationId,
+        )
+      } catch {
+        finalized = { ok: false, code: 'temporary_failure' }
+      }
+      if (!finalized.ok) {
+        let compensation: EdgeOperationResult<undefined>
+        try {
+          compensation = await dependencies.markInvitationFailed(
+            preparation.data.invitationId,
+            'temporary_failure',
+          )
+        } catch {
+          return safeError('temporary_failure', origin)
+        }
+        if (!compensation.ok) return safeError('temporary_failure', origin)
+        return safeError('temporary_failure', origin)
+      }
     }
 
     return success('invitation_sent', origin)

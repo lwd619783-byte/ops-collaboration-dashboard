@@ -206,6 +206,7 @@ export type Database = {
           idempotency_key: string
           invited_by: string
           invitee_user_id: string | null
+          reissue_of_invitation_id: string | null
           revoked_at: string | null
           role: Database["public"]["Enums"]["workspace_role"]
           sent_at: string | null
@@ -226,6 +227,7 @@ export type Database = {
           idempotency_key: string
           invited_by: string
           invitee_user_id?: string | null
+          reissue_of_invitation_id?: string | null
           revoked_at?: string | null
           role: Database["public"]["Enums"]["workspace_role"]
           sent_at?: string | null
@@ -246,6 +248,7 @@ export type Database = {
           idempotency_key?: string
           invited_by?: string
           invitee_user_id?: string | null
+          reissue_of_invitation_id?: string | null
           revoked_at?: string | null
           role?: Database["public"]["Enums"]["workspace_role"]
           sent_at?: string | null
@@ -266,6 +269,13 @@ export type Database = {
             columns: ["invitee_user_id"]
             isOneToOne: false
             referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_invitations_reissue_of_invitation_id_fkey"
+            columns: ["reissue_of_invitation_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_invitations"
             referencedColumns: ["id"]
           },
           {
@@ -403,6 +413,10 @@ export type Database = {
         Returns: boolean
       }
       current_app_user_id: { Args: never; Returns: string }
+      finalize_workspace_invitation_reissue: {
+        Args: { p_invitation_id: string }
+        Returns: Database["public"]["Enums"]["workspace_invitation_status"]
+      }
       health_check: {
         Args: never
         Returns: {
@@ -443,6 +457,7 @@ export type Database = {
           display_name: string
           joined_at: string
           organization_name: string
+          pending_invitation: boolean
           role: Database["public"]["Enums"]["workspace_role"]
           status: Database["public"]["Enums"]["workspace_member_status"]
           title: string
@@ -465,6 +480,7 @@ export type Database = {
         Returns: {
           invitation_id: string
           invitation_status: Database["public"]["Enums"]["workspace_invitation_status"]
+          operation_kind: string
           should_send: boolean
         }[]
       }
@@ -515,6 +531,7 @@ export type Database = {
         | "enterprise_wechat"
       workspace_invitation_status:
         | "prepared"
+        | "reissue_prepared"
         | "sent"
         | "accepted"
         | "failed"
@@ -656,6 +673,7 @@ export const Constants = {
       ],
       workspace_invitation_status: [
         "prepared",
+        "reissue_prepared",
         "sent",
         "accepted",
         "failed",

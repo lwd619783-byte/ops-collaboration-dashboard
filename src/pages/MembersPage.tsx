@@ -40,6 +40,16 @@ const statusBadgeClasses = {
   suspended: 'badge-danger',
 } as const
 
+function statusLabel(member: WorkspaceMember): string {
+  if (member.status === 'invited') {
+    // Distinguish "awaiting activation" from an expired invitation that needs
+    // a controlled re-invite; the directory reports pending_invitation for
+    // memberships that still have a valid sent invitation.
+    return member.pending_invitation ? '待激活' : '待重新邀请'
+  }
+  return statusLabels[member.status]
+}
+
 type InviteForm = {
   email: string
   displayName: string
@@ -296,7 +306,7 @@ export function MembersPage() {
                 </td>
                 <td>
                   <Badge className={statusBadgeClasses[member.status]}>
-                    {statusLabels[member.status]}
+                    {statusLabel(member)}
                   </Badge>
                 </td>
                 {canManage && (

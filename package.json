@@ -24,11 +24,12 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
-    "test:edge": "vitest run supabase/functions/invite-workspace-member/handler.test.ts",
+    "test:edge": "vitest run supabase/functions/invite-workspace-member/handler.test.ts supabase/functions/invite-workspace-member/entry.test.ts",
     "test:watch": "vitest",
     "security:build": "node scripts/check-supabase-build-gate.mjs",
     "security:audit": "npm audit --audit-level=high",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run security:build && npm run build"
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run security:build && npm run build",
+    "db:reissue:verify": "node scripts/verify-invitation-reissue.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.111.0",

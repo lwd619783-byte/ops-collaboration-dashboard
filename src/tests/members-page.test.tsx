@@ -26,6 +26,7 @@ const owner: WorkspaceMember = {
   status: 'active',
   joined_at: '2026-01-01T00:00:00+00:00',
   disabled_at: null,
+  pending_invitation: false,
 }
 
 const admin: WorkspaceMember = {

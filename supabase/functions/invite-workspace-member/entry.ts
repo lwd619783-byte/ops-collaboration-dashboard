@@ -278,12 +278,17 @@ export function createInviteWorkspaceMemberEntry(
       if (!row) return { ok: false, code: 'temporary_failure' } as const
       const status = (row as { invitation_status?: unknown })
         .invitation_status as InvitationStatus
+      const operationKind = (row as { operation_kind?: unknown }).operation_kind
       const result: PreparedInvitation = {
         invitationId: String(
           (row as { invitation_id?: unknown }).invitation_id,
         ),
         status,
         shouldSend: Boolean((row as { should_send?: unknown }).should_send),
+        operationKind:
+          operationKind === 'existing_invitee_reissue'
+            ? 'existing_invitee_reissue'
+            : 'new_auth_user_invite',
       }
       return { ok: true, data: result } as const
     },
@@ -307,6 +312,16 @@ export function createInviteWorkspaceMemberEntry(
         {
           p_invitation_id: invitationId,
           p_failure_code: failureCategory,
+        },
+      )
+      if (error) return { ok: false, code: 'temporary_failure' }
+      return { ok: true, data: undefined }
+    },
+    async finalizeReissue(invitationId) {
+      const { error } = await adminClient.rpc(
+        'finalize_workspace_invitation_reissue',
+        {
+          p_invitation_id: invitationId,
         },
       )
       if (error) return { ok: false, code: 'temporary_failure' }

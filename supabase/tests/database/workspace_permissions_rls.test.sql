@@ -46,12 +46,116 @@ as $function$
   select revoked_at from public.workspace_invitations where id = p_id;
 $function$;
 
+create function pg_temp.invitation_invitee(p_id uuid)
+returns text
+language sql
+security definer
+set search_path = ''
+as $function$
+  select invitee_user_id::text from public.workspace_invitations where id = p_id;
+$function$;
+
+create function pg_temp.invitation_reissue_of(p_id uuid)
+returns text
+language sql
+security definer
+set search_path = ''
+as $function$
+  select reissue_of_invitation_id::text from public.workspace_invitations where id = p_id;
+$function$;
+
+create function pg_temp.invitation_id_of(p_workspace_id uuid, p_key uuid)
+returns uuid
+language sql
+security definer
+set search_path = ''
+as $function$
+  select id from public.workspace_invitations
+  where workspace_id = p_workspace_id and idempotency_key = p_key;
+$function$;
+
+create function pg_temp.invitation_sent_at(p_id uuid)
+returns timestamptz
+language sql
+security definer
+set search_path = ''
+as $function$
+  select sent_at from public.workspace_invitations where id = p_id;
+$function$;
+
+create function pg_temp.membership_count(p_workspace_id uuid, p_user_id uuid)
+returns bigint
+language sql
+security definer
+set search_path = ''
+as $function$
+  select count(*) from public.workspace_members
+  where workspace_id = p_workspace_id and user_id = p_user_id;
+$function$;
+
+create function pg_temp.membership_status_of(p_workspace_id uuid, p_user_id uuid)
+returns text
+language sql
+security definer
+set search_path = ''
+as $function$
+  select status::text from public.workspace_members
+  where workspace_id = p_workspace_id and user_id = p_user_id;
+$function$;
+
+create function pg_temp.identity_count(p_user_id uuid)
+returns bigint
+language sql
+security definer
+set search_path = ''
+as $function$
+  select count(*) from public.user_identities where user_id = p_user_id;
+$function$;
+
+create function pg_temp.app_user_count(p_user_id uuid)
+returns bigint
+language sql
+security definer
+set search_path = ''
+as $function$
+  select count(*) from public.app_users where id = p_user_id;
+$function$;
+
+create function pg_temp.invitation_expiry(p_id uuid)
+returns timestamptz
+language sql
+security definer
+set search_path = ''
+as $function$
+  select expires_at from public.workspace_invitations where id = p_id;
+$function$;
+
+create function pg_temp.invitation_ttl_remaining(p_id uuid)
+returns numeric
+language sql
+security definer
+set search_path = ''
+as $function$
+  select (extract(epoch from (expires_at - pg_catalog.clock_timestamp())))::numeric
+  from public.workspace_invitations where id = p_id;
+$function$;
+
 grant execute on function pg_temp.sqlstate_of(text) to public;
 grant execute on function pg_temp.error_message_of(text) to public;
 grant execute on function pg_temp.invitation_status(uuid) to public;
 grant execute on function pg_temp.invitation_revoked_at(uuid) to public;
+grant execute on function pg_temp.invitation_invitee(uuid) to public;
+grant execute on function pg_temp.invitation_reissue_of(uuid) to public;
+grant execute on function pg_temp.invitation_id_of(uuid, uuid) to public;
+grant execute on function pg_temp.invitation_sent_at(uuid) to public;
+grant execute on function pg_temp.membership_count(uuid, uuid) to public;
+grant execute on function pg_temp.membership_status_of(uuid, uuid) to public;
+grant execute on function pg_temp.identity_count(uuid) to public;
+grant execute on function pg_temp.app_user_count(uuid) to public;
+grant execute on function pg_temp.invitation_expiry(uuid) to public;
+grant execute on function pg_temp.invitation_ttl_remaining(uuid) to public;
 
-select plan(95);
+select plan(126);
 
 -- All users, names, tenants and email addresses below are fictional.
 insert into public.app_users (id, status) values
@@ -414,14 +518,37 @@ insert into public.workspace_invitations (
 set local "request.jwt.claims" = '{"sub":"owner-a","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
 set local role authenticated;
 
--- Expired sent invitation: closes to revoked, then a new key can prepare.
+-- Expired sent invitation with a live invitee: the reissue path. The new
+-- invitation is prepared as reissue_prepared, keeps the original invitee and
+-- is linked to the revoked invitation it replaces.
 select is(
-  (select invitation_status::text from public.prepare_workspace_invitation(
-    '21000000-0000-4000-8000-000000000001', repeat('b',64), 'e***@e***.invalid',
-    'Fictional Re-invite', 'member', '34000000-0000-4000-8000-0000000000e1'
-  )),
-  'prepared',
-  'an expired sent invitation stops blocking a fresh invitation'
+  (select operation_kind || ':' || invitation_status
+   from public.prepare_workspace_invitation(
+     '21000000-0000-4000-8000-000000000001', repeat('b',64), 'e***@e***.invalid',
+     'Expired', 'member', '34000000-0000-4000-8000-0000000000e1'
+   )),
+  'existing_invitee_reissue:reissue_prepared',
+  'an expired sent invitation with a live invitee enters the reissue path'
+);
+select is(
+  pg_temp.invitation_invitee(
+    pg_temp.invitation_id_of(
+      '21000000-0000-4000-8000-000000000001',
+      '34000000-0000-4000-8000-0000000000e1'
+    )
+  ),
+  '11000000-0000-4000-8000-00000000000b',
+  'the reissue invitation keeps the original invitee_user_id'
+);
+select is(
+  pg_temp.invitation_reissue_of(
+    pg_temp.invitation_id_of(
+      '21000000-0000-4000-8000-000000000001',
+      '34000000-0000-4000-8000-0000000000e1'
+    )
+  ),
+  '41000000-0000-4000-8000-00000000000b',
+  'the reissue invitation links to the revoked invitation it replaces'
 );
 select is(
   pg_temp.invitation_status('41000000-0000-4000-8000-00000000000b'),
@@ -433,14 +560,15 @@ select ok(
   'the closed expired invitation records revoked_at'
 );
 
--- Expired prepared invitation: closes to revoked, then a new key can prepare.
+-- Expired prepared invitation without an invitee: the plain new-user path.
 select is(
-  (select invitation_status::text from public.prepare_workspace_invitation(
-    '21000000-0000-4000-8000-000000000001', repeat('e2', 32), 'p2***@e***.invalid',
-    'Fictional Re-invite Prepared', 'member', '34000000-0000-4000-8000-0000000000e3'
-  )),
-  'prepared',
-  'an expired prepared invitation stops blocking a fresh invitation'
+  (select operation_kind || ':' || invitation_status
+   from public.prepare_workspace_invitation(
+     '21000000-0000-4000-8000-000000000001', repeat('e2', 32), 'p2***@e***.invalid',
+     'Fictional Re-invite Prepared', 'member', '34000000-0000-4000-8000-0000000000e3'
+   )),
+  'new_auth_user_invite:prepared',
+  'an expired prepared invitation without an invitee uses the new-user path'
 );
 select is(
   pg_temp.invitation_status('41000000-0000-4000-8000-00000000000e'),
@@ -505,6 +633,315 @@ select is(
   pg_temp.invitation_status('41000000-0000-4000-8000-00000000000d'),
   'failed',
   'the failed invitation is not modified by re-invitation'
+);
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- Task 1.4 round 2 audit: existing invitee reissue.
+-- ---------------------------------------------------------------------------
+
+-- Invitees that must NEVER enter the reissue path: suspended / merged users
+-- and users whose identity was revoked.
+insert into public.app_users (id, status, disabled_at, merged_into_user_id) values
+  ('11000000-0000-4000-8000-0000000000a1', 'suspended', now(), null),
+  ('11000000-0000-4000-8000-0000000000a2', 'merged', now(), '11000000-0000-4000-8000-000000000001'),
+  ('11000000-0000-4000-8000-0000000000a3', 'active', null, null);
+insert into public.user_identities (user_id, provider, provider_tenant, provider_subject, verified_at, revoked_at) values
+  ('11000000-0000-4000-8000-0000000000a1', 'supabase_auth', 'https://fixture-issuer.invalid', 'suspended-invitee', now(), null),
+  ('11000000-0000-4000-8000-0000000000a2', 'supabase_auth', 'https://fixture-issuer.invalid', 'merged-invitee', now(), null),
+  ('11000000-0000-4000-8000-0000000000a3', 'supabase_auth', 'https://fixture-issuer.invalid', 'revoked-invitee', now(), now());
+insert into public.workspace_members (workspace_id, user_id, role, status, invited_by) values
+  ('21000000-0000-4000-8000-000000000001', '11000000-0000-4000-8000-0000000000a1', 'member', 'invited', '11000000-0000-4000-8000-000000000001'),
+  ('21000000-0000-4000-8000-000000000001', '11000000-0000-4000-8000-0000000000a2', 'member', 'invited', '11000000-0000-4000-8000-000000000001'),
+  ('21000000-0000-4000-8000-000000000001', '11000000-0000-4000-8000-0000000000a3', 'member', 'invited', '11000000-0000-4000-8000-000000000001');
+insert into public.workspace_invitations (
+  id, workspace_id, email_hash, email_hint, display_name, role, status,
+  invitee_user_id, invited_by, idempotency_key, created_at, expires_at, sent_at
+) values
+  ('41000000-0000-4000-8000-0000000000a1', '21000000-0000-4000-8000-000000000001', repeat('7', 64), 's***@e***.invalid', 'Suspended Invitee', 'member', 'sent', '11000000-0000-4000-8000-0000000000a1', '11000000-0000-4000-8000-000000000001', '34000000-0000-4000-8000-0000000000a1', now() - interval '2 days', now() - interval '1 day', now() - interval '2 days'),
+  ('41000000-0000-4000-8000-0000000000a2', '21000000-0000-4000-8000-000000000001', repeat('8', 64), 'm***@e***.invalid', 'Merged Invitee', 'member', 'sent', '11000000-0000-4000-8000-0000000000a2', '11000000-0000-4000-8000-000000000001', '34000000-0000-4000-8000-0000000000a2', now() - interval '2 days', now() - interval '1 day', now() - interval '2 days'),
+  ('41000000-0000-4000-8000-0000000000a3', '21000000-0000-4000-8000-000000000001', repeat('a', 64), 'r***@e***.invalid', 'Revoked Identity', 'member', 'sent', '11000000-0000-4000-8000-0000000000a3', '11000000-0000-4000-8000-000000000001', '34000000-0000-4000-8000-0000000000a3', now() - interval '2 days', now() - interval '1 day', now() - interval '2 days');
+
+set local "request.jwt.claims" = '{"sub":"owner-a","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
+set local role authenticated;
+
+select is(pg_temp.sqlstate_of($sql$
+  select * from public.prepare_workspace_invitation(
+    '21000000-0000-4000-8000-000000000001', repeat('7', 64), 's***@e***.invalid',
+    'Suspended Invitee', 'member', '36000000-0000-4000-8000-0000000000a1'
+  )
+$sql$), '55000', 'a suspended invitee never enters the reissue path');
+select is(
+  pg_temp.invitation_status('41000000-0000-4000-8000-0000000000a1'),
+  'sent',
+  'rejecting an invalid invitee leaves the stale invitation untouched (atomic refusal)'
+);
+-- A merged invitee is refused the same way.
+select is(pg_temp.sqlstate_of($sql$
+  select * from public.prepare_workspace_invitation(
+    '21000000-0000-4000-8000-000000000001', repeat('8', 64), 'm***@e***.invalid',
+    'Merged Invitee', 'member', '36000000-0000-4000-8000-0000000000a2'
+  )
+$sql$), '55000', 'a merged invitee never enters the reissue path');
+select is(
+  pg_temp.invitation_status('41000000-0000-4000-8000-0000000000a2'),
+  'sent',
+  'rejecting a merged invitee leaves the stale invitation untouched'
+);
+-- An invitee whose identity was revoked is refused too.
+select is(pg_temp.sqlstate_of($sql$
+  select * from public.prepare_workspace_invitation(
+    '21000000-0000-4000-8000-000000000001', repeat('a', 64), 'r***@e***.invalid',
+    'Revoked Identity', 'member', '36000000-0000-4000-8000-0000000000a3'
+  )
+$sql$), '55000', 'an invitee with a revoked identity never enters the reissue path');
+select is(
+  pg_temp.invitation_status('41000000-0000-4000-8000-0000000000a3'),
+  'sent',
+  'rejecting a revoked-identity invitee leaves the stale invitation untouched'
+);
+-- A mismatched role on a reissue request is refused (the membership already
+-- carries the original role).
+select is(pg_temp.sqlstate_of($sql$
+  select * from public.prepare_workspace_invitation(
+    '21000000-0000-4000-8000-000000000001', repeat('b', 64), 'e***@e***.invalid',
+    'Expired', 'external_collaborator', '34000000-0000-4000-8000-0000000000e1'
+  )
+$sql$), '23505', 'a reissue request with a changed role is refused');
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- Round 2 audit: reissue finalization, compensation and acceptance.
+-- ---------------------------------------------------------------------------
+
+-- The reissue invitation created earlier for digest repeat('b',64) (key 0e1)
+-- is the subject of the finalize/accept flow below.
+set local role service_role;
+
+-- Reissue does not create a second internal user, identity or membership.
+select is(
+  pg_temp.app_user_count('11000000-0000-4000-8000-00000000000b'),
+  1::bigint,
+  'reissue does not create a second internal user'
+);
+select is(
+  pg_temp.identity_count('11000000-0000-4000-8000-00000000000b'),
+  1::bigint,
+  'reissue does not create a second identity'
+);
+select is(
+  pg_temp.membership_count('21000000-0000-4000-8000-000000000001', '11000000-0000-4000-8000-00000000000b'),
+  1::bigint,
+  'reissue does not create a second membership'
+);
+
+-- Service-only finalize moves the reissue invitation to sent and stamps it.
+select is(
+  public.finalize_workspace_invitation_reissue(
+    pg_temp.invitation_id_of(
+      '21000000-0000-4000-8000-000000000001',
+      '34000000-0000-4000-8000-0000000000e1'
+    )
+  ),
+  'sent'::public.workspace_invitation_status,
+  'the service can finalize a reissue invitation to sent'
+);
+select ok(
+  pg_temp.invitation_sent_at(
+    pg_temp.invitation_id_of(
+      '21000000-0000-4000-8000-000000000001',
+      '34000000-0000-4000-8000-0000000000e1'
+    )
+  ) is not null,
+  'the finalized reissue invitation records sent_at'
+);
+-- Finalize is idempotent.
+select is(
+  public.finalize_workspace_invitation_reissue(
+    pg_temp.invitation_id_of(
+      '21000000-0000-4000-8000-000000000001',
+      '34000000-0000-4000-8000-0000000000e1'
+    )
+  ),
+  'sent'::public.workspace_invitation_status,
+  'finalize is idempotent for an already-sent reissue invitation'
+);
+-- Finalize refuses an invitation that is not in the reissue state.
+select is(pg_temp.sqlstate_of($sql$
+  select public.finalize_workspace_invitation_reissue('41000000-0000-4000-8000-000000000001')
+$sql$), '55000', 'finalize refuses an invitation that is not a reissue');
+-- Finalize refuses an unknown invitation.
+select is(pg_temp.sqlstate_of($sql$
+  select public.finalize_workspace_invitation_reissue('ffffffff-ffff-4fff-8fff-ffffffffffff')
+$sql$), 'P0002', 'finalize refuses an unknown invitation');
+-- The old invitation stays revoked and is never resurrected.
+select is(
+  pg_temp.invitation_status('41000000-0000-4000-8000-00000000000b'),
+  'revoked',
+  'the replaced invitation stays revoked after finalize'
+);
+reset role;
+
+-- authenticated cannot finalize a reissue (service-only boundary).
+set local "request.jwt.claims" = '{"sub":"owner-a","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(pg_temp.sqlstate_of($sql$
+  select public.finalize_workspace_invitation_reissue('41000000-0000-4000-8000-00000000000b')
+$sql$), '42501', 'authenticated cannot finalize a reissue');
+reset role;
+
+-- Failure compensation accepts a reissue_prepared invitation: it enters the
+-- failed terminal state while the membership stays invited for later recovery.
+-- The fixture row is inserted as the migration owner (service_role has no raw
+-- table grants); only the compensation call runs as service_role.
+insert into public.workspace_invitations (
+  id, workspace_id, email_hash, email_hint, display_name, role, status,
+  invitee_user_id, invited_by, idempotency_key, expires_at,
+  reissue_of_invitation_id
+) values (
+  '42000000-0000-4000-8000-0000000000a1',
+  '21000000-0000-4000-8000-000000000001', repeat('5', 64),
+  'r***@e***.invalid', 'Failed Reissue', 'member', 'reissue_prepared',
+  '11000000-0000-4000-8000-00000000000c',
+  '11000000-0000-4000-8000-000000000001',
+  '35000000-0000-4000-8000-0000000000a1',
+  now() + interval '1 hour',
+  '41000000-0000-4000-8000-00000000000c'
+);
+set local role service_role;
+select is(
+  public.mark_workspace_invitation_failed(
+    '42000000-0000-4000-8000-0000000000a1',
+    'auth_invite_failed'
+  ),
+  'failed'::public.workspace_invitation_status,
+  'a failed reissue invitation is compensated to the failed terminal state'
+);
+select is(
+  pg_temp.membership_status_of(
+    '21000000-0000-4000-8000-000000000001',
+    '11000000-0000-4000-8000-00000000000c'
+  ),
+  'invited',
+  'the membership stays invited after a failed reissue for later recovery'
+);
+select is(
+  pg_temp.invitation_status('41000000-0000-4000-8000-00000000000c'),
+  'revoked',
+  'the replaced invitation of a failed reissue stays revoked'
+);
+reset role;
+
+-- The pending-invitation flag distinguishes valid pending invitations from
+-- stale invited memberships. Digest repeat('6',64) invitation was accepted
+-- earlier; digest repeat('b',64) is now a valid sent reissue; invitee 0c/0d
+-- have no valid pending invitation.
+set local "request.jwt.claims" = '{"sub":"owner-a","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(
+  (select pending_invitation from public.list_workspace_members('21000000-0000-4000-8000-000000000001')
+   where user_id = '11000000-0000-4000-8000-00000000000b'),
+  true,
+  'an invited membership with a valid sent reissue has a pending invitation'
+);
+select is(
+  (select pending_invitation from public.list_workspace_members('21000000-0000-4000-8000-000000000001')
+   where user_id = '11000000-0000-4000-8000-00000000000c'),
+  false,
+  'an invited membership with no valid pending invitation reports none'
+);
+select is(
+  (select pending_invitation from public.list_workspace_members('21000000-0000-4000-8000-000000000001')
+   where user_id = '11000000-0000-4000-8000-00000000000d'),
+  false,
+  'a failed invitee reports no pending invitation'
+);
+reset role;
+
+-- Accepting the finalized reissue activates the ORIGINAL membership.
+set local "request.jwt.claims" = '{"sub":"expired-a","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(
+  (select membership_status::text from public.accept_workspace_invitation(
+    pg_temp.invitation_id_of(
+      '21000000-0000-4000-8000-000000000001',
+      '34000000-0000-4000-8000-0000000000e1'
+    )
+  )),
+  'active',
+  'accepting the finalized reissue activates the original membership'
+);
+select is(
+  pg_temp.invitation_status(
+    pg_temp.invitation_id_of(
+      '21000000-0000-4000-8000-000000000001',
+      '34000000-0000-4000-8000-0000000000e1'
+    )
+  ),
+  'accepted',
+  'the finalized reissue invitation is accepted'
+);
+select is(
+  pg_temp.membership_status_of(
+    '21000000-0000-4000-8000-000000000001',
+    '11000000-0000-4000-8000-00000000000b'
+  ),
+  'active',
+  'the original membership becomes active after acceptance'
+);
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- Round 2 audit: post-lock time semantics. The workspace row lock is acquired
+-- BEFORE v_now is read; a request that waited across an old invitation's
+-- expiry point still closes that invitation and grants the new invitation a
+-- full TTL. We simulate the wait by holding the lock ourselves across the
+-- expiry point (the fixture expires in the past), then calling preparation:
+-- the function re-enters the already-held lock, reads a fresh v_now, closes
+-- the stale invitation and computes a full TTL from that fresh time point.
+-- ---------------------------------------------------------------------------
+insert into public.workspace_invitations (
+  id, workspace_id, email_hash, email_hint, display_name, role, status,
+  invited_by, idempotency_key, created_at, expires_at
+) values (
+  '41000000-0000-4000-8000-0000000000b1',
+  '21000000-0000-4000-8000-000000000002', repeat('9', 64),
+  't***@e***.invalid', 'Lock Semantics', 'member', 'prepared',
+  '11000000-0000-4000-8000-000000000009',
+  '34000000-0000-4000-8000-0000000000b1',
+  now() - interval '2 days', now() - interval '1 minute'
+);
+-- Hold the workspace lock across the expiry point as the migration owner
+-- (SELECT ... FOR UPDATE needs table UPDATE rights the browser never has).
+-- The fixture is already expired, but we also wait 2 seconds to prove the
+-- time read inside prepare_workspace_invitation() happens AFTER the lock is
+-- re-entered in the same transaction.
+reset role;
+select pg_sleep(2) from public.workspaces
+where id = '21000000-0000-4000-8000-000000000002' for update;
+set local "request.jwt.claims" = '{"sub":"owner-b","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(
+  (select operation_kind from public.prepare_workspace_invitation(
+    '21000000-0000-4000-8000-000000000002', repeat('9', 64), 't***@e***.invalid',
+    'Lock Semantics', 'member', '34000000-0000-4000-8000-0000000000b2'
+  )),
+  'new_auth_user_invite',
+  'preparation still works after the lock wait crossed the expiry point'
+);
+select is(
+  pg_temp.invitation_status('41000000-0000-4000-8000-0000000000b1'),
+  'revoked',
+  'the expired invitation is closed after the lock wait'
+);
+select ok(
+  pg_temp.invitation_ttl_remaining(
+    pg_temp.invitation_id_of(
+      '21000000-0000-4000-8000-000000000002',
+      '34000000-0000-4000-8000-0000000000b2'
+    )
+  ) between 3599 and 3601,
+  'the new invitation receives a full TTL from the post-lock time point'
 );
 reset role;
 
@@ -661,7 +1098,7 @@ select is(
   (select array_agg(k order by k) from jsonb_object_keys(
     (select to_jsonb(t) from public.list_workspace_members('21000000-0000-4000-8000-000000000004') as t limit 1)
   ) as k),
-  array['avatar_url','disabled_at','display_name','joined_at','organization_name','role','status','title','user_id']::text[],
+  array['avatar_url','disabled_at','display_name','joined_at','organization_name','pending_invitation','role','status','title','user_id']::text[],
   'the directory returns only whitelisted profile fields'
 );
 reset role;

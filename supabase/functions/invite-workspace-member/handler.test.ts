@@ -68,9 +68,15 @@ function dependencies(): InviteWorkspaceMemberDependencies {
     })),
     prepareInvitation: vi.fn(async () => ({
       ok: true,
-      data: { invitationId, status: 'prepared', shouldSend: true },
+      data: {
+        invitationId,
+        status: 'prepared',
+        shouldSend: true,
+        operationKind: 'new_auth_user_invite',
+      },
     })),
     inviteAuthUser: vi.fn(async () => ({ ok: true, data: undefined })),
+    finalizeReissue: vi.fn(async () => ({ ok: true, data: undefined })),
     markInvitationFailed: vi.fn(async () => ({
       ok: true,
       data: undefined,
@@ -423,6 +429,144 @@ describe('invite-workspace-member Edge Function handler', () => {
     expect(text).not.toContain('fictional-user-token')
     expect(text).not.toContain(invitationId)
     expect(text).not.toContain('secret')
+  })
+
+  it('finalizes an existing-invitee reissue after Auth accepts the re-send', async () => {
+    deps.prepareInvitation = vi.fn(async () => ({
+      ok: true,
+      data: {
+        invitationId,
+        status: 'reissue_prepared',
+        shouldSend: true,
+        operationKind: 'existing_invitee_reissue',
+      },
+    }))
+    const handler = createInviteWorkspaceMemberHandler(deps)
+    const response = await handler(request())
+
+    expect(response.status).toBe(200)
+    expect(await json(response)).toEqual({
+      ok: true,
+      data: { code: 'invitation_sent', message: '邀请已发送。' },
+    })
+    // Auth Admin is called once for the re-send...
+    expect(deps.inviteAuthUser).toHaveBeenCalledTimes(1)
+    // ...then the service-only finalize RPC marks the reissue invitation sent.
+    expect(deps.finalizeReissue).toHaveBeenCalledWith(invitationId)
+    expect(deps.markInvitationFailed).not.toHaveBeenCalled()
+  })
+
+  it('does not finalize a reissue that was not actually re-sent', async () => {
+    deps.prepareInvitation = vi.fn(async () => ({
+      ok: true,
+      data: {
+        invitationId,
+        status: 'prepared',
+        shouldSend: true,
+        operationKind: 'new_auth_user_invite',
+      },
+    }))
+    const handler = createInviteWorkspaceMemberHandler(deps)
+    const response = await handler(request())
+
+    expect(response.status).toBe(200)
+    expect(deps.inviteAuthUser).toHaveBeenCalledTimes(1)
+    // The new-auth-user flow relies on the AFTER INSERT trigger; no finalize.
+    expect(deps.finalizeReissue).not.toHaveBeenCalled()
+  })
+
+  it('compensates a failed Auth re-send without finalizing', async () => {
+    deps.prepareInvitation = vi.fn(async () => ({
+      ok: true,
+      data: {
+        invitationId,
+        status: 'reissue_prepared',
+        shouldSend: true,
+        operationKind: 'existing_invitee_reissue',
+      },
+    }))
+    deps.inviteAuthUser = vi.fn(async () => ({
+      ok: false,
+      code: 'email_exists',
+    }))
+    const handler = createInviteWorkspaceMemberHandler(deps)
+    const response = await handler(request())
+
+    expect(response.status).toBe(409)
+    expect(deps.markInvitationFailed).toHaveBeenCalledWith(
+      invitationId,
+      'auth_user_conflict',
+    )
+    expect(deps.finalizeReissue).not.toHaveBeenCalled()
+  })
+
+  it('returns a safe temporary failure when reissue finalize fails', async () => {
+    deps.prepareInvitation = vi.fn(async () => ({
+      ok: true,
+      data: {
+        invitationId,
+        status: 'reissue_prepared',
+        shouldSend: true,
+        operationKind: 'existing_invitee_reissue',
+      },
+    }))
+    deps.finalizeReissue = vi.fn(async () => ({
+      ok: false,
+      code: 'database_unavailable',
+    }))
+    const handler = createInviteWorkspaceMemberHandler(deps)
+    const response = await handler(request())
+
+    expect(response.status).toBe(503)
+    expect(deps.markInvitationFailed).toHaveBeenCalledWith(
+      invitationId,
+      'temporary_failure',
+    )
+    const text = await response.text()
+    expect(text).not.toContain('database_unavailable')
+    expect(text).not.toContain('invitee@example.invalid')
+  })
+
+  it('keeps a thrown reissue finalize failure safe and compensated', async () => {
+    deps.prepareInvitation = vi.fn(async () => ({
+      ok: true,
+      data: {
+        invitationId,
+        status: 'reissue_prepared',
+        shouldSend: true,
+        operationKind: 'existing_invitee_reissue',
+      },
+    }))
+    deps.finalizeReissue = vi.fn(async () => {
+      throw new Error('raw finalize detail')
+    })
+    const handler = createInviteWorkspaceMemberHandler(deps)
+    const response = await handler(request())
+
+    expect(response.status).toBe(503)
+    expect(deps.markInvitationFailed).toHaveBeenCalledWith(
+      invitationId,
+      'temporary_failure',
+    )
+    expect(await response.text()).not.toContain('raw finalize')
+  })
+
+  it('does not finalize an idempotent retry that must not send again', async () => {
+    deps.prepareInvitation = vi.fn(async () => ({
+      ok: true,
+      data: {
+        invitationId,
+        status: 'reissue_prepared',
+        shouldSend: false,
+        operationKind: 'existing_invitee_reissue',
+      },
+    }))
+    const handler = createInviteWorkspaceMemberHandler(deps)
+    const response = await handler(request())
+
+    expect(response.status).toBe(409)
+    expect(deps.inviteAuthUser).not.toHaveBeenCalled()
+    expect(deps.finalizeReissue).not.toHaveBeenCalled()
   })
 })
 

@@ -78,7 +78,7 @@ select is(
   (select array_agg(e.enumlabel order by e.enumsortorder)::text[]
    from pg_enum e join pg_type t on t.oid = e.enumtypid
    where t.typname = 'workspace_invitation_status'),
-  array['prepared','sent','accepted','failed','revoked']::text[],
+  array['prepared','reissue_prepared','sent','accepted','failed','revoked']::text[],
   'workspace_invitation_status labels are closed and ordered'
 );
 

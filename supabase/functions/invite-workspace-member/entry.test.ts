@@ -103,7 +103,7 @@ function fakeSupabaseClientFactory(): {
         if (name === 'mark_workspace_invitation_failed') {
           return { data: 'failed', error: null }
         }
-        if (name === 'finalize_workspace_invitation_reissue') {
+        if (name === 'confirm_workspace_auth_invitation_result') {
           return { data: 'sent', error: null }
         }
         return { data: null, error: null }
@@ -322,9 +322,9 @@ describe('invite-workspace-member entry wiring', () => {
     })
   })
 
-  it('finalizes an existing-invitee reissue through the admin client', async () => {
+  it('confirms an existing-invitee reissue through the admin client', async () => {
     // The database reports the reissue operation for the prepared invitation
-    // on the CALLER client; finalize runs on the admin client only.
+    // on the CALLER client; confirmation runs on the admin client only.
     rpcOverrides.prepare_workspace_invitation = {
       data: [
         {
@@ -348,13 +348,14 @@ describe('invite-workspace-member entry wiring', () => {
     const response = await handler(validRequest())
 
     expect(response.status).toBe(200)
-    // Auth re-sends to the same user, then the service-only RPC finalizes with
-    // the verified issuer and the Auth Admin returned user ID.
+    // Auth re-sends to the same user, then the unified confirmation RPC runs
+    // with the operation kind, the verified issuer and the Auth user ID.
     expect(admin.auth.admin.inviteUserByEmail).toHaveBeenCalledTimes(1)
     expect(admin.rpc).toHaveBeenCalledWith(
-      'finalize_workspace_invitation_reissue',
+      'confirm_workspace_auth_invitation_result',
       {
         p_invitation_id: '33333333-3333-4333-8333-333333333333',
+        p_operation_kind: 'existing_invitee_reissue',
         p_provider_tenant: issuer,
         p_provider_subject: '33333333-3333-4333-8333-333333333333',
       },
@@ -365,7 +366,7 @@ describe('invite-workspace-member entry wiring', () => {
     )
   })
 
-  it('never finalizes a new-auth-user invitation', async () => {
+  it('confirms a new-auth-user invitation through the admin client', async () => {
     createInviteWorkspaceMemberEntry({
       env: fakeEnv(fullEnv),
       serve,
@@ -378,14 +379,54 @@ describe('invite-workspace-member entry wiring', () => {
     const response = await handler(validRequest())
 
     expect(response.status).toBe(200)
-    // prepare returned new_auth_user_invite: provisioning is trigger-based.
+    // prepare returned new_auth_user_invite: the unified confirmation RPC
+    // verifies the trigger completed sent + identity + membership.
+    expect(admin.rpc).toHaveBeenCalledWith(
+      'confirm_workspace_auth_invitation_result',
+      {
+        p_invitation_id: '33333333-3333-4333-8333-333333333333',
+        p_operation_kind: 'new_auth_user_invite',
+        p_provider_tenant: issuer,
+        p_provider_subject: '33333333-3333-4333-8333-333333333333',
+      },
+    )
+  })
+
+  it('maps a confirmed auth_user_conflict to 409 without double compensation', async () => {
+    rpcOverrides.prepare_workspace_invitation = {
+      data: [
+        {
+          invitation_id: '33333333-3333-4333-8333-333333333333',
+          invitation_status: 'prepared',
+          should_send: true,
+          operation_kind: 'new_auth_user_invite',
+        },
+      ],
+      error: null,
+    }
+    rpcOverrides.confirm_workspace_auth_invitation_result = {
+      data: 'failed',
+      error: null,
+    }
+    createInviteWorkspaceMemberEntry({
+      env: fakeEnv(fullEnv),
+      serve,
+      createSupabaseClient: factory,
+    })
+    const admin = clients[0] as FakeClient
+    const handler = serve.mock.calls[0]?.[0] as (
+      request: Request,
+    ) => Promise<Response>
+    const response = await handler(validRequest())
+
+    expect(response.status).toBe(409)
     expect(admin.rpc).not.toHaveBeenCalledWith(
-      'finalize_workspace_invitation_reissue',
+      'mark_workspace_invitation_failed',
       expect.anything(),
     )
   })
 
-  it('compensates a reissue when finalize fails', async () => {
+  it('compensates when confirmation fails', async () => {
     rpcOverrides.prepare_workspace_invitation = {
       data: [
         {
@@ -397,7 +438,7 @@ describe('invite-workspace-member entry wiring', () => {
       ],
       error: null,
     }
-    rpcOverrides.finalize_workspace_invitation_reissue = {
+    rpcOverrides.confirm_workspace_auth_invitation_result = {
       data: null,
       error: { message: 'state conflict' },
     }
@@ -418,7 +459,7 @@ describe('invite-workspace-member entry wiring', () => {
 
     expect(response.status).toBe(503)
     expect(admin.rpc).toHaveBeenCalledWith(
-      'finalize_workspace_invitation_reissue',
+      'confirm_workspace_auth_invitation_result',
       expect.anything(),
     )
     expect(admin.rpc).toHaveBeenCalledWith('mark_workspace_invitation_failed', {
@@ -601,5 +642,114 @@ describe('invite-workspace-member entry wiring', () => {
     )
     const text = await response.text()
     expect(text).not.toContain('not-a-uuid')
+  })
+
+  it('refuses a preparation result whose invitation id is not a UUID', async () => {
+    rpcOverrides.prepare_workspace_invitation = {
+      data: [
+        {
+          invitation_id: 'not-a-uuid',
+          invitation_status: 'prepared',
+          should_send: true,
+          operation_kind: 'new_auth_user_invite',
+        },
+      ],
+      error: null,
+    }
+    createInviteWorkspaceMemberEntry({
+      env: fakeEnv(fullEnv),
+      serve,
+      createSupabaseClient: factory,
+    })
+    const admin = clients[0] as FakeClient
+    const handler = serve.mock.calls[0]?.[0] as (
+      request: Request,
+    ) => Promise<Response>
+    const response = await handler(validRequest())
+
+    expect(response.status).toBe(503)
+    // Auth Admin must never be called with a malformed invitation id.
+    expect(admin.auth.admin.inviteUserByEmail).not.toHaveBeenCalled()
+  })
+
+  it('refuses a missing invitation id without calling Auth Admin', async () => {
+    rpcOverrides.prepare_workspace_invitation = {
+      data: [
+        {
+          invitation_status: 'prepared',
+          should_send: true,
+          operation_kind: 'new_auth_user_invite',
+        },
+      ],
+      error: null,
+    }
+    createInviteWorkspaceMemberEntry({
+      env: fakeEnv(fullEnv),
+      serve,
+      createSupabaseClient: factory,
+    })
+    const admin = clients[0] as FakeClient
+    const handler = serve.mock.calls[0]?.[0] as (
+      request: Request,
+    ) => Promise<Response>
+    const response = await handler(validRequest())
+
+    expect(response.status).toBe(503)
+    expect(admin.auth.admin.inviteUserByEmail).not.toHaveBeenCalled()
+  })
+
+  it('refuses an impossible operation/status combination', async () => {
+    // should_send=true + new_auth_user_invite must be 'prepared', never 'sent'.
+    rpcOverrides.prepare_workspace_invitation = {
+      data: [
+        {
+          invitation_id: '33333333-3333-4333-8333-333333333333',
+          invitation_status: 'sent',
+          should_send: true,
+          operation_kind: 'new_auth_user_invite',
+        },
+      ],
+      error: null,
+    }
+    createInviteWorkspaceMemberEntry({
+      env: fakeEnv(fullEnv),
+      serve,
+      createSupabaseClient: factory,
+    })
+    const admin = clients[0] as FakeClient
+    const handler = serve.mock.calls[0]?.[0] as (
+      request: Request,
+    ) => Promise<Response>
+    const response = await handler(validRequest())
+
+    expect(response.status).toBe(503)
+    expect(admin.auth.admin.inviteUserByEmail).not.toHaveBeenCalled()
+  })
+
+  it('refuses a reissue kind that did not leave reissue_prepared', async () => {
+    rpcOverrides.prepare_workspace_invitation = {
+      data: [
+        {
+          invitation_id: '33333333-3333-4333-8333-333333333333',
+          invitation_status: 'prepared',
+          should_send: true,
+          operation_kind: 'existing_invitee_reissue',
+        },
+      ],
+      error: null,
+    }
+    createInviteWorkspaceMemberEntry({
+      env: fakeEnv(fullEnv),
+      serve,
+      createSupabaseClient: factory,
+    })
+    const admin = clients[0] as FakeClient
+    const handler = serve.mock.calls[0]?.[0] as (
+      request: Request,
+    ) => Promise<Response>
+    const response = await handler(validRequest())
+
+    expect(response.status).toBe(503)
+    expect(admin.auth.admin.inviteUserByEmail).not.toHaveBeenCalled()
   })
 })

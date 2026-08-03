@@ -89,7 +89,7 @@ reissue_prepared --------> sent -> accepted
 
 - `bootstrap_default_workspace(...)`
 - `mark_workspace_invitation_failed(...)`
-- `finalize_workspace_invitation_reissue(invitation_id, provider_tenant, provider_subject)`：只能由 `service_role` 执行；把处于合法 reissue 状态的邀请推进为 `sent` 并写入 `sent_at`。在同一事务内验证 invitee 的 `supabase_auth` 身份的 `provider_tenant` 与 `provider_subject`（Auth Admin 返回的 user ID）完全匹配、身份已验证且未撤销、`app_user` active、membership 仍 invited、被替换的源邀请关系正确且未过期。重复调用幂等，任一条件不符返回静态错误码（不泄露 expected/actual user ID、邮箱或 identity 数据）。浏览器与 `authenticated` 无执行权。
+- `finalize_workspace_invitation_reissue` 已移除，统一由 `confirm_workspace_auth_invitation_result(invitation_id, operation_kind, provider_tenant, provider_subject)` 承担：只能由 `service_role` 执行；**Auth Admin 成功不等于业务邀请成功**，每次 Auth Admin 调用成功后 Edge Function 都必须通过该 RPC 在数据库确认邀请进入与其 operation kind 相符的合法状态。`new_auth_user_invite`：trigger 必须已把邀请推进为 `sent`（带 invitee），invitee 的 `supabase_auth` identity（tenant + subject）与 `p_provider_tenant` / `p_provider_subject` 完全匹配、identity 已验证未撤销、`app_user` active、membership invited 且 role 一致；仍为 `prepared`（无 invitee）说明 Auth 复用了既有未确认用户，邀请被安全补偿为 `failed`/`auth_user_conflict`（不创建第二套身份、不跨空间复制 membership、不留 open prepared）。`existing_invitee_reissue`：保留全部 reissue 身份校验并推进 `sent`。重复确认幂等；任一条件不符返回静态错误码，不泄露 expected/actual user ID、邮箱或 identity 数据。
 
 所有边界函数均为 `SECURITY DEFINER`、封闭 `search_path`、显式 schema 限定、静态错误文本和最小 EXECUTE 授权。成员目录仅返回显示名称、单位 / 职位、头像、角色、状态及成员时间，不返回邮箱、`contact_info`、身份 subject、JWT 或 Auth 管理数据。目录使用安全 `LEFT JOIN`：`profiles` 行缺失的成员仍然出现，显示名称回退为固定文案"未设置显示名称"，`avatar_url` / `organization_name` / `title` 返回 null，排序保持不变；`profiles` 自身的 RLS 不做任何放宽。目录额外返回 `pending_invitation` 布尔值（仅统计该成员名下未过期的 `sent` 邀请），前端据此把 `invited` 成员区分为"待激活"（存在有效邀请）与"待重新邀请"（邀请已过期、需要受控重发），避免展示一条永远无法恢复的成员。
 
@@ -104,7 +104,8 @@ reissue_prepared --------> sent -> accepted
 3. 携带调用者 Authorization 的低权限客户端调用 `prepare_workspace_invitation`；数据库通过 `current_app_user_id()` 校验角色、冲突和幂等性，并在同一事务与工作空间行锁内（**先获取行锁、后读取 `clock_timestamp()`**，过期判断、`revoked_at` 与新邀请 `expires_at` 都使用该锁后时间点）区分返回 `new_auth_user_invite` 或 `existing_invitee_reissue`。
 4. **首次邀请**：仅在数据库返回 `should_send=true` 时，服务端管理客户端调用 Auth Admin `inviteUserByEmail`。请求 metadata 只包含邀请 ID 和服务端确定的 tenant，不携带角色、工作空间或显示名称等业务事实。托管环境从可信 Supabase URL 推导 tenant；本地容器地址不等于 JWT issuer 时，只能在官方 `auth.getUser` 已验证 token、issuer `sub` 与用户一致且 issuer 为 loopback `/auth/v1` 后采用该 issuer。
 5. `auth.users` AFTER INSERT trigger 锁定 prepared 邀请，对 Auth 邮箱做相同规范化和 SHA-256 比对，并从邀请行读取业务值；随后原子创建 `app_users`、`profiles`、已验证 `user_identities` 和 invited membership，把邀请标为 sent。任一步失败会回滚 Auth 用户插入。
-6. **已有受邀身份的重发**：数据库已把旧过期邀请关闭为 `revoked` 并创建 `reissue_prepared` 新邀请（保留原 `invitee_user_id`、关联 `reissue_of_invitation_id`）。Edge Function 调用 Auth Admin `inviteUserByEmail` 对**同一**未确认 Auth 用户重发（真实本地验证：不产生第二个 Auth 用户、不触发 AFTER INSERT trigger、不更新 `user_metadata`、确实发送第二封邮件、邮件链接仍指向受控 `/activate-account`）。发信成功后由服务专用 RPC `finalize_workspace_invitation_reissue` 把新邀请原子推进为 `sent`；发信失败走安全补偿进入 `failed`（membership 保持 `invited`，可后续恢复）；已确认用户返回 `email_exists` 冲突时按"已确认账号跨工作空间加入属后续任务"处理。
+6. **已有受邀身份的重发**：数据库已把旧过期邀请关闭为 `revoked` 并创建 `reissue_prepared` 新邀请（保留原 `invitee_user_id`、关联 `reissue_of_invitation_id`）。Edge Function 调用 Auth Admin `inviteUserByEmail` 对**同一**未确认 Auth 用户重发（真实本地验证：不产生第二个 Auth 用户、不触发 AFTER INSERT trigger、确实发送新邮件、邮件链接仍指向受控 `/activate-account`）。发信成功后由统一确认 RPC 推进为 `sent`。
+   6b. **统一数据库确认边界**：首次与重发两条路径在 Auth Admin 返回成功后都调用 `confirm_workspace_auth_invitation_result`，确认成功才返回 `invitation_sent`。首次邀请只有 trigger 已完成预配置（`sent` + invitee + identity + membership + role 一致）才成功；若 Auth 复用了**其他工作空间**已创建的未确认用户（invitation 仍 `prepared` 且无 invitee），确认 RPC 把当前邀请安全补偿为 `failed`/`auth_user_conflict`，Edge 返回稳定 409 `invitation_conflict`——这是安全拒绝，不实现跨空间自动加入（已确认 / 未确认用户的跨空间自动绑定都属于后续账号绑定任务）。
 7. 受邀者通过受控 `/activate-account` 路由建立 Supabase 会话。页面显示工作空间、角色和到期时间的安全摘要。
 8. 页面先设置首个密码，再调用 `accept_workspace_invitation`。数据库校验邀请属于当前内部用户、已发送且有效，原子激活 membership 并接受邀请；重复接受返回稳定成功结果。重发场景接受的是新邀请，激活的是**原 membership**（不创建第二条）。
 9. 两步都成功后页面执行 local scope 退出并回到登录页。若密码成功但接受失败，页面保留会话并只重试接受步骤，不重复设置密码。
@@ -134,7 +135,7 @@ reissue_prepared --------> sent -> accepted
 ## 已知限制与后续边界
 
 - 当前 Supabase `inviteUserByEmail` 不支持 PKCE；邀请邮件不能宣称为 PKCE 流程。密码恢复仍使用 PKCE。本地真实邮件验证确认邀请使用隐式 session fragment 进入 `/activate-account`，再由页面执行密码设置和业务邀请接受；远端邮件模板、允许重定向域名和实际邮件客户端必须在部署任务中重新验证。
-- V1 不处理已有确认 Auth 用户按邮箱跨工作空间自动加入：重发时若 Auth Admin 报 `email_exists` 冲突，新邀请进入 `failed`（`auth_user_conflict`）并返回稳定冲突错误；该用户不会被删除、不会创建重复内部用户，加入其他工作空间属于后续任务。已确认账号与未确认邀请过期重发是两条明确不同的路径。
+- V1 不处理已有确认 Auth 用户按邮箱跨工作空间自动加入，也**不处理未确认 Auth 用户被首次邀请到第二个工作空间**：后者在统一确认边界被安全拒绝（`failed`/`auth_user_conflict` + 稳定 409），绝不假报发送成功，也绝不创建第二套身份或跨空间 membership。已确认 / 未确认用户的跨空间自动绑定都属于后续账号绑定任务。
 - 邀请发送采用 at-most-once 幂等边界：只有首次创建 prepared / reissue_prepared 记录的请求获得发送权，并发 / 同键重试不会二次发信。若进程在 prepared 提交后、Auth Admin 调用前终止，记录可能保持 prepared；若进程在重发邮件被 Auth 接受后、finalize 前终止，记录保持 reissue_prepared——V1 不含运营恢复、撤销或重发管理界面，这两种残留需要后续受控运维流程处理（过期残留会在下一次同摘要准备请求中按对应路径关闭为 revoked）。
 - 第二轮审计修复完成"已有受邀身份的重发"闭环：`operation_kind` 区分首次与重发、`reissue_prepared` 状态与 `reissue_of_invitation_id` 关联、服务专用 `finalize_workspace_invitation_reissue`、锁后 `clock_timestamp()` 时间语义、成员目录 `pending_invitation` 区分（"待激活"与"待重新邀请"）。仍然不包含完整撤销 / 重发产品界面、生产 SMTP 或任何远端部署。
 - 不实现项目 / 项目角色 / 模块、任务 / 进展 / 验收 / 提醒、所有权转移、工作空间删除、成员永久删除、批量邀请、完整撤销 / 重发 UI、公开注册、第三方登录、通用审计日志、生产 SMTP 或远端部署。

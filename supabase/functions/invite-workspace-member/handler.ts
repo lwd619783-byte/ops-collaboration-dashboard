@@ -62,22 +62,29 @@ export type InviteWorkspaceMemberDependencies = {
     input: AuthInviteInput,
   ) => Promise<EdgeOperationResult<AuthInviteResult>>
   /**
-   * Service-only reissue finalization. After Auth accepted the re-send for an
-   * EXISTING invitee, this moves the reissue_prepared invitation to sent. The
-   * Auth Admin returned user ID (authUserId) and the verified issuer
-   * (providerTenant) must match the invitee's live supabase_auth identity.
-   * It never runs for the new-auth-user flow, whose provisioning is completed
-   * by the auth.users AFTER INSERT trigger instead.
+   * Service-only confirmation boundary. After Auth Admin accepted the request,
+   * EVERY operation kind must be confirmed against the database before the
+   * handler may report success:
+   *   - existing_invitee_reissue: full identity verification, reissue -> sent;
+   *   - new_auth_user_invite: the AFTER INSERT trigger must have provisioned
+   *     identity + membership and moved the invitation to sent; otherwise the
+   *     invitation is compensated to failed/auth_user_conflict ('failed').
+   * A confirmed 'failed' status must NOT be re-compensated by the handler.
    */
-  finalizeReissue: (
-    invitationId: string,
-    providerTenant: string,
-    authUserId: string,
-  ) => Promise<EdgeOperationResult<undefined>>
+  confirmInvitation: (
+    input: ConfirmInvitationInput,
+  ) => Promise<EdgeOperationResult<{ status: 'sent' | 'failed' }>>
   markInvitationFailed: (
     invitationId: string,
     failureCategory: FailureCategory,
   ) => Promise<EdgeOperationResult<undefined>>
+}
+
+export type ConfirmInvitationInput = {
+  invitationId: string
+  operationKind: InvitationOperationKind
+  providerTenant: string
+  authUserId: string
 }
 
 type SafeErrorDefinition = {
@@ -409,39 +416,44 @@ export function createInviteWorkspaceMemberHandler(
       )
     }
 
-    // For an EXISTING invitee the Auth user already exists: inviteUserByEmail
-    // re-sends to the SAME Auth user and never fires the AFTER INSERT
-    // provisioning trigger, so the fresh reissue invitation must be finalized
-    // by the service-only RPC instead. The Auth Admin returned user ID and the
-    // verified issuer are checked against the invitee identity inside the
-    // database. A failure here is a safe temporary error: the mail was already
-    // accepted by Auth, so retrying the same idempotency key will NOT send a
-    // second mail, and the invitation is compensated so the digest can be
-    // re-issued later (explicitly, with a fresh key).
-    if (preparation.data.operationKind === 'existing_invitee_reissue') {
-      let finalized: EdgeOperationResult<undefined>
+    // ---------------------------------------------------------------------
+    // Unified database confirmation boundary. Auth Admin success is NOT a
+    // business success: every operation kind must be confirmed against the
+    // invitation state and the invitee identity before reporting sent.
+    // ---------------------------------------------------------------------
+    let confirmResult: EdgeOperationResult<{ status: 'sent' | 'failed' }>
+    try {
+      confirmResult = await dependencies.confirmInvitation({
+        invitationId: preparation.data.invitationId,
+        operationKind: preparation.data.operationKind,
+        providerTenant: authentication.data.providerTenant,
+        authUserId: inviteResult.data.authUserId,
+      })
+    } catch {
+      confirmResult = { ok: false, code: 'temporary_failure' }
+    }
+    if (!confirmResult.ok) {
+      // Database-level confirmation failure (e.g. transient RPC error). The
+      // invitation is still in its pre-confirmation state; compensate it as a
+      // recoverable temporary failure so the digest can be re-issued later.
+      let compensation: EdgeOperationResult<undefined>
       try {
-        finalized = await dependencies.finalizeReissue(
+        compensation = await dependencies.markInvitationFailed(
           preparation.data.invitationId,
-          authentication.data.providerTenant,
-          inviteResult.data.authUserId,
+          'temporary_failure',
         )
       } catch {
-        finalized = { ok: false, code: 'temporary_failure' }
-      }
-      if (!finalized.ok) {
-        let compensation: EdgeOperationResult<undefined>
-        try {
-          compensation = await dependencies.markInvitationFailed(
-            preparation.data.invitationId,
-            'temporary_failure',
-          )
-        } catch {
-          return safeError('temporary_failure', origin)
-        }
-        if (!compensation.ok) return safeError('temporary_failure', origin)
         return safeError('temporary_failure', origin)
       }
+      if (!compensation.ok) return safeError('temporary_failure', origin)
+      return safeError('temporary_failure', origin)
+    }
+    if (confirmResult.data.status === 'failed') {
+      // The confirmation already compensated the invitation to
+      // failed/auth_user_conflict (e.g. Auth reused an existing unconfirmed
+      // user). Return the stable conflict; never re-compensate, never reveal
+      // why the account exists.
+      return safeError('invitation_conflict', origin)
     }
 
     return success('invitation_sent', origin)

@@ -166,9 +166,20 @@ grant execute on function pg_temp.identity_count(uuid) to public;
 grant execute on function pg_temp.app_user_count(uuid) to public;
 grant execute on function pg_temp.invitation_expiry(uuid) to public;
 grant execute on function pg_temp.invitation_ttl_remaining(uuid) to public;
+
+create function pg_temp.invitation_failure_code(p_id uuid)
+returns text
+language sql
+security definer
+set search_path = ''
+as $function$
+  select failure_code from public.workspace_invitations where id = p_id;
+$function$;
+
+grant execute on function pg_temp.invitation_failure_code(uuid) to public;
 grant execute on function pg_temp.open_invitation_count(uuid, text) to public;
 
-select plan(142);
+select plan(160);
 
 -- All users, names, tenants and email addresses below are fictional.
 insert into public.app_users (id, status) values
@@ -752,15 +763,16 @@ select is(
 
 -- Service-only finalize moves the reissue invitation to sent and stamps it.
 select is(
-  public.finalize_workspace_invitation_reissue(
+  public.confirm_workspace_auth_invitation_result(
     pg_temp.invitation_id_of(
       '21000000-0000-4000-8000-000000000001',
       '34000000-0000-4000-8000-0000000000e1'
     ),
+    'existing_invitee_reissue',
     'https://fixture-issuer.invalid',
     'expired-a'
   ),
-  'sent'::public.workspace_invitation_status,
+  'sent',
   'the service can finalize a reissue invitation to sent'
 );
 select ok(
@@ -774,29 +786,32 @@ select ok(
 );
 -- Finalize is idempotent.
 select is(
-  public.finalize_workspace_invitation_reissue(
+  public.confirm_workspace_auth_invitation_result(
     pg_temp.invitation_id_of(
       '21000000-0000-4000-8000-000000000001',
       '34000000-0000-4000-8000-0000000000e1'
     ),
+    'existing_invitee_reissue',
     'https://fixture-issuer.invalid',
     'expired-a'
   ),
-  'sent'::public.workspace_invitation_status,
+  'sent',
   'finalize is idempotent for an already-sent reissue invitation'
 );
 -- Finalize refuses an invitation that is not in the reissue state.
 select is(pg_temp.sqlstate_of($sql$
-  select public.finalize_workspace_invitation_reissue(
+  select public.confirm_workspace_auth_invitation_result(
     '41000000-0000-4000-8000-000000000001',
+    'existing_invitee_reissue',
     'https://fixture-issuer.invalid',
     'expired-a'
   )
 $sql$), '55000', 'finalize refuses an invitation that is not a reissue');
 -- Finalize refuses an unknown invitation.
 select is(pg_temp.sqlstate_of($sql$
-  select public.finalize_workspace_invitation_reissue(
+  select public.confirm_workspace_auth_invitation_result(
     'ffffffff-ffff-4fff-8fff-ffffffffffff',
+    'existing_invitee_reissue',
     'https://fixture-issuer.invalid',
     'expired-a'
   )
@@ -813,8 +828,9 @@ reset role;
 set local "request.jwt.claims" = '{"sub":"owner-a","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
 set local role authenticated;
 select is(pg_temp.sqlstate_of($sql$
-  select public.finalize_workspace_invitation_reissue(
+  select public.confirm_workspace_auth_invitation_result(
     '41000000-0000-4000-8000-00000000000b',
+    'existing_invitee_reissue',
     'https://fixture-issuer.invalid',
     'expired-a'
   )
@@ -1019,11 +1035,12 @@ set local role service_role;
 -- Subject mismatch: the invitation is NOT marked sent.
 select is(
   pg_temp.sqlstate_of($sql$
-    select public.finalize_workspace_invitation_reissue(
+    select public.confirm_workspace_auth_invitation_result(
       pg_temp.invitation_id_of(
         '21000000-0000-4000-8000-000000000001',
         '34000000-0000-4000-8000-0000000000f3'
       ),
+      'existing_invitee_reissue',
       'https://fixture-issuer.invalid',
       'wrong-subject'
     )
@@ -1044,11 +1061,12 @@ select is(
 -- Tenant mismatch: same static failure.
 select is(
   pg_temp.sqlstate_of($sql$
-    select public.finalize_workspace_invitation_reissue(
+    select public.confirm_workspace_auth_invitation_result(
       pg_temp.invitation_id_of(
         '21000000-0000-4000-8000-000000000001',
         '34000000-0000-4000-8000-0000000000f3'
       ),
+      'existing_invitee_reissue',
       'https://unrelated.invalid',
       'revoked-a'
     )
@@ -1058,25 +1076,27 @@ select is(
 );
 -- Matching identity finalizes successfully.
 select is(
-  public.finalize_workspace_invitation_reissue(
+  public.confirm_workspace_auth_invitation_result(
     pg_temp.invitation_id_of(
       '21000000-0000-4000-8000-000000000001',
       '34000000-0000-4000-8000-0000000000f3'
     ),
+    'existing_invitee_reissue',
     'https://fixture-issuer.invalid',
     'revoked-a'
   ),
-  'sent'::public.workspace_invitation_status,
+  'sent',
   'finalize accepts the exact Auth subject and tenant'
 );
 -- Invalid/blank identity parameters are refused up front.
 select is(
   pg_temp.sqlstate_of($sql$
-    select public.finalize_workspace_invitation_reissue(
+    select public.confirm_workspace_auth_invitation_result(
       pg_temp.invitation_id_of(
         '21000000-0000-4000-8000-000000000001',
         '34000000-0000-4000-8000-0000000000f3'
       ),
+      'existing_invitee_reissue',
       '',
       'revoked-a'
     )
@@ -1084,6 +1104,232 @@ select is(
   '22023',
   'finalize refuses blank identity parameters'
 );
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- Round 4 audit: unified Auth outcome confirmation. The old finalize RPC is
+-- gone; confirm_workspace_auth_invitation_result is the ONLY boundary that
+-- may declare an Auth Admin success a business success.
+-- ---------------------------------------------------------------------------
+
+-- Fixtures for the new-auth confirmation path (simulating a completed AFTER
+-- INSERT trigger):
+--   * 0b4: active user with a live supabase_auth identity 'confirm-a' and an
+--     invited membership in workspace 1 (role member).
+--   * A sent new-auth invitation for 0b4 (digest e1) and a prepared new-auth
+--     invitation WITHOUT an invitee (digest e2, Auth-user-reuse scenario).
+insert into public.app_users (id, status) values
+  ('11000000-0000-4000-8000-0000000000b4', 'active'),
+  ('11000000-0000-4000-8000-0000000000b5', 'active');
+insert into public.user_identities (user_id, provider, provider_tenant, provider_subject, verified_at) values
+  ('11000000-0000-4000-8000-0000000000b4', 'supabase_auth', 'https://fixture-issuer.invalid', 'confirm-a', now()),
+  ('11000000-0000-4000-8000-0000000000b5', 'supabase_auth', 'https://fixture-issuer.invalid', 'confirm-no-member', now());
+insert into public.workspace_members (workspace_id, user_id, role, status, invited_by) values
+  ('21000000-0000-4000-8000-000000000001', '11000000-0000-4000-8000-0000000000b4', 'member', 'invited', '11000000-0000-4000-8000-000000000001');
+insert into public.workspace_invitations (
+  id, workspace_id, email_hash, email_hint, display_name, role, status,
+  invitee_user_id, invited_by, idempotency_key, expires_at, sent_at
+) values
+  ('41000000-0000-4000-8000-0000000000e1', '21000000-0000-4000-8000-000000000001', repeat('f1', 32), 'n***@e***.invalid', 'Confirm Invitee', 'member', 'sent', '11000000-0000-4000-8000-0000000000b4', '11000000-0000-4000-8000-000000000001', '38000000-0000-4000-8000-0000000000e1', now() + interval '1 day', now()),
+  ('41000000-0000-4000-8000-0000000000e2', '21000000-0000-4000-8000-000000000001', repeat('f2', 32), 'p***@e***.invalid', 'Prepared Confirm', 'member', 'prepared', null, '11000000-0000-4000-8000-000000000001', '38000000-0000-4000-8000-0000000000e2', now() + interval '1 day', null),
+  ('41000000-0000-4000-8000-0000000000e3', '21000000-0000-4000-8000-000000000001', repeat('f3', 32), 'm***@e***.invalid', 'No Membership', 'member', 'sent', '11000000-0000-4000-8000-0000000000b5', '11000000-0000-4000-8000-000000000001', '38000000-0000-4000-8000-0000000000e3', now() + interval '1 day', now()),
+  ('41000000-0000-4000-8000-0000000000e4', '21000000-0000-4000-8000-000000000001', repeat('f4', 32), 'k***@e***.invalid', 'Kind Mismatch', 'member', 'prepared', null, '11000000-0000-4000-8000-000000000001', '38000000-0000-4000-8000-0000000000e4', now() + interval '1 day', null);
+
+set local role service_role;
+
+-- A completed new-auth invitation (sent + invitee + identity + membership)
+-- confirms successfully and is idempotent.
+select is(
+  public.confirm_workspace_auth_invitation_result(
+    '41000000-0000-4000-8000-0000000000e1',
+    'new_auth_user_invite',
+    'https://fixture-issuer.invalid',
+    'confirm-a'
+  ),
+  'sent',
+  'a completed new-auth invitation confirms successfully'
+);
+select is(
+  public.confirm_workspace_auth_invitation_result(
+    '41000000-0000-4000-8000-0000000000e1',
+    'new_auth_user_invite',
+    'https://fixture-issuer.invalid',
+    'confirm-a'
+  ),
+  'sent',
+  'repeated confirmation of a sent invitation is idempotent'
+);
+-- A sent new-auth invitation whose identity subject does not match the Auth
+-- Admin returned user ID is refused with a static error.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      '41000000-0000-4000-8000-0000000000e1',
+      'new_auth_user_invite',
+      'https://fixture-issuer.invalid',
+      'some-other-user'
+    )
+  $sql$),
+  '55000',
+  'a sent new-auth invitation with a mismatched subject is refused'
+);
+-- A mismatched tenant is refused the same way.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      '41000000-0000-4000-8000-0000000000e1',
+      'new_auth_user_invite',
+      'https://unrelated.invalid',
+      'confirm-a'
+    )
+  $sql$),
+  '55000',
+  'a sent new-auth invitation with a mismatched tenant is refused'
+);
+-- A sent invitation without the required invited membership is refused.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      '41000000-0000-4000-8000-0000000000e3',
+      'new_auth_user_invite',
+      'https://fixture-issuer.invalid',
+      'confirm-a'
+    )
+  $sql$),
+  '55000',
+  'a sent new-auth invitation without an invited membership is refused'
+);
+-- A sent invitation whose membership role does not match the invitation role
+-- is refused. The role switch runs as the migration owner (service_role has
+-- no raw table grants); the confirmation itself runs as service_role.
+reset role;
+insert into public.workspace_members (workspace_id, user_id, role, status, invited_by) values
+  ('21000000-0000-4000-8000-000000000001', '11000000-0000-4000-8000-0000000000b4', 'admin', 'invited', '11000000-0000-4000-8000-000000000001')
+on conflict (workspace_id, user_id) do update set role = 'admin';
+set local role service_role;
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      '41000000-0000-4000-8000-0000000000e1',
+      'new_auth_user_invite',
+      'https://fixture-issuer.invalid',
+      'confirm-a'
+    )
+  $sql$),
+  '55000',
+  'a sent new-auth invitation with a mismatched membership role is refused'
+);
+reset role;
+-- Restore the matching member role for later assertions.
+update public.workspace_members set role = 'member'
+where workspace_id = '21000000-0000-4000-8000-000000000001'
+  and user_id = '11000000-0000-4000-8000-0000000000b4';
+set local role service_role;
+
+-- A prepared new-auth invitation WITHOUT an invitee means Auth reused an
+-- existing unconfirmed user: confirmation compensates it to
+-- failed/auth_user_conflict and never creates a second identity/membership.
+select is(
+  public.confirm_workspace_auth_invitation_result(
+    '41000000-0000-4000-8000-0000000000e2',
+    'new_auth_user_invite',
+    'https://fixture-issuer.invalid',
+    'reused-user-id'
+  ),
+  'failed',
+  'an unprovisioned prepared invitation is confirmed as a safe conflict'
+);
+select is(
+  pg_temp.invitation_status('41000000-0000-4000-8000-0000000000e2'),
+  'failed',
+  'the unprovisioned invitation is compensated to failed'
+);
+select is(
+  pg_temp.invitation_failure_code('41000000-0000-4000-8000-0000000000e2'),
+  'auth_user_conflict',
+  'the compensation records auth_user_conflict'
+);
+select is(
+  pg_temp.app_user_count('11000000-0000-4000-8000-0000000000b4'),
+  1::bigint,
+  'no new app user is created by the conflict compensation'
+);
+select is(
+  pg_temp.identity_count('11000000-0000-4000-8000-0000000000b4'),
+  1::bigint,
+  'no second identity is created by the conflict compensation'
+);
+select is(
+  pg_temp.membership_count(
+    '21000000-0000-4000-8000-000000000001',
+    '11000000-0000-4000-8000-0000000000b4'
+  ),
+  1::bigint,
+  'membership count is unchanged by the conflict compensation'
+);
+-- Repeated conflict confirmation stays 'failed' (idempotent).
+select is(
+  public.confirm_workspace_auth_invitation_result(
+    '41000000-0000-4000-8000-0000000000e2',
+    'new_auth_user_invite',
+    'https://fixture-issuer.invalid',
+    'reused-user-id'
+  ),
+  'failed',
+  'repeated conflict confirmation is idempotent'
+);
+-- An operation kind that does not match the invitation state is refused.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      '41000000-0000-4000-8000-0000000000e4',
+      'existing_invitee_reissue',
+      'https://fixture-issuer.invalid',
+      'reused-user-id'
+    )
+  $sql$),
+  '55000',
+  'an operation kind that does not match the state is refused'
+);
+-- The confirm error text never leaks expected/actual IDs.
+select is(
+  pg_temp.error_message_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      '41000000-0000-4000-8000-0000000000e1',
+      'new_auth_user_invite',
+      'https://fixture-issuer.invalid',
+      'some-other-user'
+    )
+  $sql$),
+  'workspace_invitation_identity_mismatch',
+  'confirmation failures return a static safe code'
+);
+-- service_role cannot confirm an unrelated/unknown invitation.
+select is(
+  pg_temp.sqlstate_of($sql$
+    select public.confirm_workspace_auth_invitation_result(
+      'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      'new_auth_user_invite',
+      'https://fixture-issuer.invalid',
+      'confirm-a'
+    )
+  $sql$),
+  'P0002',
+  'service_role cannot confirm an unknown invitation'
+);
+reset role;
+
+-- authenticated cannot run the unified confirmation RPC.
+set local "request.jwt.claims" = '{"sub":"owner-a","iss":"https://fixture-issuer.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(pg_temp.sqlstate_of($sql$
+  select public.confirm_workspace_auth_invitation_result(
+    '41000000-0000-4000-8000-0000000000e1',
+    'new_auth_user_invite',
+    'https://fixture-issuer.invalid',
+    'confirm-a'
+  )
+$sql$), '42501', 'authenticated cannot run the unified confirmation RPC');
 reset role;
 
 -- ---------------------------------------------------------------------------
@@ -1272,10 +1518,15 @@ select ok(
       to_regprocedure('public.prepare_workspace_invitation(uuid,text,text,text,public.workspace_role,uuid)'),
       to_regprocedure('public.accept_workspace_invitation(uuid)'),
       to_regprocedure('public.bootstrap_default_workspace(uuid,text,uuid)'),
-      to_regprocedure('public.mark_workspace_invitation_failed(uuid,text)')
+      to_regprocedure('public.mark_workspace_invitation_failed(uuid,text)'),
+      to_regprocedure('public.confirm_workspace_auth_invitation_result(uuid,text,text,text)')
     ) and (not p.prosecdef or p.proconfig is distinct from array['search_path=""']::text[])
   ),
   'all workspace boundary functions are SECURITY DEFINER with closed search_path'
+);
+select ok(
+  to_regprocedure('public.finalize_workspace_invitation_reissue(uuid,text,text)') is null,
+  'the old finalize RPC signature is removed'
 );
 select is(
   (select count(*) from information_schema.role_table_grants

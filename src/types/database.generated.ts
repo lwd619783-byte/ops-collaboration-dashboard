@@ -412,15 +412,16 @@ export type Database = {
         Args: { p_workspace_id: string }
         Returns: boolean
       }
-      current_app_user_id: { Args: never; Returns: string }
-      finalize_workspace_invitation_reissue: {
+      confirm_workspace_auth_invitation_result: {
         Args: {
           p_invitation_id: string
+          p_operation_kind: string
           p_provider_subject: string
           p_provider_tenant: string
         }
-        Returns: Database["public"]["Enums"]["workspace_invitation_status"]
+        Returns: string
       }
+      current_app_user_id: { Args: never; Returns: string }
       health_check: {
         Args: never
         Returns: {

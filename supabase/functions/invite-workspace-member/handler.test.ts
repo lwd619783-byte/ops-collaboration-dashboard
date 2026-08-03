@@ -79,7 +79,10 @@ function dependencies(): InviteWorkspaceMemberDependencies {
       ok: true,
       data: { authUserId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
     })),
-    finalizeReissue: vi.fn(async () => ({ ok: true, data: undefined })),
+    confirmInvitation: vi.fn(async () => ({
+      ok: true,
+      data: { status: 'sent' },
+    })),
     markInvitationFailed: vi.fn(async () => ({
       ok: true,
       data: undefined,
@@ -434,7 +437,7 @@ describe('invite-workspace-member Edge Function handler', () => {
     expect(text).not.toContain('secret')
   })
 
-  it('finalizes an existing-invitee reissue after Auth accepts the re-send', async () => {
+  it('confirms an existing-invitee reissue after Auth accepts the re-send', async () => {
     deps.prepareInvitation = vi.fn(async () => ({
       ok: true,
       data: {
@@ -454,17 +457,18 @@ describe('invite-workspace-member Edge Function handler', () => {
     })
     // Auth Admin is called once for the re-send...
     expect(deps.inviteAuthUser).toHaveBeenCalledTimes(1)
-    // ...then the service-only finalize RPC marks the reissue invitation sent,
-    // passing the verified issuer and the Auth Admin returned user ID.
-    expect(deps.finalizeReissue).toHaveBeenCalledWith(
+    // ...then the unified confirmation RPC runs with the operation kind, the
+    // verified issuer and the Auth Admin returned user ID.
+    expect(deps.confirmInvitation).toHaveBeenCalledWith({
       invitationId,
-      'http://127.0.0.1:54321/auth/v1',
-      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-    )
+      operationKind: 'existing_invitee_reissue',
+      providerTenant: 'http://127.0.0.1:54321/auth/v1',
+      authUserId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    })
     expect(deps.markInvitationFailed).not.toHaveBeenCalled()
   })
 
-  it('does not finalize a reissue that was not actually re-sent', async () => {
+  it('confirms a new-auth-user invite after the trigger completed', async () => {
     deps.prepareInvitation = vi.fn(async () => ({
       ok: true,
       data: {
@@ -479,11 +483,46 @@ describe('invite-workspace-member Edge Function handler', () => {
 
     expect(response.status).toBe(200)
     expect(deps.inviteAuthUser).toHaveBeenCalledTimes(1)
-    // The new-auth-user flow relies on the AFTER INSERT trigger; no finalize.
-    expect(deps.finalizeReissue).not.toHaveBeenCalled()
+    // The new-auth-user flow MUST also pass the unified confirmation boundary
+    // (trigger completed sent + identity + membership) before reporting sent.
+    expect(deps.confirmInvitation).toHaveBeenCalledWith({
+      invitationId,
+      operationKind: 'new_auth_user_invite',
+      providerTenant: 'http://127.0.0.1:54321/auth/v1',
+      authUserId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    })
   })
 
-  it('compensates a failed Auth re-send without finalizing', async () => {
+  it('maps a confirmed auth_user_conflict to a stable 409 without re-compensating', async () => {
+    deps.prepareInvitation = vi.fn(async () => ({
+      ok: true,
+      data: {
+        invitationId,
+        status: 'prepared',
+        shouldSend: true,
+        operationKind: 'new_auth_user_invite',
+      },
+    }))
+    deps.confirmInvitation = vi.fn(async () => ({
+      ok: true,
+      data: { status: 'failed' },
+    }))
+    const handler = createInviteWorkspaceMemberHandler(deps)
+    const response = await handler(request())
+
+    expect(response.status).toBe(409)
+    expect(await json(response)).toEqual({
+      ok: false,
+      error: {
+        code: 'invitation_conflict',
+        message: '该邀请已存在或请求已发生冲突。',
+      },
+    })
+    // The confirmation already compensated the invitation; never double-mark.
+    expect(deps.markInvitationFailed).not.toHaveBeenCalled()
+  })
+
+  it('compensates a failed Auth re-send without confirming', async () => {
     deps.prepareInvitation = vi.fn(async () => ({
       ok: true,
       data: {
@@ -505,10 +544,10 @@ describe('invite-workspace-member Edge Function handler', () => {
       invitationId,
       'auth_user_conflict',
     )
-    expect(deps.finalizeReissue).not.toHaveBeenCalled()
+    expect(deps.confirmInvitation).not.toHaveBeenCalled()
   })
 
-  it('returns a safe temporary failure when reissue finalize fails', async () => {
+  it('returns a safe temporary failure when confirmation fails', async () => {
     deps.prepareInvitation = vi.fn(async () => ({
       ok: true,
       data: {
@@ -518,7 +557,7 @@ describe('invite-workspace-member Edge Function handler', () => {
         operationKind: 'existing_invitee_reissue',
       },
     }))
-    deps.finalizeReissue = vi.fn(async () => ({
+    deps.confirmInvitation = vi.fn(async () => ({
       ok: false,
       code: 'database_unavailable',
     }))
@@ -535,7 +574,7 @@ describe('invite-workspace-member Edge Function handler', () => {
     expect(text).not.toContain('invitee@example.invalid')
   })
 
-  it('keeps a thrown reissue finalize failure safe and compensated', async () => {
+  it('keeps a thrown confirmation failure safe and compensated', async () => {
     deps.prepareInvitation = vi.fn(async () => ({
       ok: true,
       data: {
@@ -545,8 +584,8 @@ describe('invite-workspace-member Edge Function handler', () => {
         operationKind: 'existing_invitee_reissue',
       },
     }))
-    deps.finalizeReissue = vi.fn(async () => {
-      throw new Error('raw finalize detail')
+    deps.confirmInvitation = vi.fn(async () => {
+      throw new Error('raw confirm detail')
     })
     const handler = createInviteWorkspaceMemberHandler(deps)
     const response = await handler(request())
@@ -556,10 +595,10 @@ describe('invite-workspace-member Edge Function handler', () => {
       invitationId,
       'temporary_failure',
     )
-    expect(await response.text()).not.toContain('raw finalize')
+    expect(await response.text()).not.toContain('raw confirm')
   })
 
-  it('does not finalize an idempotent retry that must not send again', async () => {
+  it('does not call Auth or confirm for an idempotent retry that must not send again', async () => {
     deps.prepareInvitation = vi.fn(async () => ({
       ok: true,
       data: {
@@ -574,7 +613,7 @@ describe('invite-workspace-member Edge Function handler', () => {
 
     expect(response.status).toBe(409)
     expect(deps.inviteAuthUser).not.toHaveBeenCalled()
-    expect(deps.finalizeReissue).not.toHaveBeenCalled()
+    expect(deps.confirmInvitation).not.toHaveBeenCalled()
   })
 
   it('maps a database auth_user_conflict to a fixed safe conflict', async () => {

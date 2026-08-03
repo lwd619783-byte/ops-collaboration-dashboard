@@ -291,9 +291,13 @@ export function createInviteWorkspaceMemberEntry(
       // Strict result validation: a missing or unknown field must NEVER be
       // interpreted as the new-user path. Any shape anomaly is a safe
       // temporary failure, not a defaulted invite.
-      if (typeof raw.invitation_id !== 'string') {
+      if (
+        typeof raw.invitation_id !== 'string' ||
+        !uuidPattern.test(raw.invitation_id)
+      ) {
         return { ok: false, code: 'temporary_failure' } as const
       }
+      const invitationId = raw.invitation_id.toLowerCase()
       if (
         raw.invitation_status !== 'prepared' &&
         raw.invitation_status !== 'reissue_prepared' &&
@@ -313,8 +317,24 @@ export function createInviteWorkspaceMemberEntry(
       ) {
         return { ok: false, code: 'temporary_failure' } as const
       }
+      // Operation/status combination validation: an invite that must be sent
+      // can only leave preparation in the state its kind created.
+      if (raw.should_send === true) {
+        if (
+          raw.operation_kind === 'new_auth_user_invite' &&
+          raw.invitation_status !== 'prepared'
+        ) {
+          return { ok: false, code: 'temporary_failure' } as const
+        }
+        if (
+          raw.operation_kind === 'existing_invitee_reissue' &&
+          raw.invitation_status !== 'reissue_prepared'
+        ) {
+          return { ok: false, code: 'temporary_failure' } as const
+        }
+      }
       const result: PreparedInvitation = {
-        invitationId: raw.invitation_id,
+        invitationId,
         status: raw.invitation_status,
         shouldSend: raw.should_send,
         operationKind: raw.operation_kind,
@@ -353,17 +373,21 @@ export function createInviteWorkspaceMemberEntry(
       if (error) return { ok: false, code: 'temporary_failure' }
       return { ok: true, data: undefined }
     },
-    async finalizeReissue(invitationId, providerTenant, authUserId) {
-      const { error } = await adminClient.rpc(
-        'finalize_workspace_invitation_reissue',
+    async confirmInvitation(input) {
+      const { data, error } = await adminClient.rpc(
+        'confirm_workspace_auth_invitation_result',
         {
-          p_invitation_id: invitationId,
-          p_provider_tenant: providerTenant,
-          p_provider_subject: authUserId,
+          p_invitation_id: input.invitationId,
+          p_operation_kind: input.operationKind,
+          p_provider_tenant: input.providerTenant,
+          p_provider_subject: input.authUserId,
         },
       )
       if (error) return { ok: false, code: 'temporary_failure' }
-      return { ok: true, data: undefined }
+      if (data === 'sent' || data === 'failed') {
+        return { ok: true, data: { status: data } }
+      }
+      return { ok: false, code: 'temporary_failure' }
     },
   })
 

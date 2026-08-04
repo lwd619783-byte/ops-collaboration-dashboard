@@ -393,7 +393,14 @@ revoke all on public.projects
   from public, anon, authenticated, service_role;
 revoke all on public.project_members
   from public, anon, authenticated, service_role;
-grant select on public.projects to authenticated;
+-- Reviewed column-level read grant. No table-level SELECT is granted, so the
+-- creation idempotency key (and any future column) is excluded from browser
+-- reads by default; it remains available only to SECURITY DEFINER RPCs.
+grant select (
+  id, workspace_id, name, description, project_type, status,
+  owner_id, lead_id, start_date, due_date, created_by,
+  created_at, updated_at, archived_at
+) on public.projects to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Internal safe projection. It is intentionally not executable by API roles.

@@ -38,7 +38,7 @@ $function$;
 
 grant execute on function pg_temp.sqlstate_of(text) to public;
 
-select plan(62);
+select plan(64);
 
 select ok(to_regclass('public.projects') is not null, 'projects exists');
 select ok(to_regclass('public.project_members') is not null, 'project_members exists');
@@ -250,7 +250,20 @@ select ok(
 
 select ok((select relrowsecurity from pg_class where oid = 'public.projects'::regclass), 'projects has RLS enabled');
 select ok((select relrowsecurity from pg_class where oid = 'public.project_members'::regclass), 'project_members has RLS enabled');
-select ok(has_table_privilege('authenticated', 'public.projects', 'select'), 'authenticated has project SELECT for RLS-filtered reads');
+select ok(not has_table_privilege('authenticated', 'public.projects', 'select'), 'authenticated has no blanket table-level SELECT; reads are scoped to reviewed columns');
+select ok(
+  (select bool_and(has_column_privilege('authenticated', 'public.projects', c, 'select'))
+   from unnest(array[
+     'id','workspace_id','name','description','project_type','status',
+     'owner_id','lead_id','start_date','due_date','created_by',
+     'created_at','updated_at','archived_at'
+   ]) as t(c)),
+  'authenticated retains column-level SELECT on every reviewed project column'
+);
+select ok(
+  not has_column_privilege('authenticated', 'public.projects', 'idempotency_key', 'select'),
+  'authenticated has no column-level SELECT on the idempotency_key'
+);
 select ok(not has_table_privilege('authenticated', 'public.projects', 'insert'), 'authenticated has no direct project INSERT');
 select ok(not has_table_privilege('authenticated', 'public.projects', 'update'), 'authenticated has no direct project UPDATE');
 select ok(not has_table_privilege('authenticated', 'public.projects', 'delete'), 'authenticated has no project DELETE');

@@ -42,7 +42,7 @@ grant execute on function pg_temp.sqlstate_of(text) to public;
 grant execute on function pg_temp.project_count_for_key(uuid, uuid, uuid) to public;
 grant execute on function pg_temp.project_owner_relation_count(uuid, uuid) to public;
 
-select plan(65);
+select plan(67);
 
 insert into public.app_users (id, status, disabled_at) values
   ('71000000-0000-4000-8000-000000000001', 'active', null),
@@ -207,6 +207,9 @@ select is(pg_temp.sqlstate_of($sql$
     '75000000-0000-4000-8000-000000000003'
   )
 $sql$), '22023', 'create_project rejects an invalid date range');
+select is(pg_temp.sqlstate_of($sql$
+  select idempotency_key from public.projects where id = '73000000-0000-4000-8000-000000000001'
+$sql$), '42501', 'workspace owner cannot directly read idempotency_key');
 reset role;
 
 set local "request.jwt.claims" = '{"sub":"admin-a","iss":"https://project-fixture.invalid","role":"authenticated"}';
@@ -256,6 +259,7 @@ set local role authenticated;
 select is((select count(*) from public.list_projects('72000000-0000-4000-8000-000000000001')), 1::bigint, 'member lists only joined current projects');
 select is((select count(*) from public.list_projects('72000000-0000-4000-8000-000000000001', true)), 0::bigint, 'member cannot infer unjoined archived projects');
 select is((select count(*) from public.projects where workspace_id = '72000000-0000-4000-8000-000000000001'), 1::bigint, 'project table RLS limits member reads to joined projects');
+select is((select count(*) from public.projects where id = '73000000-0000-4000-8000-000000000001' and name is not null), 1::bigint, 'member reads reviewed columns of a joined project directly');
 select is((select count(*) from public.get_project('73000000-0000-4000-8000-000000000002')), 0::bigint, 'member detail for an unjoined project returns no row');
 select is((select count(*) from public.get_project('73000000-0000-4000-8000-00000000ffff')), 0::bigint, 'guessed project UUID returns the same empty result');
 select is(pg_temp.sqlstate_of($sql$

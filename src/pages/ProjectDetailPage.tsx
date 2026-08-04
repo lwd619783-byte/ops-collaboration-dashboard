@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { ErrorState } from '@/components/feedback/ErrorState'
 import { LoadingState } from '@/components/feedback/LoadingState'
@@ -23,14 +23,26 @@ export function ProjectDetailPage() {
   const [isArchiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
+  const requestEpochRef = useRef(0)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      requestEpochRef.current += 1
+    }
+  }, [])
 
   const canManage =
     currentWorkspace?.role === 'owner' || currentWorkspace?.role === 'admin'
 
   const loadProject = useCallback(async () => {
     if (!currentWorkspace) return
+    const epoch = ++requestEpochRef.current
     setLoadState('loading')
     const result = await projects.get(projectId)
+    if (!mountedRef.current || requestEpochRef.current !== epoch) return
     if (
       !result.ok ||
       result.data.workspace_id !== currentWorkspace.workspace_id

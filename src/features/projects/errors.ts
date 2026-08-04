@@ -52,35 +52,69 @@ function isNetworkMessage(message: string): boolean {
   )
 }
 
-export function mapProjectError(error: unknown): SafeProjectError {
-  const stableCode = stringField(error, 'message') ?? stringField(error, 'code')
-  switch (stableCode) {
+function isAuthenticationMessage(message: string | null): boolean {
+  if (!message) return false
+  const normalized = message.toLowerCase()
+  return (
+    /\bjwt\b/.test(normalized) ||
+    /json web token/.test(normalized) ||
+    /\btoken\b/.test(normalized) ||
+    /unauthorized/.test(normalized) ||
+    /not authenticated/.test(normalized) ||
+    /session (?:has )?expired/.test(normalized) ||
+    /login (?:required|expired|invalid)/.test(normalized)
+  )
+}
+
+function mapKnownCode(signal: string | null): ProjectErrorCode | null {
+  switch (signal) {
     case 'authorization_required':
     case 'bad_jwt':
     case 'jwt_expired':
-      return createSafeProjectError('authentication_required')
+    case 'invalid_jwt':
+    case 'invalid_token':
+    case 'unauthorized':
+      return 'authentication_required'
     case 'project_permission_denied':
-      return createSafeProjectError('permission_denied')
+      return 'permission_denied'
     case 'project_not_found_or_forbidden':
-      return createSafeProjectError('not_found_or_forbidden')
+      return 'not_found_or_forbidden'
     case 'project_validation_failed':
-      return createSafeProjectError('validation_failed')
+      return 'validation_failed'
     case 'project_invalid_transition':
     case 'project_archive_requires_completed':
-      return createSafeProjectError('invalid_transition')
+      return 'invalid_transition'
     case 'project_concurrent_update':
-      return createSafeProjectError('concurrent_update')
+      return 'concurrent_update'
     case 'project_idempotency_conflict':
-      return createSafeProjectError('duplicate_submission')
+      return 'duplicate_submission'
     case 'project_archived':
-      return createSafeProjectError('project_archived')
-    default: {
-      const message = stringField(error, 'message')
-      return createSafeProjectError(
-        message && isNetworkMessage(message)
-          ? 'network_unavailable'
-          : 'unknown_service_error',
-      )
-    }
+      return 'project_archived'
+    default:
+      return null
   }
+}
+
+export function mapProjectError(error: unknown): SafeProjectError {
+  const code = stringField(error, 'code')
+  const message = stringField(error, 'message')
+
+  // The structured error code is authoritative. A descriptive message must
+  // never shadow an explicit code, and the code must be inspected even when a
+  // message is also present.
+  const mapped = mapKnownCode(code) ?? mapKnownCode(message)
+  if (mapped) return createSafeProjectError(mapped)
+
+  // Some gateways surface authentication failures only through the message.
+  // JWT/token wording is matched here, but an ordinary permission denial stays
+  // mapped as a permission error, never as a login failure.
+  if (isAuthenticationMessage(message)) {
+    return createSafeProjectError('authentication_required')
+  }
+
+  return createSafeProjectError(
+    message && isNetworkMessage(message)
+      ? 'network_unavailable'
+      : 'unknown_service_error',
+  )
 }

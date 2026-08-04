@@ -115,6 +115,22 @@ function renderWithContexts(
   )
 }
 
+type Deferred<T> = {
+  promise: Promise<T>
+  resolve: (value: T) => void
+}
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
+
+type ListResult =
+  | { ok: true; data: Project[] }
+  | { ok: false; error: { code: 'unknown_service_error'; message: string } }
+
 describe('项目列表', () => {
   it.each([390, 320])(
     '%dpx 窄屏保留单列卡片和核心创建入口',
@@ -262,6 +278,123 @@ describe('项目列表', () => {
       expect(screen.queryByRole('link', { name: '创建运维项目' })).toBeNull()
     },
   )
+})
+
+describe('项目列表加载竞态', () => {
+  it('切换归档视图后，旧当前视图请求晚返回也不能覆盖归档结果', async () => {
+    const deferredCurrent = createDeferred<ListResult>()
+    const deferredArchived = createDeferred<ListResult>()
+    const resolvers: Record<'false' | 'true', Deferred<ListResult>> = {
+      false: deferredCurrent,
+      true: deferredArchived,
+    }
+    const list = vi.fn(
+      async (input: Parameters<ProjectContextValue['list']>[0]) =>
+        resolvers[String(input.archivedOnly) as 'false' | 'true'].promise,
+    )
+    renderWithContexts(
+      '/projects',
+      <ProjectsPage />,
+      'owner',
+      projectValue({ list }),
+    )
+
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '已归档' }))
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      deferredArchived.resolve({ ok: true, data: [archivedProject] })
+    })
+    expect(await screen.findByText(archivedProject.name)).toBeInTheDocument()
+
+    await act(async () => {
+      deferredCurrent.resolve({ ok: true, data: [currentProject] })
+    })
+    await waitFor(() =>
+      expect(screen.queryByText(currentProject.name)).toBeNull(),
+    )
+    expect(screen.getByText(archivedProject.name)).toBeInTheDocument()
+  })
+
+  it('归档请求成功后，旧当前视图请求失败也不能把页面覆盖成错误', async () => {
+    const deferredCurrent = createDeferred<ListResult>()
+    const deferredArchived = createDeferred<ListResult>()
+    const resolvers: Record<'false' | 'true', Deferred<ListResult>> = {
+      false: deferredCurrent,
+      true: deferredArchived,
+    }
+    const list = vi.fn(
+      async (input: Parameters<ProjectContextValue['list']>[0]) =>
+        resolvers[String(input.archivedOnly) as 'false' | 'true'].promise,
+    )
+    renderWithContexts(
+      '/projects',
+      <ProjectsPage />,
+      'owner',
+      projectValue({ list }),
+    )
+
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '已归档' }))
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      deferredArchived.resolve({ ok: true, data: [archivedProject] })
+    })
+    expect(await screen.findByText(archivedProject.name)).toBeInTheDocument()
+
+    await act(async () => {
+      deferredCurrent.resolve({
+        ok: false,
+        error: { code: 'unknown_service_error', message: '旧请求失败' },
+      })
+    })
+    await waitFor(() => expect(screen.queryByText('旧请求失败')).toBeNull())
+    expect(screen.getByText(archivedProject.name)).toBeInTheDocument()
+  })
+
+  it('归档请求失败后，旧当前视图请求成功也不能把页面覆盖成旧数据', async () => {
+    const deferredCurrent = createDeferred<ListResult>()
+    const deferredArchived = createDeferred<ListResult>()
+    const resolvers: Record<'false' | 'true', Deferred<ListResult>> = {
+      false: deferredCurrent,
+      true: deferredArchived,
+    }
+    const list = vi.fn(
+      async (input: Parameters<ProjectContextValue['list']>[0]) =>
+        resolvers[String(input.archivedOnly) as 'false' | 'true'].promise,
+    )
+    renderWithContexts(
+      '/projects',
+      <ProjectsPage />,
+      'owner',
+      projectValue({ list }),
+    )
+
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '已归档' }))
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      deferredArchived.resolve({
+        ok: false,
+        error: { code: 'unknown_service_error', message: '归档请求失败' },
+      })
+    })
+    expect(await screen.findByText('归档请求失败')).toBeInTheDocument()
+
+    await act(async () => {
+      deferredCurrent.resolve({ ok: true, data: [currentProject] })
+    })
+    await waitFor(() =>
+      expect(screen.queryByText(currentProject.name)).toBeNull(),
+    )
+    expect(screen.getByText('归档请求失败')).toBeInTheDocument()
+  })
 })
 
 describe('创建项目', () => {
@@ -559,5 +692,76 @@ describe('项目详情、编辑与归档', () => {
       await screen.findByRole('heading', { name: '项目已归档' }),
     ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '保存修改' })).toBeNull()
+  })
+
+  it('详情页旧工作空间请求晚返回时不能覆盖当前工作空间项目', async () => {
+    type DetailResult =
+      | { ok: true; data: Project }
+      | { ok: false; error: { code: 'unknown_service_error'; message: string } }
+    const deferredOld = createDeferred<DetailResult>()
+    const deferredNew = createDeferred<DetailResult>()
+    let callCount = 0
+    const get = vi.fn(async () => {
+      callCount += 1
+      return callCount === 1 ? deferredOld.promise : deferredNew.promise
+    })
+
+    const SECOND_WORKSPACE_ID = 'bbbbbbbb-0000-4000-8000-0000000000bb'
+    const oldWorkspace = workspaceValue('owner')
+    const newWorkspace: WorkspaceContextValue = {
+      ...oldWorkspace,
+      currentWorkspace: {
+        ...oldWorkspace.currentWorkspace!,
+        workspace_id: SECOND_WORKSPACE_ID,
+        workspace_name: '另一个协同空间',
+      },
+    }
+    const workspaceRef = { current: oldWorkspace }
+
+    const Wrapper = ({ children }: { children: React.ReactNode }) => (
+      <MemoryRouter initialEntries={[`/projects/${PROJECT_ID}`]}>
+        <WorkspaceContext.Provider value={workspaceRef.current}>
+          <ProjectContext.Provider value={projectValue({ get })}>
+            {children}
+          </ProjectContext.Provider>
+        </WorkspaceContext.Provider>
+      </MemoryRouter>
+    )
+
+    const { rerender } = render(
+      <Wrapper>
+        <ProjectDetailPage />
+      </Wrapper>,
+    )
+
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    workspaceRef.current = newWorkspace
+    rerender(
+      <Wrapper>
+        <ProjectDetailPage />
+      </Wrapper>,
+    )
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+
+    const staleProject: Project = {
+      ...currentProject,
+      name: '旧工作空间项目',
+    }
+    const latestProject: Project = {
+      ...currentProject,
+      workspace_id: SECOND_WORKSPACE_ID,
+      name: '当前工作空间项目',
+    }
+
+    await act(async () => {
+      deferredOld.resolve({ ok: true, data: staleProject })
+    })
+    expect(screen.queryByText(staleProject.name)).toBeNull()
+
+    await act(async () => {
+      deferredNew.resolve({ ok: true, data: latestProject })
+    })
+    expect(await screen.findByText(latestProject.name)).toBeInTheDocument()
+    expect(screen.queryByText(staleProject.name)).toBeNull()
   })
 })

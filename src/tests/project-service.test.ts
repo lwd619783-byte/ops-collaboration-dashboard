@@ -158,4 +158,63 @@ describe('项目 service', () => {
     expect(unknown.error.code).toBe('unknown_service_error')
     expect(unknown.error.message).not.toContain('public.projects')
   })
+
+  it('jwt_expired code maps to authentication_required even when message is also present', async () => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc.mockResolvedValue({
+      data: null,
+      error: { code: 'jwt_expired', message: 'JWT expired' },
+    })
+    const result = await getProject(supabase.client, projectRow.project_id)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('authentication_required')
+  })
+
+  it('code and message both present for a business error map by code, not message', async () => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc.mockResolvedValue({
+      data: null,
+      error: {
+        code: 'project_concurrent_update',
+        message: '项目已被其他人修改，请刷新后重试。',
+      },
+    })
+    const result = await updateProject(supabase.client, {
+      projectId: projectRow.project_id,
+      name: projectRow.name,
+      description: '',
+      status: 'planning',
+      startDate: null,
+      dueDate: null,
+      expectedUpdatedAt: projectRow.updated_at,
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('concurrent_update')
+  })
+
+  it('message-only JWT expiry still maps to authentication_required', async () => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc.mockResolvedValue({
+      data: null,
+      error: { message: 'received jwt expired from postgrest' },
+    })
+    const result = await getProject(supabase.client, projectRow.project_id)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('authentication_required')
+  })
+
+  it('ordinary permission denial is not mistaken for a login failure', async () => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc.mockResolvedValue({
+      data: null,
+      error: { code: '42501', message: 'permission denied' },
+    })
+    const result = await getProject(supabase.client, projectRow.project_id)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('unknown_service_error')
+  })
 })

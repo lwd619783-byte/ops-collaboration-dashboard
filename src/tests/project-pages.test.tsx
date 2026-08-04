@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
 import { describe, expect, it, vi } from 'vitest'
 import {
   ProjectContext,
@@ -763,5 +763,294 @@ describe('项目详情、编辑与归档', () => {
     })
     expect(await screen.findByText(latestProject.name)).toBeInTheDocument()
     expect(screen.queryByText(staleProject.name)).toBeNull()
+  })
+})
+
+describe('项目加载作用域窗口（第二请求尚未发出）', () => {
+  it('列表页切换到归档视图后，在归档请求完成前解析旧当前请求，旧项目不得显示在归档标题下', async () => {
+    const deferredCurrent = createDeferred<ListResult>()
+    const deferredArchived = createDeferred<ListResult>()
+    const resolvers: Record<'false' | 'true', Deferred<ListResult>> = {
+      false: deferredCurrent,
+      true: deferredArchived,
+    }
+    const list = vi.fn(
+      async (input: Parameters<ProjectContextValue['list']>[0]) =>
+        resolvers[String(input.archivedOnly) as 'false' | 'true'].promise,
+    )
+    renderWithContexts(
+      '/projects',
+      <ProjectsPage />,
+      'owner',
+      projectValue({ list }),
+    )
+
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '已归档' }))
+    // Resolve the old current-view request WITHOUT waiting for the archived
+    // request to be issued or resolved. This is the defect window: without
+    // scope binding the stale project could render under the archived heading.
+    await act(async () => {
+      deferredCurrent.resolve({ ok: true, data: [currentProject] })
+    })
+    // The stale current project must not appear under the archived heading.
+    expect(screen.queryByText(currentProject.name)).toBeNull()
+    // And we must be sitting in a safe loading state, not showing old data.
+    expect(screen.getByRole('status')).toHaveTextContent('正在加载项目')
+    // Now let the archived request resolve.
+    await act(async () => {
+      deferredArchived.resolve({ ok: true, data: [archivedProject] })
+    })
+    expect(await screen.findByText(archivedProject.name)).toBeInTheDocument()
+    expect(screen.queryByText(currentProject.name)).toBeNull()
+  })
+
+  it('详情页已加载项目 A 后切换到项目 B，B 完成前 A 不再显示', async () => {
+    type DetailResult =
+      | { ok: true; data: Project }
+      | { ok: false; error: { code: 'unknown_service_error'; message: string } }
+    const deferredA = createDeferred<DetailResult>()
+    const deferredB = createDeferred<DetailResult>()
+    let callCount = 0
+    const get = vi.fn(async () => {
+      callCount += 1
+      return callCount === 1 ? deferredA.promise : deferredB.promise
+    })
+
+    let capturedNavigate: ((to: string) => void) | undefined
+    const NavBridge = ({ children }: { children: React.ReactNode }) => {
+      capturedNavigate = useNavigate()
+      return <>{children}</>
+    }
+
+    render(
+      <MemoryRouter initialEntries={[`/projects/${PROJECT_ID}`]}>
+        <WorkspaceContext.Provider value={workspaceValue('owner')}>
+          <ProjectContext.Provider value={projectValue({ get })}>
+            <NavBridge>
+              <Routes>
+                <Route
+                  path="/projects/:projectId"
+                  element={<ProjectDetailPage />}
+                />
+              </Routes>
+            </NavBridge>
+          </ProjectContext.Provider>
+        </WorkspaceContext.Provider>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      deferredA.resolve({ ok: true, data: currentProject })
+    })
+    expect(await screen.findByText(currentProject.name)).toBeInTheDocument()
+
+    await act(async () => {
+      capturedNavigate?.(`/projects/${SECOND_PROJECT_ID}`)
+    })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    // Before B resolves, A must no longer be shown and we sit in loading.
+    expect(screen.queryByText(currentProject.name)).toBeNull()
+    expect(screen.getByRole('status')).toHaveTextContent('正在加载项目详情')
+
+    await act(async () => {
+      deferredB.resolve({
+        ok: true,
+        data: {
+          ...currentProject,
+          project_id: SECOND_PROJECT_ID,
+          name: '虚构乙项目',
+        },
+      })
+    })
+    expect(await screen.findByText('虚构乙项目')).toBeInTheDocument()
+    expect(screen.queryByText(currentProject.name)).toBeNull()
+  })
+
+  it('详情页路由切换到 B 后，晚返回的旧请求 A 不能覆盖 B', async () => {
+    type DetailResult =
+      | { ok: true; data: Project }
+      | { ok: false; error: { code: 'unknown_service_error'; message: string } }
+    const deferredA = createDeferred<DetailResult>()
+    const deferredB = createDeferred<DetailResult>()
+    let callCount = 0
+    const get = vi.fn(async () => {
+      callCount += 1
+      return callCount === 1 ? deferredA.promise : deferredB.promise
+    })
+
+    let capturedNavigate: ((to: string) => void) | undefined
+    const NavBridge = ({ children }: { children: React.ReactNode }) => {
+      capturedNavigate = useNavigate()
+      return <>{children}</>
+    }
+
+    render(
+      <MemoryRouter initialEntries={[`/projects/${PROJECT_ID}`]}>
+        <WorkspaceContext.Provider value={workspaceValue('owner')}>
+          <ProjectContext.Provider value={projectValue({ get })}>
+            <NavBridge>
+              <Routes>
+                <Route
+                  path="/projects/:projectId"
+                  element={<ProjectDetailPage />}
+                />
+              </Routes>
+            </NavBridge>
+          </ProjectContext.Provider>
+        </WorkspaceContext.Provider>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      capturedNavigate?.(`/projects/${SECOND_PROJECT_ID}`)
+    })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    // Neither request resolved yet: A must not appear.
+    expect(screen.queryByText(currentProject.name)).toBeNull()
+    expect(screen.getByRole('status')).toHaveTextContent('正在加载项目详情')
+
+    await act(async () => {
+      deferredB.resolve({
+        ok: true,
+        data: {
+          ...currentProject,
+          project_id: SECOND_PROJECT_ID,
+          name: '虚构乙项目',
+        },
+      })
+    })
+    expect(await screen.findByText('虚构乙项目')).toBeInTheDocument()
+    expect(screen.queryByText(currentProject.name)).toBeNull()
+
+    // Late A returns after B is already shown; it must not override B.
+    await act(async () => {
+      deferredA.resolve({ ok: true, data: currentProject })
+    })
+    await waitFor(() =>
+      expect(screen.queryByText(currentProject.name)).toBeNull(),
+    )
+    expect(screen.getByText('虚构乙项目')).toBeInTheDocument()
+  })
+
+  it('编辑页项目 ID 变化后旧表单不能继续显示', async () => {
+    type DetailResult =
+      | { ok: true; data: Project }
+      | { ok: false; error: { code: 'unknown_service_error'; message: string } }
+    const deferredA = createDeferred<DetailResult>()
+    const deferredB = createDeferred<DetailResult>()
+    let callCount = 0
+    const get = vi.fn(async () => {
+      callCount += 1
+      return callCount === 1 ? deferredA.promise : deferredB.promise
+    })
+
+    let capturedNavigate: ((to: string) => void) | undefined
+    const NavBridge = ({ children }: { children: React.ReactNode }) => {
+      capturedNavigate = useNavigate()
+      return <>{children}</>
+    }
+
+    render(
+      <MemoryRouter initialEntries={[`/projects/${PROJECT_ID}/edit`]}>
+        <WorkspaceContext.Provider value={workspaceValue('owner')}>
+          <ProjectContext.Provider value={projectValue({ get })}>
+            <NavBridge>
+              <Routes>
+                <Route
+                  path="/projects/:projectId/edit"
+                  element={<EditProjectPage />}
+                />
+              </Routes>
+            </NavBridge>
+          </ProjectContext.Provider>
+        </WorkspaceContext.Provider>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      deferredA.resolve({ ok: true, data: currentProject })
+    })
+    expect(await screen.findByLabelText(/项目名称/)).toHaveValue(
+      currentProject.name,
+    )
+
+    await act(async () => {
+      capturedNavigate?.(`/projects/${SECOND_PROJECT_ID}/edit`)
+    })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    // Old form data must not persist under the new project id.
+    expect(screen.queryByDisplayValue(currentProject.name)).toBeNull()
+    expect(screen.getByRole('status')).toHaveTextContent('正在加载项目')
+
+    await act(async () => {
+      deferredB.resolve({
+        ok: true,
+        data: {
+          ...currentProject,
+          project_id: SECOND_PROJECT_ID,
+          name: '虚构乙项目',
+        },
+      })
+    })
+    expect(await screen.findByLabelText(/项目名称/)).toHaveValue('虚构乙项目')
+  })
+
+  it('编辑页管理权限降为 member 后显示无权限且不读取新详情', async () => {
+    type DetailResult =
+      | { ok: true; data: Project }
+      | { ok: false; error: { code: 'unknown_service_error'; message: string } }
+    const deferredA = createDeferred<DetailResult>()
+    const get = vi.fn(async () => deferredA.promise)
+    const ownerWs = workspaceValue('owner')
+    const memberWs: WorkspaceContextValue = {
+      ...ownerWs,
+      currentWorkspace: {
+        ...ownerWs.currentWorkspace!,
+        role: 'member',
+      },
+    }
+    const wsRef = { current: ownerWs }
+    const Wrapper = ({ children }: { children: React.ReactNode }) => (
+      <MemoryRouter initialEntries={[`/projects/${PROJECT_ID}/edit`]}>
+        <WorkspaceContext.Provider value={wsRef.current}>
+          <ProjectContext.Provider value={projectValue({ get })}>
+            {children}
+          </ProjectContext.Provider>
+        </WorkspaceContext.Provider>
+      </MemoryRouter>
+    )
+
+    const { rerender } = render(
+      <Wrapper>
+        <EditProjectPage />
+      </Wrapper>,
+    )
+
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      deferredA.resolve({ ok: true, data: currentProject })
+    })
+    expect(await screen.findByLabelText(/项目名称/)).toHaveValue(
+      currentProject.name,
+    )
+
+    wsRef.current = memberWs
+    rerender(
+      <Wrapper>
+        <EditProjectPage />
+      </Wrapper>,
+    )
+    expect(
+      await screen.findByRole('heading', { name: '暂无访问权限' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '保存修改' })).toBeNull()
+    // No new detail read after the role drop.
+    expect(get).toHaveBeenCalledTimes(1)
+    expect(screen.queryByDisplayValue(currentProject.name)).toBeNull()
   })
 })

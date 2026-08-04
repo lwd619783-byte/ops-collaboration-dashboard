@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { EmptyState } from '@/components/feedback/EmptyState'
 import { ErrorState } from '@/components/feedback/ErrorState'
@@ -36,11 +43,24 @@ export function ProjectsPage() {
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>(
     'loading',
   )
+  const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState<ProjectStatus | ''>('')
   const requestEpochRef = useRef(0)
   const mountedRef = useRef(true)
+
+  // Stable request-scope key. Ready data is only ever shown when the key that
+  // produced it still equals the key for the current render, so switching the
+  // workspace or the archived/current view can never keep stale projects on
+  // screen while the next request is still in flight.
+  const scopeKey = currentWorkspace
+    ? `${currentWorkspace.workspace_id}:${archivedOnly ? 'archived' : 'current'}`
+    : null
+  const scopeKeyRef = useRef(scopeKey)
+  useLayoutEffect(() => {
+    scopeKeyRef.current = scopeKey
+  }, [scopeKey])
 
   useEffect(() => {
     mountedRef.current = true
@@ -56,20 +76,27 @@ export function ProjectsPage() {
   const loadProjects = useCallback(async () => {
     if (!currentWorkspace) return
     const epoch = ++requestEpochRef.current
+    const requestScopeKey = scopeKeyRef.current
     setLoadState('loading')
+    setLoadedScopeKey(null)
     setLoadError(null)
     const result = await projectsService.list({
       workspaceId: currentWorkspace.workspace_id,
       archivedOnly,
     })
     if (!mountedRef.current || requestEpochRef.current !== epoch) return
+    // The scope may have changed while this request was in flight. Drop the
+    // result rather than letting stale projects surface under the new scope.
+    if (requestScopeKey !== scopeKeyRef.current) return
     if (!result.ok) {
       setProjects([])
       setLoadError(result.error.message)
+      setLoadedScopeKey(requestScopeKey)
       setLoadState('error')
       return
     }
     setProjects(result.data)
+    setLoadedScopeKey(requestScopeKey)
     setLoadState('ready')
   }, [archivedOnly, currentWorkspace, projectsService])
 
@@ -80,6 +107,9 @@ export function ProjectsPage() {
     })
     return () => {
       cancelled = true
+      // Invalidate any in-flight request from the previous scope immediately,
+      // independent of whether the next request has already started.
+      requestEpochRef.current += 1
     }
   }, [loadProjects])
 
@@ -106,6 +136,12 @@ export function ProjectsPage() {
   }, [effectiveStatus, projects, search])
 
   if (!currentWorkspace) return null
+
+  // A ready/error payload is only trustworthy inside the scope that produced
+  // it. When the scope key no longer matches, fall back to the loading state
+  // until the in-flight request for the current scope resolves.
+  const staleScope = loadedScopeKey !== scopeKey
+  const showLoading = loadState === 'loading' || staleScope
 
   const setArchiveView = (nextArchived: boolean) => {
     setStatus('')
@@ -174,8 +210,8 @@ export function ProjectsPage() {
         </SelectField>
       </section>
 
-      {loadState === 'loading' && <LoadingState title="正在加载项目" />}
-      {loadState === 'error' && (
+      {showLoading && <LoadingState title="正在加载项目" />}
+      {!showLoading && loadState === 'error' && (
         <ErrorState
           action={
             <Button onClick={() => void loadProjects()} variant="secondary">
@@ -186,29 +222,31 @@ export function ProjectsPage() {
           title="暂时无法加载项目"
         />
       )}
-      {loadState === 'ready' && filteredProjects.length === 0 && (
-        <EmptyState
-          action={
-            canManage &&
-            !archivedOnly &&
-            search.length === 0 &&
-            effectiveStatus === '' ? (
-              <Link className="text-link" to="/projects/new">
-                创建第一个运维项目
-              </Link>
-            ) : undefined
-          }
-          description={
-            search.length > 0 || effectiveStatus !== ''
-              ? '没有符合当前搜索和筛选条件的项目。'
-              : archivedOnly
-                ? '当前没有你有权访问的已归档项目。'
-                : '当前工作空间还没有可显示的项目。'
-          }
-          title="暂无项目"
-        />
-      )}
-      {loadState === 'ready' && filteredProjects.length > 0 && (
+      {!showLoading &&
+        loadState === 'ready' &&
+        filteredProjects.length === 0 && (
+          <EmptyState
+            action={
+              canManage &&
+              !archivedOnly &&
+              search.length === 0 &&
+              effectiveStatus === '' ? (
+                <Link className="text-link" to="/projects/new">
+                  创建第一个运维项目
+                </Link>
+              ) : undefined
+            }
+            description={
+              search.length > 0 || effectiveStatus !== ''
+                ? '没有符合当前搜索和筛选条件的项目。'
+                : archivedOnly
+                  ? '当前没有你有权访问的已归档项目。'
+                  : '当前工作空间还没有可显示的项目。'
+            }
+            title="暂无项目"
+          />
+        )}
+      {!showLoading && loadState === 'ready' && filteredProjects.length > 0 && (
         <section aria-label="项目列表" className="project-card-list">
           {filteredProjects.map((project) => (
             <article className="project-card" key={project.project_id}>

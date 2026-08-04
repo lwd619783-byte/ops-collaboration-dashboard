@@ -56,18 +56,30 @@ function isAuthenticationMessage(message: string | null): boolean {
   if (!message) return false
   const normalized = message.toLowerCase()
   return (
+    // JWT expired / invalid JWT
     /\bjwt\b/.test(normalized) ||
     /json web token/.test(normalized) ||
-    /\btoken\b/.test(normalized) ||
-    /unauthorized/.test(normalized) ||
+    // Bearer token missing / invalid / required
+    /bearer token (?:missing|invalid|required|expired)/.test(normalized) ||
+    // access token expired / invalid / missing / required
+    /access token (?:expired|invalid|missing|required)/.test(normalized) ||
     /not authenticated/.test(normalized) ||
+    /authentication required/.test(normalized) ||
     /session (?:has )?expired/.test(normalized) ||
+    /unauthorized/.test(normalized) ||
     /login (?:required|expired|invalid)/.test(normalized)
   )
 }
 
 function mapKnownCode(signal: string | null): ProjectErrorCode | null {
+  // `signal` is already normalized to lower-case by the caller. PostgreSQL
+  // SQLSTATE values (e.g. `42501`) and project custom codes are case-stable,
+  // so lower-casing never alters their meaning.
   switch (signal) {
+    // Supabase / PostgREST authentication failures.
+    case 'pgrst301':
+    case 'pgrst302':
+    case 'pgrst303':
     case 'authorization_required':
     case 'bad_jwt':
     case 'jwt_expired':
@@ -75,6 +87,8 @@ function mapKnownCode(signal: string | null): ProjectErrorCode | null {
     case 'invalid_token':
     case 'unauthorized':
       return 'authentication_required'
+    // Ordinary permission denial stays a permission error, never a login error.
+    case '42501':
     case 'project_permission_denied':
       return 'permission_denied'
     case 'project_not_found_or_forbidden':
@@ -99,10 +113,16 @@ export function mapProjectError(error: unknown): SafeProjectError {
   const code = stringField(error, 'code')
   const message = stringField(error, 'message')
 
+  // Normalize the structured code once so stable identifiers (PGRST301/302/303,
+  // JWT codes, 42501, project_* codes) match regardless of upstream casing.
+  // `message` is intentionally NOT lower-cased here — it is only used as a
+  // loose fallback for gateway-supplied codes and is matched verbatim.
+  const normalizedCode = code ? code.toLowerCase() : null
+
   // The structured error code is authoritative. A descriptive message must
   // never shadow an explicit code, and the code must be inspected even when a
   // message is also present.
-  const mapped = mapKnownCode(code) ?? mapKnownCode(message)
+  const mapped = mapKnownCode(normalizedCode) ?? mapKnownCode(message)
   if (mapped) return createSafeProjectError(mapped)
 
   // Some gateways surface authentication failures only through the message.

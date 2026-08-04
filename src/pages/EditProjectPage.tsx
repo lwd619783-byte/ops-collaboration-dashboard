@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { ErrorState } from '@/components/feedback/ErrorState'
 import { LoadingState } from '@/components/feedback/LoadingState'
@@ -22,6 +28,7 @@ export function EditProjectPage() {
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>(
     'loading',
   )
+  const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null)
   const [isSubmitting, setSubmitting] = useState(false)
   const [serviceError, setServiceError] = useState<string | null>(null)
   const requestEpochRef = useRef(0)
@@ -38,21 +45,39 @@ export function EditProjectPage() {
   const canManage =
     currentWorkspace?.role === 'owner' || currentWorkspace?.role === 'admin'
 
+  // Stable request-scope key: workspace + project id + management capability.
+  // Including the permission state means a role demotion (owner/admin -> member)
+  // changes the scope and discards the previously loaded management form.
+  const scopeKey = currentWorkspace
+    ? `${currentWorkspace.workspace_id}:${projectId}:${
+        canManage ? 'manage' : 'readonly'
+      }`
+    : null
+  const scopeKeyRef = useRef(scopeKey)
+  useLayoutEffect(() => {
+    scopeKeyRef.current = scopeKey
+  }, [scopeKey])
+
   const loadProject = useCallback(async () => {
     if (!currentWorkspace || !canManage) return
     const epoch = ++requestEpochRef.current
+    const requestScopeKey = scopeKeyRef.current
     setLoadState('loading')
+    setLoadedScopeKey(null)
     const result = await projects.get(projectId)
     if (!mountedRef.current || requestEpochRef.current !== epoch) return
+    if (requestScopeKey !== scopeKeyRef.current) return
     if (
       !result.ok ||
       result.data.workspace_id !== currentWorkspace.workspace_id
     ) {
       setProject(null)
+      setLoadedScopeKey(requestScopeKey)
       setLoadState('error')
       return
     }
     setProject(result.data)
+    setLoadedScopeKey(requestScopeKey)
     setLoadState('ready')
   }, [canManage, currentWorkspace, projectId, projects])
 
@@ -63,6 +88,7 @@ export function EditProjectPage() {
     })
     return () => {
       cancelled = true
+      requestEpochRef.current += 1
     }
   }, [loadProject])
 
@@ -78,7 +104,14 @@ export function EditProjectPage() {
       />
     )
   }
-  if (loadState === 'loading') {
+
+  // A ready payload is only trustworthy inside the scope that produced it. A
+  // scope change (project id, workspace, or management role) must discard the
+  // old form until the request for the current scope resolves.
+  const staleScope = loadedScopeKey !== scopeKey
+  const showLoading = loadState === 'loading' || staleScope
+
+  if (showLoading) {
     return <LoadingState title="正在加载项目" />
   }
   if (loadState === 'error' || !project) {

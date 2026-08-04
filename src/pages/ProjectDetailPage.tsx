@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { Link, useParams } from 'react-router'
 import { ErrorState } from '@/components/feedback/ErrorState'
 import { LoadingState } from '@/components/feedback/LoadingState'
@@ -19,6 +25,7 @@ export function ProjectDetailPage() {
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>(
     'loading',
   )
+  const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null)
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [isArchiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
@@ -34,24 +41,40 @@ export function ProjectDetailPage() {
     }
   }, [])
 
+  // Stable request-scope key: workspace + project id. Switching the route
+  // parameter (project A -> project B) or the workspace must discard the old
+  // detail before the next request resolves.
+  const scopeKey = currentWorkspace
+    ? `${currentWorkspace.workspace_id}:${projectId}`
+    : null
+  const scopeKeyRef = useRef(scopeKey)
+  useLayoutEffect(() => {
+    scopeKeyRef.current = scopeKey
+  }, [scopeKey])
+
   const canManage =
     currentWorkspace?.role === 'owner' || currentWorkspace?.role === 'admin'
 
   const loadProject = useCallback(async () => {
     if (!currentWorkspace) return
     const epoch = ++requestEpochRef.current
+    const requestScopeKey = scopeKeyRef.current
     setLoadState('loading')
+    setLoadedScopeKey(null)
     const result = await projects.get(projectId)
     if (!mountedRef.current || requestEpochRef.current !== epoch) return
+    if (requestScopeKey !== scopeKeyRef.current) return
     if (
       !result.ok ||
       result.data.workspace_id !== currentWorkspace.workspace_id
     ) {
       setProject(null)
+      setLoadedScopeKey(requestScopeKey)
       setLoadState('error')
       return
     }
     setProject(result.data)
+    setLoadedScopeKey(requestScopeKey)
     setLoadState('ready')
   }, [currentWorkspace, projectId, projects])
 
@@ -62,6 +85,7 @@ export function ProjectDetailPage() {
     })
     return () => {
       cancelled = true
+      requestEpochRef.current += 1
     }
   }, [loadProject])
 
@@ -84,7 +108,15 @@ export function ProjectDetailPage() {
     setFeedback('项目已归档，不会被物理删除。')
   }
 
-  if (loadState === 'loading') {
+  if (!currentWorkspace) return null
+
+  // A ready/error payload is only trustworthy inside the scope that produced
+  // it. When the scope key no longer matches, fall back to the loading state
+  // until the in-flight request for the current scope resolves.
+  const staleScope = loadedScopeKey !== scopeKey
+  const showLoading = loadState === 'loading' || staleScope
+
+  if (showLoading) {
     return <LoadingState title="正在加载项目详情" />
   }
   if (loadState === 'error' || !project) {

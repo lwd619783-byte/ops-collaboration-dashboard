@@ -206,7 +206,7 @@ describe('项目 service', () => {
     expect(result.error.code).toBe('authentication_required')
   })
 
-  it('ordinary permission denial is not mistaken for a login failure', async () => {
+  it('ordinary permission denial is mapped to permission_denied, not a login failure', async () => {
     const supabase = createSupabaseClientMock()
     supabase.rpc.mockResolvedValue({
       data: null,
@@ -215,6 +215,77 @@ describe('项目 service', () => {
     const result = await getProject(supabase.client, projectRow.project_id)
     expect(result.ok).toBe(false)
     if (result.ok) return
-    expect(result.error.code).toBe('unknown_service_error')
+    expect(result.error.code).toBe('permission_denied')
+  })
+
+  describe('认证与权限错误代码映射强化', () => {
+    it.each([
+      ['PGRST301', 'JWT expired'],
+      ['PGRST302', 'Anonymous access is disabled'],
+      ['PGRST303', 'JWT claims validation failed'],
+    ] as const)(
+      'PostgREST 认证代码 %s 映射为 authentication_required',
+      async (code, message) => {
+        const supabase = createSupabaseClientMock()
+        supabase.rpc.mockResolvedValue({
+          data: null,
+          error: { code, message },
+        })
+        const result = await getProject(supabase.client, projectRow.project_id)
+        expect(result.ok).toBe(false)
+        if (result.ok) return
+        expect(result.error.code).toBe('authentication_required')
+      },
+    )
+
+    it('SQLSTATE 42501 映射为 permission_denied', async () => {
+      const supabase = createSupabaseClientMock()
+      supabase.rpc.mockResolvedValue({
+        data: null,
+        error: {
+          code: '42501',
+          message: 'permission denied for function get_project',
+        },
+      })
+      const result = await getProject(supabase.client, projectRow.project_id)
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error.code).toBe('permission_denied')
+    })
+
+    it('业务错误代码优先于 message 中的 token 措辞', async () => {
+      const supabase = createSupabaseClientMock()
+      supabase.rpc.mockResolvedValue({
+        data: null,
+        error: {
+          code: 'project_concurrent_update',
+          message: 'token wording must not override business code',
+        },
+      })
+      const result = await updateProject(supabase.client, {
+        projectId: projectRow.project_id,
+        name: projectRow.name,
+        description: '',
+        status: 'planning',
+        startDate: null,
+        dueDate: null,
+        expectedUpdatedAt: projectRow.updated_at,
+      })
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error.code).toBe('concurrent_update')
+    })
+
+    it('message 中出现偶然的 token 单词不映射为 authentication_required', async () => {
+      const supabase = createSupabaseClientMock()
+      supabase.rpc.mockResolvedValue({
+        data: null,
+        error: { message: 'project token quota is temporarily unavailable' },
+      })
+      const result = await getProject(supabase.client, projectRow.project_id)
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error.code).not.toBe('authentication_required')
+    })
   })
 })

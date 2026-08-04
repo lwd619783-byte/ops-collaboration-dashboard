@@ -1,0 +1,563 @@
+import { act, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes } from 'react-router'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  ProjectContext,
+  type ProjectContextValue,
+} from '@/features/projects/ProjectContext'
+import type { Project, ProjectCreateInput } from '@/features/projects/types'
+import {
+  WorkspaceContext,
+  type WorkspaceContextValue,
+} from '@/features/workspaces/WorkspaceContext'
+import type { WorkspaceRole } from '@/features/workspaces/types'
+import { EditProjectPage } from '@/pages/EditProjectPage'
+import { NewProjectPage } from '@/pages/NewProjectPage'
+import { ProjectDetailPage } from '@/pages/ProjectDetailPage'
+import { ProjectsPage } from '@/pages/ProjectsPage'
+import {
+  FICTIONAL_APP_USER_ID,
+  FICTIONAL_WORKSPACE_ID,
+} from '@/tests/helpers/supabaseAuthMock'
+
+const PROJECT_ID = 'aaaaaaaa-1111-4111-8111-111111111111'
+const SECOND_PROJECT_ID = 'aaaaaaaa-2222-4222-8222-222222222222'
+
+const currentProject: Project = {
+  project_id: PROJECT_ID,
+  workspace_id: FICTIONAL_WORKSPACE_ID,
+  name: '虚构运维甲项目',
+  description: '用于界面测试的虚构描述',
+  project_type: 'operations',
+  status: 'active',
+  owner_id: FICTIONAL_APP_USER_ID,
+  owner_display_name: '虚构负责人甲',
+  lead_id: null,
+  lead_display_name: null,
+  start_date: '2026-08-04',
+  due_date: '2026-08-20',
+  created_by: FICTIONAL_APP_USER_ID,
+  created_at: '2026-08-04T01:00:00+00:00',
+  updated_at: '2026-08-04T02:00:00+00:00',
+  archived_at: null,
+}
+
+const completedProject: Project = {
+  ...currentProject,
+  project_id: SECOND_PROJECT_ID,
+  name: '虚构已完成项目',
+  status: 'completed',
+}
+
+const archivedProject: Project = {
+  ...completedProject,
+  status: 'archived',
+  archived_at: '2026-08-04T03:00:00+00:00',
+  updated_at: '2026-08-04T03:00:00+00:00',
+}
+
+function workspaceValue(role: WorkspaceRole): WorkspaceContextValue {
+  return {
+    status: 'ready',
+    workspaces: [],
+    currentWorkspace: {
+      workspace_id: FICTIONAL_WORKSPACE_ID,
+      workspace_name: '虚构协同空间',
+      role,
+      status: 'active',
+      joined_at: '2026-08-01T00:00:00+00:00',
+    },
+    pendingInvitations: [],
+    error: null,
+    refresh: vi.fn(async () => undefined),
+    listMembers: vi.fn(async () => ({ ok: true as const, data: [] })),
+    inviteMember: vi.fn(async () => ({ ok: true as const, data: undefined })),
+    setMemberRole: vi.fn(async () => ({ ok: true as const, data: undefined })),
+    setMemberStatus: vi.fn(async () => ({
+      ok: true as const,
+      data: undefined,
+    })),
+    acceptInvitation: vi.fn(async () => ({
+      ok: true as const,
+      data: { alreadyAccepted: false },
+    })),
+  }
+}
+
+function projectValue(
+  overrides: Partial<ProjectContextValue> = {},
+): ProjectContextValue {
+  return {
+    list: vi.fn(async () => ({ ok: true as const, data: [currentProject] })),
+    get: vi.fn(async () => ({ ok: true as const, data: currentProject })),
+    create: vi.fn(async () => ({ ok: true as const, data: currentProject })),
+    update: vi.fn(async () => ({ ok: true as const, data: currentProject })),
+    archive: vi.fn(async () => ({ ok: true as const, data: archivedProject })),
+    ...overrides,
+  }
+}
+
+function renderWithContexts(
+  route: string,
+  element: React.ReactNode,
+  role: WorkspaceRole = 'owner',
+  projects: ProjectContextValue = projectValue(),
+) {
+  return render(
+    <MemoryRouter initialEntries={[route]}>
+      <WorkspaceContext.Provider value={workspaceValue(role)}>
+        <ProjectContext.Provider value={projects}>
+          {element}
+        </ProjectContext.Provider>
+      </WorkspaceContext.Provider>
+    </MemoryRouter>,
+  )
+}
+
+describe('项目列表', () => {
+  it.each([390, 320])(
+    '%dpx 窄屏保留单列卡片和核心创建入口',
+    async (viewportWidth) => {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: viewportWidth,
+      })
+      window.dispatchEvent(new Event('resize'))
+
+      renderWithContexts('/projects', <ProjectsPage />)
+
+      const list = await screen.findByRole('region', { name: '项目列表' })
+      expect(within(list).getAllByRole('article')).toHaveLength(1)
+      expect(
+        screen.getByRole('link', { name: '创建运维项目' }),
+      ).toBeInTheDocument()
+      expect(screen.queryByRole('table')).toBeNull()
+    },
+  )
+
+  it('显示加载状态，并在空响应后显示安全空状态', async () => {
+    let resolveList:
+      ((value: { ok: true; data: Project[] }) => void) | undefined
+    const list = vi.fn(
+      () =>
+        new Promise<{ ok: true; data: Project[] }>((resolve) => {
+          resolveList = resolve
+        }),
+    )
+    renderWithContexts(
+      '/projects',
+      <ProjectsPage />,
+      'owner',
+      projectValue({ list }),
+    )
+
+    expect(screen.getByRole('status')).toHaveTextContent('正在加载项目')
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      resolveList?.({ ok: true, data: [] })
+    })
+    expect(
+      await screen.findByRole('heading', { name: '暂无项目' }),
+    ).toBeInTheDocument()
+  })
+
+  it('错误状态可重试，并且不会显示原始服务细节', async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false as const,
+        error: {
+          code: 'unknown_service_error' as const,
+          message: '安全错误提示',
+        },
+      })
+      .mockResolvedValueOnce({ ok: true as const, data: [currentProject] })
+    const user = userEvent.setup()
+    renderWithContexts(
+      '/projects',
+      <ProjectsPage />,
+      'owner',
+      projectValue({ list }),
+    )
+
+    expect(await screen.findByText('安全错误提示')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByText(currentProject.name)).toBeInTheDocument()
+    expect(list).toHaveBeenCalledTimes(2)
+  })
+
+  it('默认不展示归档项目，显式切换后只请求并展示归档项目', async () => {
+    const list = vi.fn(
+      async (input: Parameters<ProjectContextValue['list']>[0]) => ({
+        ok: true as const,
+        data: input.archivedOnly ? [archivedProject] : [currentProject],
+      }),
+    )
+    const user = userEvent.setup()
+    renderWithContexts(
+      '/projects',
+      <ProjectsPage />,
+      'owner',
+      projectValue({ list }),
+    )
+
+    expect(await screen.findByText(currentProject.name)).toBeInTheDocument()
+    expect(screen.queryByText(archivedProject.name)).toBeNull()
+    await user.click(screen.getByRole('button', { name: '已归档' }))
+    expect(await screen.findByText(archivedProject.name)).toBeInTheDocument()
+    expect(screen.queryByText(currentProject.name)).toBeNull()
+    expect(list).toHaveBeenLastCalledWith({
+      workspaceId: FICTIONAL_WORKSPACE_ID,
+      archivedOnly: true,
+    })
+  })
+
+  it('名称描述搜索和状态筛选共同工作', async () => {
+    const pausedProject: Project = {
+      ...currentProject,
+      project_id: SECOND_PROJECT_ID,
+      name: '虚构巡检乙项目',
+      description: '包含专项关键词',
+      status: 'paused',
+    }
+    const user = userEvent.setup()
+    renderWithContexts(
+      '/projects',
+      <ProjectsPage />,
+      'owner',
+      projectValue({
+        list: vi.fn(async () => ({
+          ok: true as const,
+          data: [currentProject, pausedProject],
+        })),
+      }),
+    )
+    await screen.findByText(currentProject.name)
+
+    await user.type(screen.getByLabelText('搜索项目'), '专项关键词')
+    expect(screen.getByText(pausedProject.name)).toBeInTheDocument()
+    expect(screen.queryByText(currentProject.name)).toBeNull()
+    await user.clear(screen.getByLabelText('搜索项目'))
+    await user.selectOptions(screen.getByLabelText('状态筛选'), 'active')
+    expect(screen.getByText(currentProject.name)).toBeInTheDocument()
+    expect(screen.queryByText(pausedProject.name)).toBeNull()
+  })
+
+  it.each<WorkspaceRole>(['owner', 'admin'])(
+    '%s 可看到创建入口',
+    async (role) => {
+      renderWithContexts('/projects', <ProjectsPage />, role)
+      expect(
+        await screen.findByRole('link', { name: '创建运维项目' }),
+      ).toBeInTheDocument()
+    },
+  )
+
+  it.each<WorkspaceRole>(['member', 'external_collaborator'])(
+    '%s 不显示创建入口',
+    async (role) => {
+      renderWithContexts('/projects', <ProjectsPage />, role)
+      await screen.findByText(currentProject.name)
+      expect(screen.queryByRole('link', { name: '创建运维项目' })).toBeNull()
+    },
+  )
+})
+
+describe('创建项目', () => {
+  it('普通成员手工访问创建页时前端拒绝且不调用创建服务', () => {
+    const create = vi.fn()
+    renderWithContexts(
+      '/projects/new',
+      <NewProjectPage />,
+      'member',
+      projectValue({ create }),
+    )
+    expect(
+      screen.getByRole('heading', { name: '暂无访问权限' }),
+    ).toBeInTheDocument()
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('校验必填名称和 date-only 范围', async () => {
+    const user = userEvent.setup()
+    renderWithContexts('/projects/new', <NewProjectPage />)
+    await user.type(screen.getByLabelText('开始日期'), '2026-08-20')
+    await user.type(screen.getByLabelText('截止日期'), '2026-08-04')
+    await user.click(screen.getByRole('button', { name: '创建项目' }))
+    expect(screen.getByText('项目名称不能为空。')).toBeInTheDocument()
+    expect(screen.getByText('截止日期不得早于开始日期。')).toBeInTheDocument()
+  })
+
+  it('创建成功后导航到详情，并只提交稳定幂等键和允许字段', async () => {
+    const user = userEvent.setup()
+    const create = vi.fn(async () => ({
+      ok: true as const,
+      data: currentProject,
+    }))
+    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue(
+      'bbbbbbbb-1111-4111-8111-111111111111',
+    )
+    renderWithContexts(
+      '/projects/new',
+      <Routes>
+        <Route path="/projects/new" element={<NewProjectPage />} />
+        <Route path="/projects/:projectId" element={<p>已进入项目详情</p>} />
+      </Routes>,
+      'owner',
+      projectValue({ create }),
+    )
+    await user.type(screen.getByLabelText(/项目名称/), '虚构新项目')
+    await user.click(screen.getByRole('button', { name: '创建项目' }))
+
+    expect(await screen.findByText('已进入项目详情')).toBeInTheDocument()
+    expect(create).toHaveBeenCalledWith({
+      workspaceId: FICTIONAL_WORKSPACE_ID,
+      name: '虚构新项目',
+      description: '',
+      projectType: 'operations',
+      initialStatus: 'planning',
+      startDate: null,
+      dueDate: null,
+      idempotencyKey: 'bbbbbbbb-1111-4111-8111-111111111111',
+    })
+  })
+
+  it('失败后保留输入且未修改表单的重试复用同一幂等键', async () => {
+    const user = userEvent.setup()
+    const create = vi.fn(async (input: ProjectCreateInput) => {
+      void input
+      return {
+        ok: false as const,
+        error: {
+          code: 'unknown_service_error' as const,
+          message: '安全失败提示',
+        },
+      }
+    })
+    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue(
+      'bbbbbbbb-2222-4222-8222-222222222222',
+    )
+    renderWithContexts(
+      '/projects/new',
+      <NewProjectPage />,
+      'owner',
+      projectValue({ create }),
+    )
+    const nameInput = screen.getByLabelText(/项目名称/)
+    await user.type(nameInput, '保留的虚构项目')
+    await user.click(screen.getByRole('button', { name: '创建项目' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('安全失败提示')
+    expect(nameInput).toHaveValue('保留的虚构项目')
+    await user.click(screen.getByRole('button', { name: '创建项目' }))
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2))
+    expect(create.mock.calls[1][0].idempotencyKey).toBe(
+      create.mock.calls[0][0].idempotencyKey,
+    )
+  })
+
+  it('提交未完成时禁用重复点击', async () => {
+    const user = userEvent.setup()
+    let resolveCreate:
+      ((value: { ok: true; data: Project }) => void) | undefined
+    const create = vi.fn(
+      () =>
+        new Promise<{ ok: true; data: Project }>((resolve) => {
+          resolveCreate = resolve
+        }),
+    )
+    renderWithContexts(
+      '/projects/new',
+      <NewProjectPage />,
+      'owner',
+      projectValue({ create }),
+    )
+    await user.type(screen.getByLabelText(/项目名称/), '防重复虚构项目')
+    await user.click(screen.getByRole('button', { name: '创建项目' }))
+    const pendingButton = screen.getByRole('button', { name: /^正在创建/ })
+    expect(pendingButton).toBeDisabled()
+    await user.click(pendingButton)
+    expect(create).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      resolveCreate?.({ ok: true, data: currentProject })
+    })
+  })
+})
+
+describe('项目详情、编辑与归档', () => {
+  it('详情显示负责人、空牵头人、日期和后续能力边界', async () => {
+    renderWithContexts(
+      `/projects/${PROJECT_ID}`,
+      <Routes>
+        <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+      </Routes>,
+    )
+    expect(
+      await screen.findByRole('heading', { name: currentProject.name }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('虚构负责人甲')).toBeInTheDocument()
+    expect(screen.getByText('暂未设置')).toBeInTheDocument()
+    expect(screen.getByText('2026年8月4日')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: '项目成员' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: '项目模块' }),
+    ).toBeInTheDocument()
+  })
+
+  it('不存在和无权访问使用同一安全状态', async () => {
+    renderWithContexts(
+      `/projects/${PROJECT_ID}`,
+      <Routes>
+        <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+      </Routes>,
+      'member',
+      projectValue({
+        get: vi.fn(async () => ({
+          ok: false as const,
+          error: {
+            code: 'not_found_or_forbidden' as const,
+            message: '项目不存在或你无权访问。',
+          },
+        })),
+      }),
+    )
+    expect(
+      await screen.findByRole('heading', { name: '无法打开项目' }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('项目不存在或你无权访问。')).toBeInTheDocument()
+  })
+
+  it('已完成项目通过确认对话框归档，成功后留在归档详情', async () => {
+    const user = userEvent.setup()
+    const archive = vi.fn(async () => ({
+      ok: true as const,
+      data: archivedProject,
+    }))
+    renderWithContexts(
+      `/projects/${SECOND_PROJECT_ID}`,
+      <Routes>
+        <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+      </Routes>,
+      'owner',
+      projectValue({
+        get: vi.fn(async () => ({ ok: true as const, data: completedProject })),
+        archive,
+      }),
+    )
+    await user.click(await screen.findByRole('button', { name: '归档项目' }))
+    const dialog = screen.getByRole('dialog', { name: '归档项目' })
+    expect(dialog).toHaveTextContent('不会被物理删除')
+    await user.click(within(dialog).getByRole('button', { name: '确认归档' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('项目已归档')
+    expect(screen.getByText('已归档')).toBeInTheDocument()
+    expect(archive).toHaveBeenCalledWith(
+      completedProject.project_id,
+      completedProject.updated_at,
+    )
+  })
+
+  it('归档失败保留对话框并显示安全可重试提示', async () => {
+    const user = userEvent.setup()
+    renderWithContexts(
+      `/projects/${SECOND_PROJECT_ID}`,
+      <Routes>
+        <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+      </Routes>,
+      'owner',
+      projectValue({
+        get: vi.fn(async () => ({ ok: true as const, data: completedProject })),
+        archive: vi.fn(async () => ({
+          ok: false as const,
+          error: {
+            code: 'concurrent_update' as const,
+            message: '请刷新后重试。',
+          },
+        })),
+      }),
+    )
+    await user.click(await screen.findByRole('button', { name: '归档项目' }))
+    await user.click(screen.getByRole('button', { name: '确认归档' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('请刷新后重试。')
+    expect(screen.getByRole('dialog', { name: '归档项目' })).toBeInTheDocument()
+  })
+
+  it('普通成员手工访问编辑页时前端拒绝且不读取编辑数据', () => {
+    const get = vi.fn()
+    renderWithContexts(
+      `/projects/${PROJECT_ID}/edit`,
+      <Routes>
+        <Route path="/projects/:projectId/edit" element={<EditProjectPage />} />
+      </Routes>,
+      'member',
+      projectValue({ get }),
+    )
+    expect(
+      screen.getByRole('heading', { name: '暂无访问权限' }),
+    ).toBeInTheDocument()
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it('编辑页只提供合法状态流转，并映射乐观并发冲突', async () => {
+    const user = userEvent.setup()
+    const update = vi.fn(async () => ({
+      ok: false as const,
+      error: {
+        code: 'concurrent_update' as const,
+        message: '项目已被其他人修改，请刷新后重试。',
+      },
+    }))
+    renderWithContexts(
+      `/projects/${PROJECT_ID}/edit`,
+      <Routes>
+        <Route path="/projects/:projectId/edit" element={<EditProjectPage />} />
+      </Routes>,
+      'admin',
+      projectValue({ update }),
+    )
+    const statusSelect = await screen.findByLabelText(/项目状态/)
+    expect(
+      within(statusSelect).getByRole('option', { name: '进行中' }),
+    ).toBeInTheDocument()
+    expect(
+      within(statusSelect).getByRole('option', { name: '暂停' }),
+    ).toBeInTheDocument()
+    expect(
+      within(statusSelect).getByRole('option', { name: '已完成' }),
+    ).toBeInTheDocument()
+    expect(
+      within(statusSelect).queryByRole('option', { name: '筹备中' }),
+    ).toBeNull()
+    expect(
+      within(statusSelect).queryByRole('option', { name: '已归档' }),
+    ).toBeNull()
+    await user.selectOptions(statusSelect, 'paused')
+    await user.click(screen.getByRole('button', { name: '保存修改' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('刷新后重试')
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: PROJECT_ID,
+        status: 'paused',
+        expectedUpdatedAt: currentProject.updated_at,
+      }),
+    )
+  })
+
+  it('归档项目不可进入普通编辑流程', async () => {
+    renderWithContexts(
+      `/projects/${SECOND_PROJECT_ID}/edit`,
+      <Routes>
+        <Route path="/projects/:projectId/edit" element={<EditProjectPage />} />
+      </Routes>,
+      'owner',
+      projectValue({
+        get: vi.fn(async () => ({ ok: true as const, data: archivedProject })),
+      }),
+    )
+    expect(
+      await screen.findByRole('heading', { name: '项目已归档' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '保存修改' })).toBeNull()
+  })
+})

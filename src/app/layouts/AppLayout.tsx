@@ -92,8 +92,11 @@ function AppLayoutShell({
   const openNavigationButtonRef = useRef<HTMLButtonElement>(null)
   const closeNavigationButtonRef = useRef<HTMLButtonElement>(null)
   const title =
-    appNavigation.find((item) => item.path === location.pathname)?.title ??
-    '页面未找到'
+    appNavigation.find(
+      (item) =>
+        item.path === location.pathname ||
+        (item.path !== '/' && location.pathname.startsWith(`${item.path}/`)),
+    )?.title ?? '页面未找到'
 
   const closeMobileNavigation = useCallback(() => {
     setMobileNavigationOpen(false)

@@ -36,13 +36,26 @@ const { Client } = requireFromRepo('pg')
 // Local stack configuration (from `supabase status -o json`).
 // ---------------------------------------------------------------------------
 function localStatus() {
-  const npxName =
+  const npxCommand = process.platform === 'win32' ? process.execPath : 'npx'
+  const npxArguments =
     process.platform === 'win32'
-      ? join(process.execPath, '..', 'npx.cmd')
-      : 'npx'
-  const result = spawnSync(npxName, ['supabase', 'status', '-o', 'json'], {
+      ? [
+          join(
+            process.execPath,
+            '..',
+            'node_modules',
+            'npm',
+            'bin',
+            'npx-cli.js',
+          ),
+          'supabase',
+          'status',
+          '-o',
+          'json',
+        ]
+      : ['supabase', 'status', '-o', 'json']
+  const result = spawnSync(npxCommand, npxArguments, {
     encoding: 'utf8',
-    shell: process.platform === 'win32',
     env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: '1' },
   })
   if (result.status !== 0) {

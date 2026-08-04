@@ -22,7 +22,8 @@ body {
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 button,
@@ -386,13 +387,19 @@ a {
   font-weight: 700;
 }
 .field input,
-.field select {
+.field select,
+.field textarea {
   width: 100%;
   border: 1px solid #94a3b8;
   border-radius: 0.45rem;
   padding: 0.65rem;
   color: #172033;
   background: #fff;
+}
+.field textarea {
+  min-height: 8rem;
+  resize: vertical;
+  line-height: 1.6;
 }
 .field small {
   color: #64748b;
@@ -545,6 +552,152 @@ a {
   margin: 0;
   overflow-wrap: anywhere;
 }
+.projects-heading h2,
+.project-detail-heading h2,
+.project-editor-page h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+}
+.projects-heading p:last-child,
+.project-editor-page .intro p:last-child {
+  max-width: 48rem;
+  margin-bottom: 0;
+}
+.segmented-control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+.project-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(12rem, 1fr);
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid #dce3ed;
+  border-radius: 0.75rem;
+  background: #fff;
+}
+.project-card-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+.project-card,
+.project-detail-card,
+.project-form {
+  min-width: 0;
+  padding: 1.25rem;
+  border: 1px solid #dce3ed;
+  border-radius: 0.75rem;
+  background: #fff;
+}
+.project-card-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.project-card-heading > div {
+  min-width: 0;
+}
+.project-card h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 1.2rem;
+}
+.project-card h3 a {
+  color: #0f172a;
+  text-decoration-color: #7dd3fc;
+  text-underline-offset: 0.2em;
+}
+.project-type-label {
+  margin: 0 0 0.35rem;
+  color: #0369a1;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.project-card-description,
+.project-description {
+  color: #526075;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.project-card-description {
+  display: -webkit-box;
+  min-height: 3.4em;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.project-card-meta,
+.project-detail-grid {
+  display: grid;
+  margin: 1rem 0 0;
+  gap: 0.85rem;
+}
+.project-card-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.project-card-meta > div,
+.project-detail-grid > div {
+  min-width: 0;
+}
+.project-card-meta dt,
+.project-detail-grid dt {
+  color: #64748b;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.project-card-meta dd,
+.project-detail-grid dd {
+  margin: 0.2rem 0 0;
+  overflow-wrap: anywhere;
+}
+.project-form {
+  display: grid;
+  max-width: 52rem;
+  gap: 1.1rem;
+}
+.project-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+.project-form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.project-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.65rem;
+}
+.project-heading-status {
+  margin-top: 0.75rem;
+}
+.project-detail-card h3,
+.project-future-grid h3 {
+  margin-top: 0;
+}
+.project-detail-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding-top: 1rem;
+  border-top: 1px solid #e2e8f0;
+}
+.project-detail-grid > div {
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+}
+.project-future-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -641,5 +794,31 @@ a {
   .activation-summary > div {
     grid-template-columns: 1fr;
     gap: 0.25rem;
+  }
+  .projects-heading .button,
+  .project-detail-actions,
+  .project-detail-actions .button,
+  .project-form-actions .button {
+    width: 100%;
+  }
+  .project-filters,
+  .project-card-list,
+  .project-form-grid,
+  .project-detail-grid,
+  .project-future-grid {
+    grid-template-columns: 1fr;
+  }
+  .project-card-heading {
+    align-items: flex-start;
+  }
+  .project-card-meta {
+    grid-template-columns: 1fr;
+  }
+  .segmented-control {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .segmented-control .button {
+    width: 100%;
   }
 }

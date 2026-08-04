@@ -145,6 +145,125 @@ export type Database = {
           },
         ]
       }
+      project_members: {
+        Row: {
+          joined_at: string
+          project_id: string
+          role: Database["public"]["Enums"]["project_role"]
+          user_id: string
+        }
+        Insert: {
+          joined_at?: string
+          project_id: string
+          role: Database["public"]["Enums"]["project_role"]
+          user_id: string
+        }
+        Update: {
+          joined_at?: string
+          project_id?: string
+          role?: Database["public"]["Enums"]["project_role"]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_members_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_members_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      projects: {
+        Row: {
+          archived_at: string | null
+          created_at: string
+          created_by: string
+          description: string | null
+          due_date: string | null
+          id: string
+          idempotency_key: string
+          lead_id: string | null
+          name: string
+          owner_id: string
+          project_type: Database["public"]["Enums"]["project_type"]
+          start_date: string | null
+          status: Database["public"]["Enums"]["project_status"]
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string
+          created_by: string
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          idempotency_key: string
+          lead_id?: string | null
+          name: string
+          owner_id: string
+          project_type?: Database["public"]["Enums"]["project_type"]
+          start_date?: string | null
+          status?: Database["public"]["Enums"]["project_status"]
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string
+          created_by?: string
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          idempotency_key?: string
+          lead_id?: string | null
+          name?: string
+          owner_id?: string
+          project_type?: Database["public"]["Enums"]["project_type"]
+          start_date?: string | null
+          status?: Database["public"]["Enums"]["project_status"]
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "projects_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "projects_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "projects_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "projects_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_identities: {
         Row: {
           created_at: string
@@ -404,6 +523,27 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      archive_project: {
+        Args: { p_expected_updated_at: string; p_project_id: string }
+        Returns: {
+          archived_at: string
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          lead_display_name: string
+          lead_id: string
+          name: string
+          owner_display_name: string
+          owner_id: string
+          project_id: string
+          project_type: Database["public"]["Enums"]["project_type"]
+          start_date: string
+          status: Database["public"]["Enums"]["project_status"]
+          updated_at: string
+          workspace_id: string
+        }[]
+      }
       bootstrap_default_workspace: {
         Args: { p_idempotency_key: string; p_name: string; p_owner_id: string }
         Returns: string
@@ -412,6 +552,11 @@ export type Database = {
         Args: { p_workspace_id: string }
         Returns: boolean
       }
+      can_manage_workspace_projects: {
+        Args: { p_workspace_id: string }
+        Returns: boolean
+      }
+      can_read_project: { Args: { p_project_id: string }; Returns: boolean }
       confirm_workspace_auth_invitation_result: {
         Args: {
           p_invitation_id: string
@@ -421,7 +566,59 @@ export type Database = {
         }
         Returns: string
       }
+      create_project: {
+        Args: {
+          p_description: string
+          p_due_date: string
+          p_idempotency_key: string
+          p_initial_status: Database["public"]["Enums"]["project_status"]
+          p_name: string
+          p_project_type: Database["public"]["Enums"]["project_type"]
+          p_start_date: string
+          p_workspace_id: string
+        }
+        Returns: {
+          archived_at: string
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          lead_display_name: string
+          lead_id: string
+          name: string
+          owner_display_name: string
+          owner_id: string
+          project_id: string
+          project_type: Database["public"]["Enums"]["project_type"]
+          start_date: string
+          status: Database["public"]["Enums"]["project_status"]
+          updated_at: string
+          was_existing: boolean
+          workspace_id: string
+        }[]
+      }
       current_app_user_id: { Args: never; Returns: string }
+      get_project: {
+        Args: { p_project_id: string }
+        Returns: {
+          archived_at: string
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          lead_display_name: string
+          lead_id: string
+          name: string
+          owner_display_name: string
+          owner_id: string
+          project_id: string
+          project_type: Database["public"]["Enums"]["project_type"]
+          start_date: string
+          status: Database["public"]["Enums"]["project_status"]
+          updated_at: string
+          workspace_id: string
+        }[]
+      }
       health_check: {
         Args: never
         Returns: {
@@ -452,6 +649,32 @@ export type Database = {
           status: Database["public"]["Enums"]["workspace_member_status"]
           workspace_id: string
           workspace_name: string
+        }[]
+      }
+      list_projects: {
+        Args: {
+          p_archived_only?: boolean
+          p_search?: string
+          p_status?: Database["public"]["Enums"]["project_status"]
+          p_workspace_id: string
+        }
+        Returns: {
+          archived_at: string
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          lead_display_name: string
+          lead_id: string
+          name: string
+          owner_display_name: string
+          owner_id: string
+          project_id: string
+          project_type: Database["public"]["Enums"]["project_type"]
+          start_date: string
+          status: Database["public"]["Enums"]["project_status"]
+          updated_at: string
+          workspace_id: string
         }[]
       }
       list_workspace_members: {
@@ -489,6 +712,27 @@ export type Database = {
           should_send: boolean
         }[]
       }
+      project_snapshot: {
+        Args: { p_project_id: string }
+        Returns: {
+          archived_at: string
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          lead_display_name: string
+          lead_id: string
+          name: string
+          owner_display_name: string
+          owner_id: string
+          project_id: string
+          project_type: Database["public"]["Enums"]["project_type"]
+          start_date: string
+          status: Database["public"]["Enums"]["project_status"]
+          updated_at: string
+          workspace_id: string
+        }[]
+      }
       resolve_app_user_id: {
         Args: {
           p_provider: Database["public"]["Enums"]["identity_provider"]
@@ -522,6 +766,35 @@ export type Database = {
           user_id: string
         }[]
       }
+      update_project: {
+        Args: {
+          p_description: string
+          p_due_date: string
+          p_expected_updated_at: string
+          p_name: string
+          p_project_id: string
+          p_start_date: string
+          p_status: Database["public"]["Enums"]["project_status"]
+        }
+        Returns: {
+          archived_at: string
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          lead_display_name: string
+          lead_id: string
+          name: string
+          owner_display_name: string
+          owner_id: string
+          project_id: string
+          project_type: Database["public"]["Enums"]["project_type"]
+          start_date: string
+          status: Database["public"]["Enums"]["project_status"]
+          updated_at: string
+          workspace_id: string
+        }[]
+      }
       workspace_invitation_ttl_seconds: { Args: never; Returns: number }
       workspace_role_for_current_user: {
         Args: { p_workspace_id: string }
@@ -534,6 +807,14 @@ export type Database = {
         | "supabase_auth"
         | "wechat_miniprogram"
         | "enterprise_wechat"
+      project_role: "owner" | "lead" | "member" | "viewer"
+      project_status:
+        | "planning"
+        | "active"
+        | "paused"
+        | "completed"
+        | "archived"
+      project_type: "operations"
       workspace_invitation_status:
         | "prepared"
         | "reissue_prepared"
@@ -676,6 +957,9 @@ export const Constants = {
         "wechat_miniprogram",
         "enterprise_wechat",
       ],
+      project_role: ["owner", "lead", "member", "viewer"],
+      project_status: ["planning", "active", "paused", "completed", "archived"],
+      project_type: ["operations"],
       workspace_invitation_status: [
         "prepared",
         "reissue_prepared",

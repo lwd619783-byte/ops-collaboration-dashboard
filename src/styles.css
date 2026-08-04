@@ -303,6 +303,22 @@ a {
   min-width: 32rem;
   border-collapse: collapse;
 }
+.table-wrap th,
+.table-wrap td {
+  padding: 0.85rem 1rem;
+  border-top: 1px solid #e2e8f0;
+  text-align: left;
+  vertical-align: middle;
+}
+.table-wrap th {
+  color: #475569;
+  font-size: 0.85rem;
+}
+.table-wrap td small {
+  display: block;
+  margin-top: 0.2rem;
+  color: #64748b;
+}
 .table-wrap caption {
   padding: 1rem;
   text-align: left;
@@ -486,6 +502,49 @@ a {
   gap: 1rem;
   max-width: 36rem;
 }
+.members-heading h2 {
+  margin: 0;
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+}
+.members-heading p:last-child {
+  max-width: 48rem;
+  margin-bottom: 0;
+}
+.member-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.muted-text {
+  color: #64748b;
+  font-size: 0.875rem;
+}
+.dialog-form {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.activation-summary {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0 0 1.25rem;
+}
+.activation-summary > div {
+  display: grid;
+  grid-template-columns: minmax(6rem, 0.45fr) minmax(0, 1fr);
+  gap: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+.activation-summary dt {
+  color: #64748b;
+  font-weight: 700;
+}
+.activation-summary dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -568,5 +627,19 @@ a {
   }
   .dialog-actions {
     flex-wrap: wrap;
+  }
+  .members-heading .button {
+    width: 100%;
+  }
+  .members-page .table-wrap {
+    max-width: calc(100vw - 2rem);
+    overscroll-behavior-inline: contain;
+  }
+  .members-page .table-wrap table {
+    min-width: 48rem;
+  }
+  .activation-summary > div {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
   }
 }

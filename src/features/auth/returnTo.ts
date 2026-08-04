@@ -27,6 +27,7 @@ const businessPaths = new Set<string>([
     .filter((item) => item.path !== '/system-health')
     .map((item) => item.path),
   ...legacyBusinessPathRedirects.map((item) => item.from),
+  '/activate-account',
 ])
 
 /** Public auth paths that would create a redirect loop and are never valid return targets. */

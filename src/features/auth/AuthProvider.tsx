@@ -55,6 +55,7 @@ import {
   type AuthServiceResult,
   type Profile,
   type ProfileEditableInput,
+  ACTIVATION_PHASE_STORAGE_KEY,
   RECOVERY_SESSION_STORAGE_KEY,
 } from '@/features/auth/authService'
 import {
@@ -89,6 +90,9 @@ export function AuthProvider({
   const [isRecoverySession, setIsRecoverySession] = useState(
     () => recoveryStorage.getItem(RECOVERY_SESSION_STORAGE_KEY) === '1',
   )
+  const [activationPasswordSet, setActivationPasswordSet] = useState(
+    () => recoveryStorage.getItem(ACTIVATION_PHASE_STORAGE_KEY) === '1',
+  )
   const [notice, setNotice] = useState<string | null>(null)
 
   const clientRef = useRef<SupabaseClient<Database> | null>(null)
@@ -109,6 +113,23 @@ export function AuthProvider({
   const clearRecoverySession = useCallback(() => {
     recoveryStorage.removeItem(RECOVERY_SESSION_STORAGE_KEY)
     setIsRecoverySession(false)
+  }, [recoveryStorage])
+
+  /**
+   * First-activation phase marker. `setInitialPassword` marks it ONLY after
+   * the password update succeeded, so a failed update can never be mistaken
+   * for "password already set". The marker is a plain boolean in controlled
+   * sessionStorage: it survives USER_UPDATED-triggered identity re-resolution
+   * and page refreshes, and never contains a password, token or invite link.
+   */
+  const markActivationPasswordSet = useCallback(() => {
+    recoveryStorage.setItem(ACTIVATION_PHASE_STORAGE_KEY, '1')
+    setActivationPasswordSet(true)
+  }, [recoveryStorage])
+
+  const clearActivationPhase = useCallback(() => {
+    recoveryStorage.removeItem(ACTIVATION_PHASE_STORAGE_KEY)
+    setActivationPasswordSet(false)
   }, [recoveryStorage])
 
   const invalidateAuthEpoch = useCallback(() => {
@@ -135,8 +156,11 @@ export function AuthProvider({
     setProfileMissing(false)
     setAuthError(null)
     clearRecoverySession()
+    // The first-activation phase is bound to this session: session loss and
+    // every sign-out must drop it so it can never leak to another user.
+    clearActivationPhase()
     setStatus('unauthenticated')
-  }, [clearRecoverySession, invalidateAuthEpoch])
+  }, [clearActivationPhase, clearRecoverySession, invalidateAuthEpoch])
 
   /** True when the resolution captured by `epoch` is still the latest one. */
   const isCurrentEpoch = useCallback(
@@ -384,6 +408,9 @@ export function AuthProvider({
       }
       if (event === 'PASSWORD_RECOVERY') {
         markRecoverySession()
+        // A recovery session is a different flow: any in-progress first
+        // activation for the previous session must be dropped.
+        clearActivationPhase()
         invalidateAuthEpoch()
         queueMicrotask(() => {
           if (disposedRef.current) return
@@ -392,9 +419,11 @@ export function AuthProvider({
         return
       }
       if (event === 'SIGNED_IN') {
-        // A normal sign-in is not a recovery session; any earlier resolution
+        // A normal sign-in (new user, new session) is not an activation
+        // continuation: earlier resolutions AND any stale activation phase
         // for the previous user must be invalidated.
         clearRecoverySession()
+        clearActivationPhase()
         invalidateAuthEpoch()
         queueMicrotask(() => {
           if (disposedRef.current) return
@@ -424,6 +453,7 @@ export function AuthProvider({
       subscription.unsubscribe()
     }
   }, [
+    clearActivationPhase,
     clearRecoverySession,
     invalidateAuthEpoch,
     markRecoverySession,
@@ -542,6 +572,40 @@ export function AuthProvider({
     ],
   )
 
+  const setInitialPassword = useCallback(
+    async (password: string): Promise<AuthServiceResult> => {
+      const client = clientRef.current
+      if (!client) {
+        return {
+          ok: false,
+          error: createSafeAuthError(
+            configState === 'invalid'
+              ? 'supabase_config_invalid'
+              : 'supabase_unconfigured',
+          ),
+        }
+      }
+      // Invitation activation must keep the verified invite session alive long
+      // enough to accept the workspace invitation. The activation page signs
+      // out explicitly only after both steps have succeeded.
+      const result = await updateUserPassword(client, password)
+      if (!result.ok) return result
+      // Mark the phase ONLY after the password update succeeded. The marker
+      // survives the USER_UPDATED re-resolution and page refreshes, so the
+      // activation page can never ask for the password twice.
+      markActivationPasswordSet()
+      return result
+    },
+    [configState, markActivationPasswordSet],
+  )
+
+  const completeAccountActivationSignOut = useCallback(async () => {
+    const client = clientRef.current
+    transitionToUnauthenticated()
+    setNotice('账号已激活，请使用新密码登录。')
+    if (client) await signOutOfSupabase(client, SIGN_OUT_SCOPE)
+  }, [transitionToUnauthenticated])
+
   const updateProfile = useCallback(
     async (
       input: ProfileEditableInput,
@@ -603,12 +667,15 @@ export function AuthProvider({
       profileMissing,
       configState,
       isRecoverySession,
+      activationPasswordSet,
       notice,
       clearNotice,
       signIn,
       signOut,
       requestPasswordReset,
       updatePassword,
+      setInitialPassword,
+      completeAccountActivationSignOut,
       updateProfile,
       refreshProfile,
       retryAuthCheck,
@@ -621,12 +688,15 @@ export function AuthProvider({
       profileMissing,
       configState,
       isRecoverySession,
+      activationPasswordSet,
       notice,
       clearNotice,
       signIn,
       signOut,
       requestPasswordReset,
       updatePassword,
+      setInitialPassword,
+      completeAccountActivationSignOut,
       updateProfile,
       refreshProfile,
       retryAuthCheck,

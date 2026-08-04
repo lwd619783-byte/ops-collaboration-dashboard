@@ -46,12 +46,23 @@ export type AuthContextValue = {
   /** Preserved reason when the Supabase client could not be built. */
   configState: AuthConfigState
   isRecoverySession: boolean
+  /**
+   * True while the FIRST-ACTIVATION phase has set the initial password and is
+   * waiting to accept the workspace invitation. It survives USER_UPDATED
+   * re-resolution, React re-renders and page refreshes (controlled
+   * sessionStorage), and is cleared by the provider at every authoritative
+   * boundary: activation completion, explicit sign-out, session loss, user
+   * switch, new sign-in and safe termination.
+   */
+  activationPasswordSet: boolean
   notice: string | null
   clearNotice: () => void
   signIn: (email: string, password: string) => Promise<AuthServiceResult>
   signOut: () => Promise<void>
   requestPasswordReset: (email: string) => Promise<AuthServiceResult>
   updatePassword: (password: string) => Promise<AuthServiceResult>
+  setInitialPassword: (password: string) => Promise<AuthServiceResult>
+  completeAccountActivationSignOut: () => Promise<void>
   updateProfile: (
     input: Pick<Profile, 'display_name' | 'organization_name' | 'title'>,
   ) => Promise<AuthServiceResult<Profile>>

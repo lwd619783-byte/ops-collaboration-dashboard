@@ -19,6 +19,7 @@ import type { Database } from '@/types/database.generated'
 
 export const FICTIONAL_AUTH_USER_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 export const FICTIONAL_APP_USER_ID = '11111111-1111-1111-1111-111111111111'
+export const FICTIONAL_WORKSPACE_ID = '99999999-9999-4999-8999-999999999999'
 export const FICTIONAL_ISSUER = 'https://fictional-issuer.example.local'
 
 export const fictionalSession = {
@@ -60,6 +61,14 @@ export const fictionalProfile = {
   updated_at: '2026-01-01T00:00:00+00:00',
 } as const
 
+export const fictionalWorkspace = {
+  workspace_id: FICTIONAL_WORKSPACE_ID,
+  workspace_name: 'Fictional Workspace',
+  role: 'owner',
+  status: 'active',
+  joined_at: '2026-01-01T00:00:00+00:00',
+} as const
+
 export type AuthEventName =
   | 'INITIAL_SESSION'
   | 'SIGNED_IN'
@@ -85,6 +94,21 @@ export type MockClientOptions = {
   profileReadError?: unknown
   /** profiles row returned by read; null → row missing */
   profileRow?: typeof fictionalProfile | null
+  workspaceRows?: Array<{
+    workspace_id: string
+    workspace_name: string
+    role: 'owner' | 'admin' | 'member' | 'external_collaborator'
+    status: 'active'
+    joined_at: string
+  }>
+  pendingInvitationRows?: Array<{
+    invitation_id: string
+    workspace_id: string
+    workspace_name: string
+    role: 'admin' | 'member' | 'external_collaborator'
+    status: 'sent'
+    expires_at: string
+  }>
   /** Throw a network-like failure on auth calls */
   networkFailure?: boolean
   /** error object returned by signInWithPassword */
@@ -108,6 +132,7 @@ export type SupabaseClientMock = {
   rpc: ReturnType<typeof vi.fn>
   from: ReturnType<typeof vi.fn>
   getSession: ReturnType<typeof vi.fn>
+  functionsInvoke: ReturnType<typeof vi.fn>
 }
 
 function tableQuery(
@@ -235,12 +260,26 @@ export function createSupabaseClientMock(
         error: null,
       }
     }
+    if (name === 'list_my_workspaces') {
+      return {
+        data: options.workspaceRows ?? [fictionalWorkspace],
+        error: null,
+      }
+    }
+    if (name === 'list_my_pending_workspace_invitations') {
+      return { data: options.pendingInvitationRows ?? [], error: null }
+    }
+    if (name === 'list_workspace_members') {
+      return { data: [], error: null }
+    }
     return { data: null, error: null }
   })
 
   const from = vi.fn((table: 'app_users' | 'profiles') =>
     tableQuery(options, table),
   )
+
+  const functionsInvoke = vi.fn(async () => ({ data: null, error: null }))
 
   const client = {
     auth: {
@@ -258,6 +297,7 @@ export function createSupabaseClientMock(
     },
     rpc,
     from,
+    functions: { invoke: functionsInvoke },
   } as unknown as SupabaseClient<Database>
 
   return {
@@ -271,5 +311,6 @@ export function createSupabaseClientMock(
     rpc,
     from,
     getSession,
+    functionsInvoke,
   }
 }

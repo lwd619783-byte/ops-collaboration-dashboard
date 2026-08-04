@@ -282,6 +282,23 @@ describe('受保护路由', () => {
       if (name === 'current_app_user_id') {
         return { data: '11111111-1111-1111-1111-111111111111', error: null }
       }
+      if (name === 'list_my_workspaces') {
+        return {
+          data: [
+            {
+              workspace_id: '99999999-9999-4999-8999-999999999999',
+              workspace_name: 'Fictional Workspace',
+              role: 'owner',
+              status: 'active',
+              joined_at: '2026-01-01T00:00:00+00:00',
+            },
+          ],
+          error: null,
+        }
+      }
+      if (name === 'list_my_pending_workspace_invitations') {
+        return { data: [], error: null }
+      }
       return { data: null, error: null }
     })
     const user = userEvent.setup()

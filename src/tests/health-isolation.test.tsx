@@ -59,7 +59,22 @@ function renderAt(path: string) {
             data: [{ status: 'ok', checked_at: '2026-07-30T12:00:00+00:00' }],
             error: null,
           }
-        : { data: null, error: null }
+        : name === 'list_my_workspaces'
+          ? {
+              data: [
+                {
+                  workspace_id: '99999999-9999-4999-8999-999999999999',
+                  workspace_name: 'Fictional Workspace',
+                  role: 'owner',
+                  status: 'active',
+                  joined_at: '2026-01-01T00:00:00+00:00',
+                },
+              ],
+              error: null,
+            }
+          : name === 'list_my_pending_workspace_invitations'
+            ? { data: [], error: null }
+            : { data: null, error: null }
     const promise = Promise.resolve(result)
     return Object.assign(promise, {
       abortSignal: () => Promise.resolve(result),

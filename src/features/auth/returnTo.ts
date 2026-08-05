@@ -28,6 +28,7 @@ const businessPaths = new Set<string>([
     .map((item) => item.path),
   ...legacyBusinessPathRedirects.map((item) => item.from),
   '/activate-account',
+  '/projects/new',
 ])
 
 /** Public auth paths that would create a redirect loop and are never valid return targets. */
@@ -38,6 +39,8 @@ const authPaths = new Set<string>([
 ])
 
 const MAX_RETURN_TO_LENGTH = 2048
+const projectDetailPath =
+  /^\/projects\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?:\/edit)?$/iu
 
 /**
  * Split `/path?query#hash` into its pathname part. Returns the leading `/path`
@@ -72,7 +75,7 @@ export function isSafeReturnTo(value: string): boolean {
   if (!pathname) return false
   if (pathname.includes(':')) return false
   if (authPaths.has(pathname)) return false
-  return businessPaths.has(pathname)
+  return businessPaths.has(pathname) || projectDetailPath.test(pathname)
 }
 
 /** Normalize a candidate returnTo to a safe value; unsafe input → '/'. */

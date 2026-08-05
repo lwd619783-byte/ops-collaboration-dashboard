@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -168,10 +168,7 @@ describe('确认对话框', () => {
     expect(opener).toHaveFocus()
 
     await user.click(opener)
-    fireEvent(
-      screen.getByRole('dialog'),
-      new Event('cancel', { cancelable: true }),
-    )
+    await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(opener).toHaveFocus()
   })

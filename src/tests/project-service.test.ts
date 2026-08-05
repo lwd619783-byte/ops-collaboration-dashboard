@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  addProjectMember,
   archiveProject,
+  clearProjectLead,
   createProject,
   getProject,
+  listProjectMemberCandidates,
+  listProjectMembers,
   listProjects,
+  removeProjectMember,
+  setProjectLead,
+  setProjectMemberRole,
+  transferProjectOwner,
   updateProject,
 } from '@/features/projects/projectService'
 import {
@@ -28,6 +36,18 @@ const projectRow = {
   created_at: '2026-08-04T01:00:00+00:00',
   updated_at: '2026-08-04T01:00:00+00:00',
   archived_at: null,
+}
+
+const projectMemberRow = {
+  project_id: projectRow.project_id,
+  workspace_id: FICTIONAL_WORKSPACE_ID,
+  app_user_id: projectRow.owner_id,
+  display_name: projectRow.owner_display_name,
+  workspace_role: 'owner' as const,
+  project_role: 'owner' as const,
+  joined_at: projectRow.created_at,
+  is_current_user: true,
+  is_active: true,
 }
 
 describe('项目 service', () => {
@@ -99,6 +119,169 @@ describe('项目 service', () => {
     expect(args).not.toHaveProperty('created_by')
     expect(args).not.toHaveProperty('owner_id')
     expect(args).not.toHaveProperty('archived_at')
+  })
+
+  it('成员和候选目录经过运行时角色与作用域校验', async () => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc
+      .mockResolvedValueOnce({ data: [projectMemberRow], error: null })
+      .mockResolvedValueOnce({
+        data: [
+          {
+            project_id: projectRow.project_id,
+            workspace_id: FICTIONAL_WORKSPACE_ID,
+            app_user_id: '22222222-2222-4222-8222-222222222222',
+            display_name: '虚构候选成员',
+            workspace_role: 'member',
+            existing_project_role: null,
+          },
+        ],
+        error: null,
+      })
+
+    const members = await listProjectMembers(
+      supabase.client,
+      projectRow.project_id,
+    )
+    const candidates = await listProjectMemberCandidates(
+      supabase.client,
+      projectRow.project_id,
+    )
+
+    expect(members).toEqual({ ok: true, data: [projectMemberRow] })
+    expect(candidates.ok).toBe(true)
+    expect(supabase.rpc).toHaveBeenNthCalledWith(1, 'list_project_members', {
+      p_project_id: projectRow.project_id,
+    })
+    expect(supabase.rpc).toHaveBeenNthCalledWith(
+      2,
+      'list_project_member_candidates',
+      { p_project_id: projectRow.project_id },
+    )
+  })
+
+  it('无效枚举或缺失作用域字段的 RPC 载荷安全失败，不进入 UI', async () => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc.mockResolvedValue({
+      data: [{ ...projectMemberRow, project_role: 'database_drift' }],
+      error: null,
+    })
+    const result = await listProjectMembers(
+      supabase.client,
+      projectRow.project_id,
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('unknown_service_error')
+  })
+
+  it('六类成员写操作只提交受控参数并验证 changed 项目快照', async () => {
+    const supabase = createSupabaseClientMock()
+    const mutationRow = { ...projectRow, changed: true }
+    supabase.rpc.mockResolvedValue({ data: [mutationRow], error: null })
+    const userId = '22222222-2222-4222-8222-222222222222'
+
+    const results = await Promise.all([
+      addProjectMember(supabase.client, {
+        projectId: projectRow.project_id,
+        userId,
+        role: 'member',
+      }),
+      setProjectMemberRole(supabase.client, {
+        projectId: projectRow.project_id,
+        userId,
+        role: 'viewer',
+      }),
+      removeProjectMember(supabase.client, {
+        projectId: projectRow.project_id,
+        userId,
+      }),
+      setProjectLead(supabase.client, {
+        projectId: projectRow.project_id,
+        userId,
+        expectedUpdatedAt: projectRow.updated_at,
+      }),
+      clearProjectLead(supabase.client, {
+        projectId: projectRow.project_id,
+        expectedUpdatedAt: projectRow.updated_at,
+      }),
+      transferProjectOwner(supabase.client, {
+        projectId: projectRow.project_id,
+        userId,
+        expectedUpdatedAt: projectRow.updated_at,
+      }),
+    ])
+
+    expect(results.every((result) => result.ok && result.data.changed)).toBe(
+      true,
+    )
+    expect(supabase.rpc.mock.calls).toEqual([
+      [
+        'add_project_member',
+        {
+          p_project_id: projectRow.project_id,
+          p_user_id: userId,
+          p_role: 'member',
+        },
+      ],
+      [
+        'set_project_member_role',
+        {
+          p_project_id: projectRow.project_id,
+          p_user_id: userId,
+          p_role: 'viewer',
+        },
+      ],
+      [
+        'remove_project_member',
+        { p_project_id: projectRow.project_id, p_user_id: userId },
+      ],
+      [
+        'set_project_lead',
+        {
+          p_project_id: projectRow.project_id,
+          p_user_id: userId,
+          p_expected_updated_at: projectRow.updated_at,
+        },
+      ],
+      [
+        'clear_project_lead',
+        {
+          p_project_id: projectRow.project_id,
+          p_expected_updated_at: projectRow.updated_at,
+        },
+      ],
+      [
+        'transfer_project_owner',
+        {
+          p_project_id: projectRow.project_id,
+          p_user_id: userId,
+          p_expected_updated_at: projectRow.updated_at,
+        },
+      ],
+    ])
+  })
+
+  it.each([
+    ['project_member_candidate_invalid', 'invalid_member_candidate'],
+    ['project_member_role_conflict', 'member_role_conflict'],
+    ['project_member_not_found', 'member_not_found'],
+    ['project_member_role_protected', 'protected_member_role'],
+    ['40001', 'concurrent_update'],
+  ] as const)('成员业务错误 %s 映射为 %s', async (code, expected) => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc.mockResolvedValue({
+      data: null,
+      error: { code, message: code },
+    })
+    const result = await removeProjectMember(supabase.client, {
+      projectId: projectRow.project_id,
+      userId: projectRow.owner_id,
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe(expected)
+    expect(result.error.message).not.toContain('public.')
   })
 
   it.each([

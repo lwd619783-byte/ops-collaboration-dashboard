@@ -11,6 +11,7 @@ export default tseslint.config(
       'coverage',
       'node_modules',
       'node_modules_ok',
+      '*.tmp',
       'supabase/.temp',
       'supabase/.branches',
     ],

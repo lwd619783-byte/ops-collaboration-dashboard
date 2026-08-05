@@ -94,6 +94,38 @@ function projectValue(
     create: vi.fn(async () => ({ ok: true as const, data: currentProject })),
     update: vi.fn(async () => ({ ok: true as const, data: currentProject })),
     archive: vi.fn(async () => ({ ok: true as const, data: archivedProject })),
+    listMembers: vi.fn(async () => ({
+      ok: true as const,
+      data: [],
+    })),
+    listMemberCandidates: vi.fn(async () => ({
+      ok: true as const,
+      data: [],
+    })),
+    addMember: vi.fn(async () => ({
+      ok: true as const,
+      data: { ...currentProject, changed: true },
+    })),
+    setMemberRole: vi.fn(async () => ({
+      ok: true as const,
+      data: { ...currentProject, changed: true },
+    })),
+    removeMember: vi.fn(async () => ({
+      ok: true as const,
+      data: { ...currentProject, changed: true },
+    })),
+    setLead: vi.fn(async () => ({
+      ok: true as const,
+      data: { ...currentProject, changed: true },
+    })),
+    clearLead: vi.fn(async () => ({
+      ok: true as const,
+      data: { ...currentProject, changed: true },
+    })),
+    transferOwner: vi.fn(async () => ({
+      ok: true as const,
+      data: { ...currentProject, changed: true },
+    })),
     ...overrides,
   }
 }

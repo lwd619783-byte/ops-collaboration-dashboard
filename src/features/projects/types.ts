@@ -24,6 +24,45 @@ export type Project = Omit<
   start_date: string | null
 }
 
+type GeneratedProjectMember =
+  Database['public']['Functions']['list_project_members']['Returns'][number]
+
+export type ProjectMember = GeneratedProjectMember
+
+type GeneratedProjectMemberCandidate =
+  Database['public']['Functions']['list_project_member_candidates']['Returns'][number]
+
+export type ProjectMemberCandidate = Omit<
+  GeneratedProjectMemberCandidate,
+  'existing_project_role'
+> & {
+  existing_project_role: ProjectRole | null
+}
+
+export type ProjectMutationResult = Project & {
+  changed: boolean
+}
+
+export type ProjectMemberRole = Extract<ProjectRole, 'member' | 'viewer'>
+
+export type ProjectMemberInput = {
+  projectId: string
+  userId: string
+}
+
+export type ProjectMemberRoleInput = ProjectMemberInput & {
+  role: ProjectMemberRole
+}
+
+export type ProjectLeadershipInput = ProjectMemberInput & {
+  expectedUpdatedAt: string
+}
+
+export type ProjectClearLeadInput = {
+  projectId: string
+  expectedUpdatedAt: string
+}
+
 export type ProjectCreateInput = {
   workspaceId: string
   name: string

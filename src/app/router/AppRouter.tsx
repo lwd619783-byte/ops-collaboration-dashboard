@@ -19,6 +19,7 @@ import { NotFoundPage } from '@/pages/NotFoundPage'
 import { PlaceholderPage } from '@/pages/PlaceholderPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { ProjectDetailPage } from '@/pages/ProjectDetailPage'
+import { ProjectMembersPage } from '@/pages/ProjectMembersPage'
 import { ProjectsPage } from '@/pages/ProjectsPage'
 import { SystemHealthPage } from '@/pages/SystemHealthPage'
 import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage'
@@ -98,6 +99,10 @@ export function AppRouter({ resolveClient }: AppRouterProps) {
                   <Route
                     path="/projects/:projectId/edit"
                     element={<EditProjectPage />}
+                  />
+                  <Route
+                    path="/projects/:projectId/members"
+                    element={<ProjectMembersPage />}
                   />
                   <Route path="/members" element={<MembersPage />} />
                   <Route path="/settings" element={<ProfilePage />} />

@@ -9,6 +9,10 @@ export type ProjectErrorCode =
   | 'concurrent_update'
   | 'duplicate_submission'
   | 'project_archived'
+  | 'invalid_member_candidate'
+  | 'member_role_conflict'
+  | 'member_not_found'
+  | 'protected_member_role'
   | 'unknown_service_error'
 
 export type SafeProjectError = {
@@ -27,6 +31,10 @@ const messages: Record<ProjectErrorCode, string> = {
   concurrent_update: '项目已被其他人修改，请刷新后重试。',
   duplicate_submission: '本次提交与先前请求冲突，请检查后重新提交。',
   project_archived: '已归档项目不能继续编辑。',
+  invalid_member_candidate: '只能选择当前工作空间内已启用的用户。',
+  member_role_conflict: '该成员已有受保护或冲突的项目角色。',
+  member_not_found: '该项目成员不存在或已被移除。',
+  protected_member_role: '负责人和牵头人须通过专用操作调整。',
   unknown_service_error: '项目操作暂时无法完成，请稍后重试。',
 }
 
@@ -99,11 +107,21 @@ function mapKnownCode(signal: string | null): ProjectErrorCode | null {
     case 'project_archive_requires_completed':
       return 'invalid_transition'
     case 'project_concurrent_update':
+    case '40001':
       return 'concurrent_update'
     case 'project_idempotency_conflict':
       return 'duplicate_submission'
     case 'project_archived':
       return 'project_archived'
+    case 'project_member_candidate_invalid':
+      return 'invalid_member_candidate'
+    case 'project_member_role_conflict':
+    case 'project_owner_lead_conflict':
+      return 'member_role_conflict'
+    case 'project_member_not_found':
+      return 'member_not_found'
+    case 'project_member_role_protected':
+      return 'protected_member_role'
     default:
       return null
   }

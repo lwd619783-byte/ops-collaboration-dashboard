@@ -285,8 +285,8 @@ select ok(
 );
 select is(pg_temp.project_owner_invariant_state(), '23514', 'a project must retain its owner membership');
 select is(pg_temp.sqlstate_of($sql$ delete from public.projects where id = '63000000-0000-4000-8000-000000000002' $sql$), '27000', 'project physical deletion is rejected');
-select is(pg_temp.sqlstate_of($sql$ update public.project_members set role = 'lead' where project_id = '63000000-0000-4000-8000-000000000002' and user_id = '61000000-0000-4000-8000-000000000001' $sql$), '27000', 'project member updates are closed in Task 2.1');
-select is(pg_temp.sqlstate_of($sql$ delete from public.project_members where project_id = '63000000-0000-4000-8000-000000000002' and user_id = '61000000-0000-4000-8000-000000000001' $sql$), '27000', 'project member deletes are closed in Task 2.1');
+select is(pg_temp.sqlstate_of($sql$ update public.project_members set role = 'lead' where project_id = '63000000-0000-4000-8000-000000000002' and user_id = '61000000-0000-4000-8000-000000000001'; set constraints projects_owner_membership_required immediate $sql$), '23514', 'owner role cannot drift from projects.owner_id');
+select is(pg_temp.sqlstate_of($sql$ delete from public.project_members where project_id = '63000000-0000-4000-8000-000000000002' and user_id = '61000000-0000-4000-8000-000000000001'; set constraints projects_owner_membership_required immediate $sql$), '23514', 'owner membership remains required after Task 2.2 guard evolution');
 
 select * from finish();
 rollback;

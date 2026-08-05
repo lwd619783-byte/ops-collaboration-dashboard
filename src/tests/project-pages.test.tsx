@@ -1740,3 +1740,599 @@ describe('创建页创建写作用域竞态', () => {
     expect(screen.getByLabelText(/项目名称/)).toHaveValue('')
   })
 })
+
+describe('项目详情归档作用域 ABA 失效', () => {
+  it('归档成功在 A→B→A 后仍被丢弃，不写回旧归档且不显示反馈', async () => {
+    const deferredDetailOld = createDeferred<DetailServiceResult>()
+    const deferredDetailNew = createDeferred<DetailServiceResult>()
+    const deferredDetailBack = createDeferred<DetailServiceResult>()
+    let detailCalls = 0
+    const get = vi.fn(async () => {
+      detailCalls += 1
+      if (detailCalls === 1) return deferredDetailOld.promise
+      if (detailCalls === 2) return deferredDetailNew.promise
+      return deferredDetailBack.promise
+    })
+    const deferredArchive = createDeferred<MutationServiceResult>()
+    const archive = vi.fn(() => deferredArchive.promise)
+
+    const ownerWs = workspaceValue('owner')
+    const wsRef = { current: ownerWs }
+    const Wrapper = ({ children }: { children: React.ReactNode }) => (
+      <MemoryRouter initialEntries={[`/projects/${SECOND_PROJECT_ID}`]}>
+        <WorkspaceContext.Provider value={wsRef.current}>
+          <ProjectContext.Provider value={projectValue({ get, archive })}>
+            {children}
+          </ProjectContext.Provider>
+        </WorkspaceContext.Provider>
+      </MemoryRouter>
+    )
+
+    const { rerender } = render(
+      <Wrapper>
+        <ProjectDetailPage />
+      </Wrapper>,
+    )
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      deferredDetailOld.resolve({ ok: true, data: completedProject })
+    })
+    expect(await screen.findByText(completedProject.name)).toBeInTheDocument()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '归档项目' }))
+    const dialog = screen.getByRole('dialog', { name: '归档项目' })
+    await user.click(within(dialog).getByRole('button', { name: '确认归档' }))
+    expect(archive).toHaveBeenCalledTimes(1)
+
+    // A -> B: dialog/loading already reset by the scope transition.
+    const newWs = otherWorkspace()
+    await act(async () => {
+      wsRef.current = newWs
+      rerender(
+        <Wrapper>
+          <ProjectDetailPage />
+        </Wrapper>,
+      )
+    })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    const projectB: Project = {
+      ...currentProject,
+      workspace_id: SECOND_WORKSPACE_ID,
+      name: '当前工作空间项目',
+    }
+    await act(async () => {
+      deferredDetailNew.resolve({ ok: true, data: projectB })
+    })
+    expect(await screen.findByText(projectB.name)).toBeInTheDocument()
+
+    // B -> A: reload the original project under workspace A.
+    await act(async () => {
+      wsRef.current = ownerWs
+      rerender(
+        <Wrapper>
+          <ProjectDetailPage />
+        </Wrapper>,
+      )
+    })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(3))
+    await act(async () => {
+      deferredDetailBack.resolve({ ok: true, data: completedProject })
+    })
+    expect(await screen.findByText(completedProject.name)).toBeInTheDocument()
+
+    // The stale archive success for the original A scope returns. Its entity
+    // still matches A, so only the action-epoch guard (bumped on both
+    // transitions) discards it.
+    await act(async () => {
+      deferredArchive.resolve({
+        ok: true,
+        data: { ...archivedProject, project_id: SECOND_PROJECT_ID },
+      })
+    })
+    // No navigation, no stale feedback, no reopened dialog, A unchanged.
+    expect(screen.getByText(completedProject.name)).toBeInTheDocument()
+    expect(screen.queryByText(/项目已归档/)).toBeNull()
+    expect(screen.queryByRole('dialog', { name: '归档项目' })).toBeNull()
+    expect(screen.getByRole('button', { name: '归档项目' })).toBeInTheDocument()
+  })
+
+  it('归档失败在 A→B→A 后仍被丢弃，不显示旧错误', async () => {
+    const deferredDetailOld = createDeferred<DetailServiceResult>()
+    const deferredDetailNew = createDeferred<DetailServiceResult>()
+    const deferredDetailBack = createDeferred<DetailServiceResult>()
+    let detailCalls = 0
+    const get = vi.fn(async () => {
+      detailCalls += 1
+      if (detailCalls === 1) return deferredDetailOld.promise
+      if (detailCalls === 2) return deferredDetailNew.promise
+      return deferredDetailBack.promise
+    })
+    const deferredArchive = createDeferred<MutationServiceResult>()
+    const archive = vi.fn(() => deferredArchive.promise)
+
+    const ownerWs = workspaceValue('owner')
+    const wsRef = { current: ownerWs }
+    const Wrapper = ({ children }: { children: React.ReactNode }) => (
+      <MemoryRouter initialEntries={[`/projects/${SECOND_PROJECT_ID}`]}>
+        <WorkspaceContext.Provider value={wsRef.current}>
+          <ProjectContext.Provider value={projectValue({ get, archive })}>
+            {children}
+          </ProjectContext.Provider>
+        </WorkspaceContext.Provider>
+      </MemoryRouter>
+    )
+
+    const { rerender } = render(
+      <Wrapper>
+        <ProjectDetailPage />
+      </Wrapper>,
+    )
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      deferredDetailOld.resolve({ ok: true, data: completedProject })
+    })
+    expect(await screen.findByText(completedProject.name)).toBeInTheDocument()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '归档项目' }))
+    await user.click(screen.getByRole('button', { name: '确认归档' }))
+    expect(archive).toHaveBeenCalledTimes(1)
+
+    const newWs = otherWorkspace()
+    await act(async () => {
+      wsRef.current = newWs
+      rerender(
+        <Wrapper>
+          <ProjectDetailPage />
+        </Wrapper>,
+      )
+    })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      deferredDetailNew.resolve({ ok: true, data: { ...currentProject } })
+    })
+    await act(async () => {
+      wsRef.current = ownerWs
+      rerender(
+        <Wrapper>
+          <ProjectDetailPage />
+        </Wrapper>,
+      )
+    })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(3))
+    await act(async () => {
+      deferredDetailBack.resolve({ ok: true, data: completedProject })
+    })
+    expect(await screen.findByText(completedProject.name)).toBeInTheDocument()
+
+    // Stale archive failure for workspace A returns; epoch guard discards it.
+    await act(async () => {
+      deferredArchive.resolve({
+        ok: false,
+        error: { code: 'concurrent_update', message: '旧归档失败' },
+      })
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText(completedProject.name)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '归档项目' })).toBeInTheDocument()
+  })
+})
+
+describe('编辑页保存作用域 ABA 失效', () => {
+  it('保存成功在 A→B→A 后仍被丢弃，不导航且不修改当前表单', async () => {
+    const deferredDetailA = createDeferred<DetailServiceResult>()
+    const deferredDetailB = createDeferred<DetailServiceResult>()
+    const deferredDetailABack = createDeferred<DetailServiceResult>()
+    let detailCalls = 0
+    const get = vi.fn(async () => {
+      detailCalls += 1
+      if (detailCalls === 1) return deferredDetailA.promise
+      if (detailCalls === 2) return deferredDetailB.promise
+      return deferredDetailABack.promise
+    })
+    const deferredUpdate = createDeferred<MutationServiceResult>()
+    const update = vi.fn(() => deferredUpdate.promise)
+
+    const NavBridge = ({ children }: { children: React.ReactNode }) => {
+      return <>{children}</>
+    }
+
+    const ownerWs = workspaceValue('owner')
+    const wsRef = { current: ownerWs }
+    const Wrapper = () => (
+      <MemoryRouter initialEntries={[`/projects/${PROJECT_ID}/edit`]}>
+        <WorkspaceContext.Provider value={wsRef.current}>
+          <ProjectContext.Provider value={projectValue({ get, update })}>
+            <NavBridge>
+              <Routes>
+                <Route
+                  path="/projects/:projectId/edit"
+                  element={<EditProjectPage />}
+                />
+                <Route
+                  path="/projects/:projectId"
+                  element={<p>已进入项目详情</p>}
+                />
+              </Routes>
+            </NavBridge>
+          </ProjectContext.Provider>
+        </WorkspaceContext.Provider>
+      </MemoryRouter>
+    )
+
+    const { rerender } = render(<Wrapper />)
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      deferredDetailA.resolve({ ok: true, data: currentProject })
+    })
+    expect(await screen.findByLabelText(/项目名称/)).toHaveValue(
+      currentProject.name,
+    )
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '保存修改' }))
+    expect(update).toHaveBeenCalledTimes(1)
+
+    // A -> B (workspace B, same project id). The loaded project belongs to A, so
+    // the B scope shows the safe error state rather than the form.
+    await act(async () => {
+      wsRef.current = otherWorkspace()
+      rerender(<Wrapper />)
+    })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      deferredDetailB.resolve({ ok: true, data: currentProject })
+    })
+    expect(
+      await screen.findByRole('heading', { name: '无法编辑项目' }),
+    ).toBeInTheDocument()
+
+    // B -> A: reload the form under workspace A.
+    await act(async () => {
+      wsRef.current = ownerWs
+      rerender(<Wrapper />)
+    })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(3))
+    await act(async () => {
+      deferredDetailABack.resolve({ ok: true, data: currentProject })
+    })
+    expect(await screen.findByLabelText(/项目名称/)).toHaveValue(
+      currentProject.name,
+    )
+
+    // Stale update success for A returns; epoch guard (two bumps) discards it.
+    await act(async () => {
+      deferredUpdate.resolve({ ok: true, data: currentProject })
+    })
+    expect(screen.queryByText('已进入项目详情')).toBeNull()
+    expect(screen.getByLabelText(/项目名称/)).toHaveValue(currentProject.name)
+  })
+
+  it('保存失败在 A→B→A 后仍被丢弃，不显示旧错误', async () => {
+    const deferredDetailA = createDeferred<DetailServiceResult>()
+    const deferredDetailB = createDeferred<DetailServiceResult>()
+    const deferredDetailABack = createDeferred<DetailServiceResult>()
+    let detailCalls = 0
+    const get = vi.fn(async () => {
+      detailCalls += 1
+      if (detailCalls === 1) return deferredDetailA.promise
+      if (detailCalls === 2) return deferredDetailB.promise
+      return deferredDetailABack.promise
+    })
+    const deferredUpdate = createDeferred<MutationServiceResult>()
+    const update = vi.fn(() => deferredUpdate.promise)
+
+    const ownerWs = workspaceValue('owner')
+    const wsRef = { current: ownerWs }
+    const Wrapper = () => (
+      <MemoryRouter initialEntries={[`/projects/${PROJECT_ID}/edit`]}>
+        <WorkspaceContext.Provider value={wsRef.current}>
+          <ProjectContext.Provider value={projectValue({ get, update })}>
+            <Routes>
+              <Route
+                path="/projects/:projectId/edit"
+                element={<EditProjectPage />}
+              />
+              <Route
+                path="/projects/:projectId"
+                element={<p>已进入项目详情</p>}
+              />
+            </Routes>
+          </ProjectContext.Provider>
+        </WorkspaceContext.Provider>
+      </MemoryRouter>
+    )
+
+    const { rerender } = render(<Wrapper />)
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      deferredDetailA.resolve({ ok: true, data: currentProject })
+    })
+    expect(await screen.findByLabelText(/项目名称/)).toHaveValue(
+      currentProject.name,
+    )
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '保存修改' }))
+    expect(update).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      wsRef.current = otherWorkspace()
+      rerender(<Wrapper />)
+    })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      deferredDetailB.resolve({ ok: true, data: currentProject })
+    })
+    await act(async () => {
+      wsRef.current = ownerWs
+      rerender(<Wrapper />)
+    })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(3))
+    await act(async () => {
+      deferredDetailABack.resolve({ ok: true, data: currentProject })
+    })
+    expect(await screen.findByLabelText(/项目名称/)).toHaveValue(
+      currentProject.name,
+    )
+
+    // Stale update failure for A returns; epoch guard discards it.
+    await act(async () => {
+      deferredUpdate.resolve({
+        ok: false,
+        error: { code: 'unknown_service_error', message: '旧保存失败' },
+      })
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByLabelText(/项目名称/)).toHaveValue(currentProject.name)
+  })
+})
+
+describe('创建页创建作用域 ABA 失效', () => {
+  function CreateWrapper({
+    wsRef,
+    projects,
+    children,
+  }: {
+    wsRef: { current: WorkspaceContextValue }
+    projects?: ProjectContextValue
+    children: React.ReactNode
+  }) {
+    return (
+      <MemoryRouter initialEntries={['/projects/new']}>
+        <WorkspaceContext.Provider value={wsRef.current}>
+          <ProjectContext.Provider value={projects ?? projectValue()}>
+            {children}
+          </ProjectContext.Provider>
+        </WorkspaceContext.Provider>
+      </MemoryRouter>
+    )
+  }
+
+  function CreateRoutes() {
+    return (
+      <Routes>
+        <Route path="/projects/new" element={<NewProjectPage />} />
+        <Route path="/projects/:projectId" element={<p>已进入项目详情</p>} />
+      </Routes>
+    )
+  }
+
+  it('创建成功在 workspace A→B→A 后仍被丢弃，不导航', async () => {
+    const deferredCreate = createDeferred<MutationServiceResult>()
+    const create = vi.fn(() => deferredCreate.promise)
+
+    const projects = projectValue({ create })
+    const ownerWs = workspaceValue('owner')
+    const wsRef = { current: ownerWs }
+    const { rerender } = render(
+      <CreateWrapper wsRef={wsRef} projects={projects}>
+        <CreateRoutes />
+      </CreateWrapper>,
+    )
+
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText(/项目名称/), '工作空间A项目')
+    await user.click(screen.getByRole('button', { name: '创建项目' }))
+    expect(create).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      wsRef.current = otherWorkspace()
+      rerender(
+        <CreateWrapper wsRef={wsRef} projects={projects}>
+          <CreateRoutes />
+        </CreateWrapper>,
+      )
+    })
+    expect(screen.getByLabelText(/项目名称/)).toHaveValue('')
+
+    await act(async () => {
+      wsRef.current = ownerWs
+      rerender(
+        <CreateWrapper wsRef={wsRef} projects={projects}>
+          <CreateRoutes />
+        </CreateWrapper>,
+      )
+    })
+    expect(screen.getByLabelText(/项目名称/)).toHaveValue('')
+
+    // Stale create success for A returns; epoch guard (two bumps) discards it.
+    await act(async () => {
+      deferredCreate.resolve({
+        ok: true,
+        data: { ...currentProject, workspace_id: FICTIONAL_WORKSPACE_ID },
+      })
+    })
+    expect(screen.queryByText('已进入项目详情')).toBeNull()
+    expect(screen.getByLabelText(/项目名称/)).toHaveValue('')
+  })
+
+  it('创建成功在 owner→member→owner 后仍被丢弃，不恢复旧 owner 创建', async () => {
+    const deferredCreate = createDeferred<MutationServiceResult>()
+    const create = vi.fn(() => deferredCreate.promise)
+
+    const projects = projectValue({ create })
+    const ownerWs = workspaceValue('owner')
+    const wsRef = { current: ownerWs }
+    const { rerender } = render(
+      <CreateWrapper wsRef={wsRef} projects={projects}>
+        <CreateRoutes />
+      </CreateWrapper>,
+    )
+
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText(/项目名称/), 'owner项目')
+    await user.click(screen.getByRole('button', { name: '创建项目' }))
+    expect(create).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      wsRef.current = memberWorkspace()
+      rerender(
+        <CreateWrapper wsRef={wsRef} projects={projects}>
+          <CreateRoutes />
+        </CreateWrapper>,
+      )
+    })
+    expect(
+      await screen.findByRole('heading', { name: '暂无访问权限' }),
+    ).toBeInTheDocument()
+
+    await act(async () => {
+      wsRef.current = ownerWs
+      rerender(
+        <CreateWrapper wsRef={wsRef} projects={projects}>
+          <CreateRoutes />
+        </CreateWrapper>,
+      )
+    })
+    expect(screen.getByLabelText(/项目名称/)).toHaveValue('')
+
+    // Stale owner create success returns; epoch guard (two bumps) discards it.
+    await act(async () => {
+      deferredCreate.resolve({
+        ok: true,
+        data: { ...currentProject, workspace_id: FICTIONAL_WORKSPACE_ID },
+      })
+    })
+    expect(screen.queryByText('已进入项目详情')).toBeNull()
+    expect(screen.getByLabelText(/项目名称/)).toHaveValue('')
+  })
+})
+
+describe('响应实体不匹配安全结束 loading', () => {
+  it('归档成功返回错误 project_id/workspace_id 时安全失败且不写项目', async () => {
+    const user = userEvent.setup()
+    const archive = vi.fn(async () => ({
+      ok: true as const,
+      data: {
+        ...archivedProject,
+        project_id: 'dddddddd-0000-4000-8000-0000000000dd',
+        workspace_id: 'eeeeeeee-0000-4000-8000-0000000000ee',
+      },
+    }))
+    renderWithContexts(
+      `/projects/${SECOND_PROJECT_ID}`,
+      <Routes>
+        <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+      </Routes>,
+      'owner',
+      projectValue({
+        get: vi.fn(async () => ({
+          ok: true as const,
+          data: completedProject,
+        })),
+        archive,
+      }),
+    )
+    await user.click(await screen.findByRole('button', { name: '归档项目' }))
+    const dialog = screen.getByRole('dialog', { name: '归档项目' })
+    await user.click(within(dialog).getByRole('button', { name: '确认归档' }))
+    // Loading ends, unified safe error shows, dialog stays open, project not
+    // written, no raw data leaked.
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '项目操作暂时无法完成，请稍后重试。',
+    )
+    expect(screen.getByRole('button', { name: '确认归档' })).toBeEnabled()
+    expect(screen.queryByText(/项目已归档/)).toBeNull()
+    expect(screen.getByText(completedProject.name)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '归档项目' })).toBeInTheDocument()
+  })
+
+  it('编辑保存成功返回错误 project_id/workspace_id 时安全失败且保留输入', async () => {
+    const user = userEvent.setup()
+    const update = vi.fn(async () => ({
+      ok: true as const,
+      data: {
+        ...currentProject,
+        project_id: 'dddddddd-0000-4000-8000-0000000000dd',
+        workspace_id: 'eeeeeeee-0000-4000-8000-0000000000ee',
+      },
+    }))
+    renderWithContexts(
+      `/projects/${PROJECT_ID}/edit`,
+      <Routes>
+        <Route path="/projects/:projectId/edit" element={<EditProjectPage />} />
+      </Routes>,
+      'admin',
+      projectValue({
+        get: vi.fn(async () => ({
+          ok: true as const,
+          data: currentProject,
+        })),
+        update,
+      }),
+    )
+    const nameInput = await screen.findByLabelText(/项目名称/)
+    await user.clear(nameInput)
+    await user.type(nameInput, '修改后的名称')
+    await user.click(screen.getByRole('button', { name: '保存修改' }))
+    // Loading ends, unified safe error shows, no navigation, input preserved.
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '项目操作暂时无法完成，请稍后重试。',
+    )
+    expect(screen.getByRole('button', { name: '保存修改' })).toBeEnabled()
+    expect(screen.queryByText('已进入项目详情')).toBeNull()
+    expect(screen.getByLabelText(/项目名称/)).toHaveValue('修改后的名称')
+  })
+
+  it('创建成功返回错误 workspace_id 时安全失败且保留表单与幂等键', async () => {
+    const user = userEvent.setup()
+    const create = vi.fn(async (_input: ProjectCreateInput) => ({
+      ok: true as const,
+      data: {
+        ...currentProject,
+        workspace_id: 'eeeeeeee-0000-4000-8000-0000000000ee',
+      },
+    }))
+    const idem = vi
+      .spyOn(globalThis.crypto, 'randomUUID')
+      .mockReturnValue('bbbbbbbb-1111-4111-8111-111111111111')
+    renderWithContexts(
+      '/projects/new',
+      <Routes>
+        <Route path="/projects/new" element={<NewProjectPage />} />
+        <Route path="/projects/:projectId" element={<p>已进入项目详情</p>} />
+      </Routes>,
+      'owner',
+      projectValue({ create }),
+    )
+    const nameInput = screen.getByLabelText(/项目名称/)
+    await user.type(nameInput, '待创建项目')
+    await user.click(screen.getByRole('button', { name: '创建项目' }))
+    // Loading ends, unified safe error shows, no navigation, input preserved.
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '项目操作暂时无法完成，请稍后重试。',
+    )
+    expect(screen.getByRole('button', { name: '创建项目' })).toBeEnabled()
+    expect(screen.queryByText('已进入项目详情')).toBeNull()
+    expect(screen.getByLabelText(/项目名称/)).toHaveValue('待创建项目')
+    // The current scope's idempotency key is preserved across the retry.
+    await user.click(screen.getByRole('button', { name: '创建项目' }))
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2))
+    expect(create.mock.calls[1][0].idempotencyKey).toBe(
+      create.mock.calls[0][0].idempotencyKey,
+    )
+    idem.mockRestore()
+  })
+})

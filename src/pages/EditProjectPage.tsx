@@ -16,6 +16,7 @@ import {
   type Project,
   type ProjectFormValues,
 } from '@/features/projects'
+import { createSafeProjectError } from '@/features/projects/errors'
 import { useWorkspace } from '@/features/workspaces'
 
 export function EditProjectPage() {
@@ -56,8 +57,18 @@ export function EditProjectPage() {
       }`
     : null
   const scopeKeyRef = useRef(scopeKey)
+  // A scope transition (workspace / project / management capability) must also
+  // invalidate any in-flight save. An A -> B -> A cycle leaves the string scope
+  // identical to the one that launched the original save, so the stale response
+  // would otherwise pass the scope guard and be applied. Bumping the action
+  // epoch on every transition makes the original epoch stale regardless of how
+  // the scope string evolves. `requestEpochRef` (loads) and `actionEpochRef`
+  // (mutations) stay independent.
   useLayoutEffect(() => {
-    scopeKeyRef.current = scopeKey
+    if (scopeKeyRef.current !== scopeKey) {
+      actionEpochRef.current += 1
+      scopeKeyRef.current = scopeKey
+    }
   }, [scopeKey])
 
   // A scope change (workspace, project, or management capability) must reset
@@ -188,9 +199,17 @@ export function EditProjectPage() {
       return
     }
     // Only navigate when the response belongs to the exact project/workspace
-    // that initiated the save.
-    if (result.data.project_id !== actionProjectId) return
-    if (result.data.workspace_id !== actionWorkspaceId) return
+    // that initiated the save. A mismatched entity is a safe-failure: end the
+    // submitting state and surface a unified message, keeping the user's input
+    // and never navigating to a project we did not edit.
+    if (
+      result.data.project_id !== actionProjectId ||
+      result.data.workspace_id !== actionWorkspaceId
+    ) {
+      setSubmitting(false)
+      setServiceError(createSafeProjectError('unknown_service_error').message)
+      return
+    }
     navigate(`/projects/${result.data.project_id}`, { replace: true })
   }
 

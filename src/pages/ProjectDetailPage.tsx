@@ -14,6 +14,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { ProjectStatusBadge } from '@/features/projects/ProjectStatusBadge'
 import { projectTypeLabels } from '@/features/projects/projectMeta'
 import { useProjects, type Project } from '@/features/projects'
+import { createSafeProjectError } from '@/features/projects/errors'
 import { useWorkspace } from '@/features/workspaces'
 
 export function ProjectDetailPage() {
@@ -51,8 +52,19 @@ export function ProjectDetailPage() {
     ? `${currentWorkspace.workspace_id}:${currentWorkspace.role}:${projectId}`
     : null
   const scopeKeyRef = useRef(scopeKey)
+  // A scope transition (workspace / role / project) must also invalidate any
+  // in-flight mutation. Without this, an A -> B -> A cycle leaves the string
+  // scope identical to the one that launched the original request, so the stale
+  // response would pass the `actionScopeKey === scopeKeyRef.current` check and
+  // be applied. Bumping the monotonically increasing action epoch on every
+  // transition makes the original epoch stale regardless of how the scope
+  // string evolves. Reading `requestEpochRef` (loads) and writing
+  // `actionEpochRef` (mutations) remain independent.
   useLayoutEffect(() => {
-    scopeKeyRef.current = scopeKey
+    if (scopeKeyRef.current !== scopeKey) {
+      actionEpochRef.current += 1
+      scopeKeyRef.current = scopeKey
+    }
   }, [scopeKey])
 
   // A scope change (workspace, role, or project) must reset the archive UI so
@@ -131,9 +143,18 @@ export function ProjectDetailPage() {
       return
     }
     // The server may have succeeded; only apply it when the response belongs to
-    // the exact project and workspace that initiated the request.
-    if (result.data.project_id !== actionProjectId) return
-    if (result.data.workspace_id !== actionWorkspaceId) return
+    // the exact project and workspace that initiated the request. A mismatched
+    // entity is a safe-failure: close the loading state and surface a unified
+    // message instead of leaving the dialog stuck on "正在归档" or writing a
+    // wrong project onto the screen.
+    if (
+      result.data.project_id !== actionProjectId ||
+      result.data.workspace_id !== actionWorkspaceId
+    ) {
+      setArchiving(false)
+      setArchiveError(createSafeProjectError('unknown_service_error').message)
+      return
+    }
     setProject(result.data)
     setArchiveOpen(false)
     setArchiving(false)

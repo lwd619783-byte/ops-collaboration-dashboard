@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { UnauthorizedState } from '@/components/feedback/UnauthorizedState'
 import { ProjectForm } from '@/features/projects/ProjectForm'
+import { createSafeProjectError } from '@/features/projects/errors'
 import { useProjects, type ProjectFormValues } from '@/features/projects'
 import { useWorkspace } from '@/features/workspaces'
 
@@ -44,8 +45,18 @@ export function NewProjectPage() {
     ? `${currentWorkspace.workspace_id}:${canManage ? 'manage' : 'readonly'}`
     : null
   const scopeKeyRef = useRef(scopeKey)
+  // A scope transition (workspace / management capability) must also invalidate
+  // any in-flight create. A workspace A -> B -> A cycle leaves the string scope
+  // identical to the one that launched the original create, so the stale
+  // response would otherwise pass the scope guard and navigate to the old
+  // project. Bumping the action epoch on every transition makes the original
+  // epoch stale regardless of how the scope string evolves. `requestEpochRef`
+  // (loads) and `actionEpochRef` (mutations) stay independent.
   useLayoutEffect(() => {
-    scopeKeyRef.current = scopeKey
+    if (scopeKeyRef.current !== scopeKey) {
+      actionEpochRef.current += 1
+      scopeKeyRef.current = scopeKey
+    }
   }, [scopeKey])
 
   // A scope change (workspace or management capability) must reset the form UI
@@ -109,8 +120,14 @@ export function NewProjectPage() {
       return
     }
     // Only navigate when the created project belongs to the workspace that
-    // initiated the request.
-    if (result.data.workspace_id !== actionWorkspaceId) return
+    // initiated the request. A mismatched workspace is a safe-failure: end the
+    // submitting state, surface a unified message, and keep the current scope's
+    // idempotency key and form so the user can retry.
+    if (result.data.workspace_id !== actionWorkspaceId) {
+      setSubmitting(false)
+      setServiceError(createSafeProjectError('unknown_service_error').message)
+      return
+    }
     navigate(`/projects/${result.data.project_id}`, { replace: true })
   }
 

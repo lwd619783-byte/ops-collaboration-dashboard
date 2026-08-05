@@ -32,6 +32,7 @@ export function EditProjectPage() {
   const [isSubmitting, setSubmitting] = useState(false)
   const [serviceError, setServiceError] = useState<string | null>(null)
   const requestEpochRef = useRef(0)
+  const actionEpochRef = useRef(0)
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -39,6 +40,7 @@ export function EditProjectPage() {
     return () => {
       mountedRef.current = false
       requestEpochRef.current += 1
+      actionEpochRef.current += 1
     }
   }, [])
 
@@ -57,6 +59,20 @@ export function EditProjectPage() {
   useLayoutEffect(() => {
     scopeKeyRef.current = scopeKey
   }, [scopeKey])
+
+  // A scope change (workspace, project, or management capability) must reset
+  // the submit UI so a stale failure can never paint into the new form and
+  // isSubmitting can never permanently disable it. We reset during render (the
+  // documented "reset when a key changes" pattern): the committed scope key is a
+  // state, so comparing it to the current scope key is a pure render-time check
+  // with no ref access and no effect body. Stale responses are discarded by the
+  // submit handler's scope/epoch guard instead.
+  const [committedScopeKey, setCommittedScopeKey] = useState(scopeKey)
+  if (committedScopeKey !== scopeKey) {
+    setCommittedScopeKey(scopeKey)
+    setSubmitting(false)
+    setServiceError(null)
+  }
 
   const loadProject = useCallback(async () => {
     if (!currentWorkspace || !canManage) return
@@ -143,10 +159,16 @@ export function EditProjectPage() {
 
   const submit = async (values: ProjectFormValues) => {
     if (isSubmitting) return
+    // Capture the submitting context so a later response can only be applied if
+    // the scope is still identical and the action epoch is still current.
+    const actionScopeKey = scopeKeyRef.current
+    const actionProjectId = project.project_id
+    const actionWorkspaceId = currentWorkspace?.workspace_id
+    const actionEpoch = ++actionEpochRef.current
     setSubmitting(true)
     setServiceError(null)
     const result = await projects.update({
-      projectId: project.project_id,
+      projectId: actionProjectId,
       name: values.name,
       description: values.description,
       status: values.status,
@@ -154,12 +176,22 @@ export function EditProjectPage() {
       dueDate: values.dueDate || null,
       expectedUpdatedAt: project.updated_at,
     })
+    if (!mountedRef.current) return
+    if (actionEpochRef.current !== actionEpoch) return
+    if (actionScopeKey !== scopeKeyRef.current) return
+    const stillCanManage =
+      currentWorkspace?.role === 'owner' || currentWorkspace?.role === 'admin'
+    if (!stillCanManage) return
     if (!result.ok) {
       setServiceError(result.error.message)
       setSubmitting(false)
       return
     }
-    navigate(`/projects/${project.project_id}`, { replace: true })
+    // Only navigate when the response belongs to the exact project/workspace
+    // that initiated the save.
+    if (result.data.project_id !== actionProjectId) return
+    if (result.data.workspace_id !== actionWorkspaceId) return
+    navigate(`/projects/${result.data.project_id}`, { replace: true })
   }
 
   return (

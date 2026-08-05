@@ -50,12 +50,16 @@ export function ProjectsPage() {
   const requestEpochRef = useRef(0)
   const mountedRef = useRef(true)
 
-  // Stable request-scope key. Ready data is only ever shown when the key that
-  // produced it still equals the key for the current render, so switching the
-  // workspace or the archived/current view can never keep stale projects on
-  // screen while the next request is still in flight.
+  // Stable request-scope key. The workspace role is part of the scope because
+  // the visible project set depends on it: an owner/admin demoted to member (or
+  // a member promoted to admin) changes the key, so the previously loaded list
+  // is discarded immediately (before the next request starts or finishes) and
+  // re-read under the new authorization. Ready data is only ever shown when the
+  // key that produced it still equals the key for the current render.
   const scopeKey = currentWorkspace
-    ? `${currentWorkspace.workspace_id}:${archivedOnly ? 'archived' : 'current'}`
+    ? `${currentWorkspace.workspace_id}:${currentWorkspace.role}:${
+        archivedOnly ? 'archived' : 'current'
+      }`
     : null
   const scopeKeyRef = useRef(scopeKey)
   useLayoutEffect(() => {

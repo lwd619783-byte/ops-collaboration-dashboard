@@ -31,6 +31,7 @@ export function ProjectDetailPage() {
   const [archiveError, setArchiveError] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
   const requestEpochRef = useRef(0)
+  const actionEpochRef = useRef(0)
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -38,19 +39,36 @@ export function ProjectDetailPage() {
     return () => {
       mountedRef.current = false
       requestEpochRef.current += 1
+      actionEpochRef.current += 1
     }
   }, [])
 
-  // Stable request-scope key: workspace + project id. Switching the route
-  // parameter (project A -> project B) or the workspace must discard the old
-  // detail before the next request resolves.
+  // Stable request-scope key: workspace + role + project id. The role is part
+  // of the scope so a permission change (owner/admin -> member, or the reverse)
+  // discards the previously read detail and re-verifies under the new context
+  // instead of briefly keeping an owner/admin-authorised view on screen.
   const scopeKey = currentWorkspace
-    ? `${currentWorkspace.workspace_id}:${projectId}`
+    ? `${currentWorkspace.workspace_id}:${currentWorkspace.role}:${projectId}`
     : null
   const scopeKeyRef = useRef(scopeKey)
   useLayoutEffect(() => {
     scopeKeyRef.current = scopeKey
   }, [scopeKey])
+
+  // A scope change (workspace, role, or project) must reset the archive UI so
+  // stale dialog/feedback/loading never leaks into the new scope. We reset
+  // during render (the documented "reset when a key changes" pattern): the
+  // committed scope key is a state, so comparing it to the current scope key is
+  // a pure render-time check with no ref access and no effect body. Stale
+  // responses are discarded by the archive handler's scope/epoch guard instead.
+  const [committedScopeKey, setCommittedScopeKey] = useState(scopeKey)
+  if (committedScopeKey !== scopeKey) {
+    setCommittedScopeKey(scopeKey)
+    setArchiveOpen(false)
+    setArchiveError(null)
+    setFeedback(null)
+    setArchiving(false)
+  }
 
   const canManage =
     currentWorkspace?.role === 'owner' || currentWorkspace?.role === 'admin'
@@ -91,17 +109,31 @@ export function ProjectDetailPage() {
 
   const archive = async () => {
     if (!project || isArchiving) return
+    // Capture the submitting context so a later response can only be applied if
+    // the scope is still identical and the action epoch is still current.
+    const actionScopeKey = scopeKeyRef.current
+    const actionProjectId = project.project_id
+    const actionUpdatedAt = project.updated_at
+    const actionWorkspaceId = currentWorkspace?.workspace_id
+    const actionEpoch = ++actionEpochRef.current
     setArchiving(true)
     setArchiveError(null)
-    const result = await projects.archive(
-      project.project_id,
-      project.updated_at,
-    )
+    const result = await projects.archive(actionProjectId, actionUpdatedAt)
+    if (!mountedRef.current) return
+    if (actionEpochRef.current !== actionEpoch) return
+    if (actionScopeKey !== scopeKeyRef.current) return
+    const stillCanManage =
+      currentWorkspace?.role === 'owner' || currentWorkspace?.role === 'admin'
+    if (!stillCanManage) return
     if (!result.ok) {
       setArchiveError(result.error.message)
       setArchiving(false)
       return
     }
+    // The server may have succeeded; only apply it when the response belongs to
+    // the exact project and workspace that initiated the request.
+    if (result.data.project_id !== actionProjectId) return
+    if (result.data.workspace_id !== actionWorkspaceId) return
     setProject(result.data)
     setArchiveOpen(false)
     setArchiving(false)

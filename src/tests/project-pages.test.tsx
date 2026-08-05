@@ -2298,13 +2298,16 @@ describe('响应实体不匹配安全结束 loading', () => {
 
   it('创建成功返回错误 workspace_id 时安全失败且保留表单与幂等键', async () => {
     const user = userEvent.setup()
-    const create = vi.fn(async (_input: ProjectCreateInput) => ({
-      ok: true as const,
-      data: {
-        ...currentProject,
-        workspace_id: 'eeeeeeee-0000-4000-8000-0000000000ee',
-      },
-    }))
+    const create = vi.fn(async (input: ProjectCreateInput) => {
+      void input
+      return {
+        ok: true as const,
+        data: {
+          ...currentProject,
+          workspace_id: 'eeeeeeee-0000-4000-8000-0000000000ee',
+        },
+      }
+    })
     const idem = vi
       .spyOn(globalThis.crypto, 'randomUUID')
       .mockReturnValue('bbbbbbbb-1111-4111-8111-111111111111')

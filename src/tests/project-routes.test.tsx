@@ -120,6 +120,8 @@ describe('项目路由嵌套', () => {
               joined_at: projectRow.created_at,
               is_current_user: true,
               is_active: true,
+              active_member_count: 1,
+              inactive_historical_member_count: 0,
             },
           ],
           error: null,

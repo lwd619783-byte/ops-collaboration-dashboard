@@ -6,7 +6,11 @@ import {
   ProjectContext,
   type ProjectContextValue,
 } from '@/features/projects/ProjectContext'
-import type { Project, ProjectCreateInput } from '@/features/projects/types'
+import type {
+  Project,
+  ProjectCreateInput,
+  ProjectMember,
+} from '@/features/projects/types'
 import {
   WorkspaceContext,
   type WorkspaceContextValue,
@@ -2369,5 +2373,100 @@ describe('响应实体不匹配安全结束 loading', () => {
       create.mock.calls[0][0].idempotencyKey,
     )
     idem.mockRestore()
+  })
+})
+
+describe('项目详情成员数量当前/历史拆分', () => {
+  const ownerMember: ProjectMember = {
+    project_id: PROJECT_ID,
+    workspace_id: FICTIONAL_WORKSPACE_ID,
+    app_user_id: FICTIONAL_APP_USER_ID,
+    display_name: '虚构负责人甲',
+    workspace_role: 'owner',
+    project_role: 'owner',
+    joined_at: '2026-08-04T01:00:00+00:00',
+    is_current_user: true,
+    is_active: true,
+    active_member_count: 1,
+    inactive_historical_member_count: 1,
+  }
+  const inactiveMember: ProjectMember = {
+    project_id: PROJECT_ID,
+    workspace_id: FICTIONAL_WORKSPACE_ID,
+    app_user_id: '99999999-9999-4999-8999-999999999999',
+    display_name: '虚构停用历史成员',
+    workspace_role: 'member',
+    project_role: 'member',
+    joined_at: '2026-08-04T01:00:00+00:00',
+    is_current_user: false,
+    is_active: false,
+    active_member_count: 1,
+    inactive_historical_member_count: 1,
+  }
+
+  it('详情页只展示当前在用数量，并在存在停用时标注历史数量', async () => {
+    renderWithContexts(
+      `/projects/${PROJECT_ID}`,
+      <Routes>
+        <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+      </Routes>,
+      'owner',
+      projectValue({
+        get: vi.fn(async () => ({ ok: true as const, data: currentProject })),
+        listMembers: vi.fn(async () => ({
+          ok: true as const,
+          data: [ownerMember, inactiveMember],
+        })),
+      }),
+    )
+    expect(
+      await screen.findByRole('heading', { name: currentProject.name }),
+    ).toBeInTheDocument()
+    // Overview grid: active count only, plus historical note when present.
+    const memberDt = screen.getByText('项目成员', { selector: 'dt' })
+    const dd = memberDt.nextElementSibling as HTMLElement
+    expect(dd).toHaveTextContent('1 人')
+    expect(dd).toHaveTextContent('停用历史 1 人')
+    // Future capability card mirrors the active-only count and historical note.
+    expect(screen.getByText(/当前共 1 人/)).toBeInTheDocument()
+  })
+
+  it('全部为当前在用成员时不显示停用历史标注', async () => {
+    const activeTwo: ProjectMember[] = [
+      {
+        ...ownerMember,
+        active_member_count: 2,
+        inactive_historical_member_count: 0,
+      },
+      {
+        ...inactiveMember,
+        app_user_id: '88888888-8888-4888-8888-888888888888',
+        display_name: '虚构普通成员',
+        is_active: true,
+        active_member_count: 2,
+        inactive_historical_member_count: 0,
+      },
+    ]
+    renderWithContexts(
+      `/projects/${PROJECT_ID}`,
+      <Routes>
+        <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+      </Routes>,
+      'owner',
+      projectValue({
+        get: vi.fn(async () => ({ ok: true as const, data: currentProject })),
+        listMembers: vi.fn(async () => ({
+          ok: true as const,
+          data: activeTwo,
+        })),
+      }),
+    )
+    expect(
+      await screen.findByRole('heading', { name: currentProject.name }),
+    ).toBeInTheDocument()
+    const memberDt = screen.getByText('项目成员', { selector: 'dt' })
+    const dd = memberDt.nextElementSibling as HTMLElement
+    expect(dd).toHaveTextContent('2 人')
+    expect(dd).not.toHaveTextContent('停用历史')
   })
 })

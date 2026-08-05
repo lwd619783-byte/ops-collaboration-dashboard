@@ -117,7 +117,9 @@ function parseProjectMember(value: unknown): ProjectMember | null {
     !isProjectWorkspaceRole(value.workspace_role) ||
     !isString(value.joined_at) ||
     typeof value.is_current_user !== 'boolean' ||
-    typeof value.is_active !== 'boolean'
+    typeof value.is_active !== 'boolean' ||
+    typeof value.active_member_count !== 'number' ||
+    typeof value.inactive_historical_member_count !== 'number'
   ) {
     return null
   }

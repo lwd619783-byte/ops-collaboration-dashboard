@@ -300,6 +300,7 @@ begin
        from public.projects as p
        where p.workspace_id = old.workspace_id
          and (p.owner_id = old.user_id or p.lead_id = old.user_id)
+         and p.status <> 'archived'
      )
   then
     raise exception 'workspace_member_project_responsibility_conflict' using errcode = '55000';
@@ -323,7 +324,8 @@ begin
      and exists (
        select 1
        from public.projects as p
-       where p.owner_id = old.id or p.lead_id = old.id
+       where (p.owner_id = old.id or p.lead_id = old.id)
+         and p.status <> 'archived'
      )
   then
     raise exception 'app_user_project_responsibility_conflict' using errcode = '55000';
@@ -439,6 +441,83 @@ revoke all on function public.can_manage_project_leadership(uuid)
 revoke all on function public.assert_active_project_candidate(uuid, uuid)
   from public, anon, authenticated, service_role;
 
+-- Internal lock helper used by every membership mutation RPC. It acquires
+-- stable, ordered row locks on the actor (resolved from current_app_user_id)
+-- and the supplied participant app_users / workspace_members rows, then
+-- re-validates the actor under those locks. Holding these locks for the
+-- remainder of the transaction closes the cross-table TOCTOU between the
+-- permission check and the business write: a concurrent suspension or role
+-- change of the actor or a candidate cannot commit until this transaction
+-- releases its locks.
+--
+-- Lock order (must match the project row lock taken first by each caller):
+--   1. public.projects row               (locked by the calling RPC)
+--   2. public.app_users rows             (deduplicated, ordered by id)
+--   3. public.workspace_members rows      (deduplicated, ordered by user_id)
+--   4. public.project_members row         (locked later by the calling RPC)
+create function public.lock_membership_participants(
+  p_project_id uuid,
+  p_participant_ids uuid[] default array[]::uuid[]
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_actor_id uuid := public.current_app_user_id();
+  v_workspace_id uuid;
+  v_lock_ids uuid[];
+begin
+  select p.workspace_id into v_workspace_id
+  from public.projects as p
+  where p.id = p_project_id;
+
+  -- Stable, deduplicated, sorted lock set: actor plus every participant.
+  v_lock_ids := array(
+    select distinct id
+    from unnest(
+      array_append(coalesce(p_participant_ids, array[]::uuid[]), v_actor_id)
+    ) as id
+    where id is not null
+    order by id
+  );
+
+  -- 2. Lock app_users rows in id order.
+  perform 1
+  from public.app_users as u
+  where u.id = any(v_lock_ids)
+  order by u.id
+  for update;
+
+  -- 3. Lock workspace_members rows for this workspace in user_id order.
+  if v_workspace_id is not null then
+    perform 1
+    from public.workspace_members as wm
+    where wm.workspace_id = v_workspace_id
+      and wm.user_id = any(v_lock_ids)
+    order by wm.user_id
+    for update;
+  end if;
+
+  -- Re-validate the actor under the acquired locks.
+  if not exists (
+    select 1
+    from public.workspace_members as wm
+    join public.app_users as u on u.id = wm.user_id
+    where wm.workspace_id = v_workspace_id
+      and wm.user_id = v_actor_id
+      and wm.status = 'active'
+      and u.status = 'active'
+  ) then
+    raise exception 'project_member_actor_invalid' using errcode = '42501';
+  end if;
+end;
+$function$;
+
+revoke all on function public.lock_membership_participants(uuid, uuid[])
+  from public, anon, authenticated, service_role;
+
 -- ---------------------------------------------------------------------------
 -- Safe project member and candidate projections.
 -- ---------------------------------------------------------------------------
@@ -453,7 +532,9 @@ returns table (
   project_role public.project_role,
   joined_at timestamptz,
   is_current_user boolean,
-  is_active boolean
+  is_active boolean,
+  active_member_count integer,
+  inactive_historical_member_count integer
 )
 language sql
 stable
@@ -469,7 +550,9 @@ as $function$
     pm.role,
     pm.joined_at,
     pm.user_id = public.current_app_user_id(),
-    wm.status = 'active' and u.status = 'active'
+    wm.status = 'active' and u.status = 'active',
+    count(*) filter (where wm.status = 'active' and u.status = 'active') over (),
+    count(*) filter (where wm.status <> 'active' or u.status <> 'active') over ()
   from public.project_members as pm
   join public.projects as p on p.id = pm.project_id
   join public.workspace_members as wm
@@ -593,6 +676,9 @@ begin
   if not found then
     raise exception 'project_not_found_or_forbidden' using errcode = '42501';
   end if;
+  -- Serialize against concurrent actor/candidate status or role changes.
+  perform public.lock_membership_participants(p_project_id, array[p_user_id]);
+
   if not public.can_manage_project_members(p_project_id) then
     raise exception 'project_permission_denied' using errcode = '42501';
   end if;
@@ -667,6 +753,9 @@ begin
   if not found then
     raise exception 'project_not_found_or_forbidden' using errcode = '42501';
   end if;
+  -- Serialize against concurrent actor/candidate status or role changes.
+  perform public.lock_membership_participants(p_project_id, array[p_user_id]);
+
   if not public.can_manage_project_members(p_project_id) then
     raise exception 'project_permission_denied' using errcode = '42501';
   end if;
@@ -744,6 +833,9 @@ begin
   if not found then
     raise exception 'project_not_found_or_forbidden' using errcode = '42501';
   end if;
+  -- Serialize against concurrent actor/candidate status or role changes.
+  perform public.lock_membership_participants(p_project_id, array[p_user_id]);
+
   if not public.can_manage_project_members(p_project_id) then
     raise exception 'project_permission_denied' using errcode = '42501';
   end if;
@@ -815,6 +907,9 @@ begin
   if not found then
     raise exception 'project_not_found_or_forbidden' using errcode = '42501';
   end if;
+  -- Serialize against concurrent actor/candidate status or role changes.
+  perform public.lock_membership_participants(p_project_id, array[p_user_id, v_project.lead_id]);
+
   if not public.can_manage_project_leadership(p_project_id) then
     raise exception 'project_permission_denied' using errcode = '42501';
   end if;
@@ -905,6 +1000,9 @@ begin
   if not found then
     raise exception 'project_not_found_or_forbidden' using errcode = '42501';
   end if;
+  -- Serialize against concurrent actor/candidate status or role changes.
+  perform public.lock_membership_participants(p_project_id, array[v_project.lead_id]);
+
   if not public.can_manage_project_leadership(p_project_id) then
     raise exception 'project_permission_denied' using errcode = '42501';
   end if;
@@ -972,6 +1070,9 @@ begin
   if not found then
     raise exception 'project_not_found_or_forbidden' using errcode = '42501';
   end if;
+  -- Serialize against concurrent actor/candidate status or role changes.
+  perform public.lock_membership_participants(p_project_id, array[p_user_id, v_project.owner_id]);
+
   if not public.can_manage_project_leadership(p_project_id) then
     raise exception 'project_permission_denied' using errcode = '42501';
   end if;

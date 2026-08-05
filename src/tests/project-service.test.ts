@@ -48,6 +48,8 @@ const projectMemberRow = {
   joined_at: projectRow.created_at,
   is_current_user: true,
   is_active: true,
+  active_member_count: 1,
+  inactive_historical_member_count: 0,
 }
 
 describe('项目 service', () => {

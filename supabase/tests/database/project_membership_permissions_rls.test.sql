@@ -363,5 +363,141 @@ select is(pg_temp.sqlstate_of($sql$ update public.app_users set status = 'suspen
 select ok(pg_temp.project_consistent('83000000-0000-4000-8000-000000000001'), 'final main-project owner and lead state is consistent');
 select ok(pg_temp.project_consistent('83000000-0000-4000-8000-000000000003'), 'archived project remains consistent after rejected writes');
 
+-- ---------------------------------------------------------------------------
+-- Archived lifecycle for owners/leads who are otherwise ordinary members.
+-- The responsibility guards exclude archived projects, so suspending the
+-- workspace membership (owner) or app user (lead) of an archived-project
+-- responsibility succeeds, the relationship is retained as readable history,
+-- every write RPC is still rejected, and deliberate reactivation restores the
+-- retained history. Fresh fictional users are used; none hold a non-archived
+-- project responsibility, so the non-archived rejection path is unaffected.
+-- ---------------------------------------------------------------------------
+insert into public.app_users (id, status, disabled_at) values
+  ('81000000-0000-4000-8000-000000000021', 'active', null),
+  ('81000000-0000-4000-8000-000000000022', 'active', null);
+insert into public.profiles (user_id, display_name) values
+  ('81000000-0000-4000-8000-000000000021', 'Archived Lifecycle Owner'),
+  ('81000000-0000-4000-8000-000000000022', 'Archived Lifecycle Lead');
+insert into public.user_identities (
+  user_id, provider, provider_tenant, provider_subject, verified_at, revoked_at
+) values
+  ('81000000-0000-4000-8000-000000000021', 'supabase_auth', 'https://membership-fixture.invalid', 'archived-lifecycle-owner', now(), null),
+  ('81000000-0000-4000-8000-000000000022', 'supabase_auth', 'https://membership-fixture.invalid', 'archived-lifecycle-lead', now(), null);
+insert into public.workspace_members (
+  workspace_id, user_id, role, status, invited_by, joined_at, disabled_at
+) values
+  ('82000000-0000-4000-8000-000000000001', '81000000-0000-4000-8000-000000000021', 'member', 'active', '81000000-0000-4000-8000-000000000001', now(), null),
+  ('82000000-0000-4000-8000-000000000001', '81000000-0000-4000-8000-000000000022', 'member', 'active', '81000000-0000-4000-8000-000000000001', now(), null);
+insert into public.projects (
+  id, workspace_id, name, status, owner_id, lead_id, created_by, idempotency_key, archived_at
+) values
+  ('83000000-0000-4000-8000-000000000021', '82000000-0000-4000-8000-000000000001', 'Archived Lifecycle Project', 'archived', '81000000-0000-4000-8000-000000000021', '81000000-0000-4000-8000-000000000022', '81000000-0000-4000-8000-000000000021', '84000000-0000-4000-8000-000000000021', now());
+insert into public.project_members (project_id, user_id, role) values
+  ('83000000-0000-4000-8000-000000000021', '81000000-0000-4000-8000-000000000021', 'owner'),
+  ('83000000-0000-4000-8000-000000000021', '81000000-0000-4000-8000-000000000022', 'lead');
+
+set local "request.jwt.claims" = '{"sub":"workspace-owner","iss":"https://membership-fixture.invalid","role":"authenticated"}';
+set local role authenticated;
+select is((select status::text from public.set_workspace_member_status('82000000-0000-4000-8000-000000000001', '81000000-0000-4000-8000-000000000021', 'suspended')), 'suspended', 'archived-project owner can be suspended as an ordinary member');
+reset role;
+
+-- The app-user responsibility guard (trigger on app_users) excludes archived
+-- projects, so a direct app_users suspension of the archived-project lead is NOT
+-- blocked. Run as the privileged role so the statement reaches the trigger.
+select is(pg_temp.sqlstate_of($sql$ update public.app_users set status = 'suspended', disabled_at = now() where id = '81000000-0000-4000-8000-000000000022' $sql$), null, 'archived-project lead app user can be suspended');
+
+set local "request.jwt.claims" = '{"sub":"workspace-owner","iss":"https://membership-fixture.invalid","role":"authenticated"}';
+set local role authenticated;
+select is((select count(*) from public.list_project_members('83000000-0000-4000-8000-000000000021')), 2::bigint, 'archived project retains readable member history after suspension');
+select is((select inactive_historical_member_count from public.list_project_members('83000000-0000-4000-8000-000000000021') limit 1), 2::integer, 'suspended archived members count as inactive historical');
+select is(pg_temp.sqlstate_of($sql$ select * from public.add_project_member('83000000-0000-4000-8000-000000000021', '81000000-0000-4000-8000-000000000011', 'member') $sql$), '55000', 'archived project rejects add after suspension');
+select is(pg_temp.sqlstate_of($sql$ select * from public.set_project_member_role('83000000-0000-4000-8000-000000000021', '81000000-0000-4000-8000-000000000021', 'viewer') $sql$), '55000', 'archived project rejects ordinary role change');
+select is(pg_temp.sqlstate_of($sql$ select * from public.remove_project_member('83000000-0000-4000-8000-000000000021', '81000000-0000-4000-8000-000000000021') $sql$), '55000', 'archived project rejects removal');
+select is(pg_temp.sqlstate_of($sql$ select * from public.set_project_lead('83000000-0000-4000-8000-000000000021', '81000000-0000-4000-8000-000000000011', (select updated_at from public.projects where id = '83000000-0000-4000-8000-000000000021')) $sql$), '55000', 'archived project rejects lead assignment');
+select is(pg_temp.sqlstate_of($sql$ select * from public.clear_project_lead('83000000-0000-4000-8000-000000000021', (select updated_at from public.projects where id = '83000000-0000-4000-8000-000000000021')) $sql$), '55000', 'archived project rejects lead clear');
+select is(pg_temp.sqlstate_of($sql$ select * from public.transfer_project_owner('83000000-0000-4000-8000-000000000021', '81000000-0000-4000-8000-000000000011', (select updated_at from public.projects where id = '83000000-0000-4000-8000-000000000021')) $sql$), '55000', 'archived project rejects owner transfer');
+reset role;
+
+set local "request.jwt.claims" = '{"sub":"workspace-owner","iss":"https://membership-fixture.invalid","role":"authenticated"}';
+set local role authenticated;
+select is((select status::text from public.set_workspace_member_status('82000000-0000-4000-8000-000000000001', '81000000-0000-4000-8000-000000000021', 'active')), 'active', 'archived-project owner can be deliberately reactivated');
+reset role;
+
+-- Reactivate the lead app user as the privileged role; the guard still excludes archived.
+select is(pg_temp.sqlstate_of($sql$ update public.app_users set status = 'active', disabled_at = null where id = '81000000-0000-4000-8000-000000000022' $sql$), null, 'archived-project lead app user can be deliberately reactivated');
+select ok(pg_temp.project_consistent('83000000-0000-4000-8000-000000000021'), 'reactivated archived project stays consistent');
+reset role;
+
+-- A user who owns both an archived and a non-archived project is still blocked
+-- from suspension: the non-archived responsibility dominates the guard, so the
+-- archived project's responsibility does not exempt them. Use a workspace
+-- 'member' (not the workspace owner) so the workspace-owner immutability path
+-- does not mask the project guard.
+insert into public.app_users (id, status, disabled_at) values
+  ('81000000-0000-4000-8000-000000000023', 'active', null);
+insert into public.profiles (user_id, display_name) values
+  ('81000000-0000-4000-8000-000000000023', 'Both Responsibility User');
+insert into public.user_identities (user_id, provider, provider_tenant, provider_subject, verified_at, revoked_at) values
+  ('81000000-0000-4000-8000-000000000023', 'supabase_auth', 'https://membership-fixture.invalid', 'both-responsibility-user', now(), null);
+insert into public.workspace_members (workspace_id, user_id, role, status, invited_by, joined_at, disabled_at) values
+  ('82000000-0000-4000-8000-000000000001', '81000000-0000-4000-8000-000000000023', 'member', 'active', '81000000-0000-4000-8000-000000000001', now(), null);
+insert into public.projects (id, workspace_id, name, status, owner_id, lead_id, created_by, idempotency_key, archived_at) values
+  ('83000000-0000-4000-8000-000000000024', '82000000-0000-4000-8000-000000000001', 'Both Responsibility Active', 'active', '81000000-0000-4000-8000-000000000023', null, '81000000-0000-4000-8000-000000000023', '84000000-0000-4000-8000-000000000024', null),
+  ('83000000-0000-4000-8000-000000000025', '82000000-0000-4000-8000-000000000001', 'Both Responsibility Archived', 'archived', '81000000-0000-4000-8000-000000000023', null, '81000000-0000-4000-8000-000000000023', '84000000-0000-4000-8000-000000000025', now());
+insert into public.project_members (project_id, user_id, role) values
+  ('83000000-0000-4000-8000-000000000024', '81000000-0000-4000-8000-000000000023', 'owner'),
+  ('83000000-0000-4000-8000-000000000025', '81000000-0000-4000-8000-000000000023', 'owner');
+
+set local "request.jwt.claims" = '{"sub":"workspace-owner","iss":"https://membership-fixture.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(pg_temp.sqlstate_of($sql$ select * from public.set_workspace_member_status('82000000-0000-4000-8000-000000000001', '81000000-0000-4000-8000-000000000023', 'suspended') $sql$), '55000', 'owner of archived and non-archived projects is still blocked from suspension');
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- Actor revocation linearization. The membership RPCs re-validate the actor
+-- under the acquired participant locks, so a workspace-admin who is demoted or
+-- suspended before/during an operation is rejected exactly as if the role or
+-- status had already changed. A non-responsible app-user suspension likewise
+-- rejects the actor, and the owner/lead matrix of touched projects is intact.
+-- ---------------------------------------------------------------------------
+set local "request.jwt.claims" = '{"sub":"workspace-admin","iss":"https://membership-fixture.invalid","role":"authenticated"}';
+set local role authenticated;
+select is((select changed from public.add_project_member('83000000-0000-4000-8000-000000000005', '81000000-0000-4000-8000-000000000007', 'member')), true, 'workspace admin manages the admin project before revocation');
+reset role;
+
+update public.workspace_members
+  set role = 'member'
+  where workspace_id = '82000000-0000-4000-8000-000000000001'
+    and user_id = '81000000-0000-4000-8000-000000000002';
+set local "request.jwt.claims" = '{"sub":"workspace-admin","iss":"https://membership-fixture.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(pg_temp.sqlstate_of($sql$ select * from public.add_project_member('83000000-0000-4000-8000-000000000005', '81000000-0000-4000-8000-000000000011', 'member') $sql$), '42501', 'demoted admin is rejected from member writes');
+reset role;
+
+update public.workspace_members
+  set role = 'admin'
+  where workspace_id = '82000000-0000-4000-8000-000000000001'
+    and user_id = '81000000-0000-4000-8000-000000000002';
+-- workspace admin 002 has no project responsibility, so a direct app_users
+-- suspension (privileged role) reaches the trigger but is not blocked.
+select is(pg_temp.sqlstate_of($sql$ update public.app_users set status = 'suspended', disabled_at = now() where id = '81000000-0000-4000-8000-000000000002' $sql$), null, 'workspace admin with no project responsibility can be suspended');
+
+-- A clean candidate for the suspended-admin rejection check.
+insert into public.app_users (id, status, disabled_at) values
+  ('81000000-0000-4000-8000-000000000026', 'active', null);
+insert into public.profiles (user_id, display_name) values
+  ('81000000-0000-4000-8000-000000000026', 'Actor Revocation Candidate');
+insert into public.user_identities (user_id, provider, provider_tenant, provider_subject, verified_at, revoked_at) values
+  ('81000000-0000-4000-8000-000000000026', 'supabase_auth', 'https://membership-fixture.invalid', 'actor-revocation-candidate', now(), null);
+insert into public.workspace_members (workspace_id, user_id, role, status, invited_by, joined_at, disabled_at) values
+  ('82000000-0000-4000-8000-000000000001', '81000000-0000-4000-8000-000000000026', 'member', 'active', '81000000-0000-4000-8000-000000000001', now(), null);
+
+set local "request.jwt.claims" = '{"sub":"workspace-admin","iss":"https://membership-fixture.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(pg_temp.sqlstate_of($sql$ select * from public.add_project_member('83000000-0000-4000-8000-000000000005', '81000000-0000-4000-8000-000000000026', 'member') $sql$), '42501', 'suspended admin app user is rejected from member writes');
+reset role;
+
+select ok(pg_temp.project_consistent('83000000-0000-4000-8000-000000000005'), 'admin-project owner and lead matrix intact after actor revocation');
+
 select * from finish();
 rollback;

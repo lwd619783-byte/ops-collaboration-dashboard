@@ -725,8 +725,10 @@ export type Database = {
       list_project_members: {
         Args: { p_project_id: string }
         Returns: {
+          active_member_count: number
           app_user_id: string
           display_name: string
+          inactive_historical_member_count: number
           is_active: boolean
           is_current_user: boolean
           joined_at: string
@@ -776,6 +778,10 @@ export type Database = {
           title: string
           user_id: string
         }[]
+      }
+      lock_membership_participants: {
+        Args: { p_participant_ids?: string[]; p_project_id: string }
+        Returns: undefined
       }
       mark_workspace_invitation_failed: {
         Args: { p_failure_code: string; p_invitation_id: string }

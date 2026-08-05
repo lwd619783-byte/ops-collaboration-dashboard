@@ -34,7 +34,7 @@ Task 2.1 在既有统一身份与工作空间权限边界上增加最小项目�
 - `add_project_member` / `set_project_member_role` / `remove_project_member`
 - `set_project_lead` / `clear_project_lead` / `transfer_project_owner`
 
-列表和详情只返回页面需要的项目字段以及负责人 / 牵头人显示名，不暴露身份绑定、邀请或凭据数据。
+列表和详情只返回页面需要的项目字段以及负责人 / 牵头人显示名，不暴露身份绑定、邀请或凭据数据。`list_project_members` 还返回 `active_member_count` 与 `inactive_historical_member_count` 两个计数，前端据此区分「当前在用」与「停用历史」成员（含归档项目）；负责人/牵头人停用 guard 仅作用于未归档项目，归档项目保留历史职责但不阻止人员停用。详见 [项目成员与牵头人 V1](project-membership-and-lead.md)。
 
 ## 幂等、并发与归档
 

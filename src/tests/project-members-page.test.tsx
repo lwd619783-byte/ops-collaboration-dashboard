@@ -50,7 +50,17 @@ function member(
   appUserId: string,
   projectRole: ProjectRole,
   current = false,
+  options: {
+    isActive?: boolean
+    activeMemberCount?: number
+    inactiveHistoricalMemberCount?: number
+  } = {},
 ): ProjectMember {
+  const {
+    isActive = true,
+    activeMemberCount = 1,
+    inactiveHistoricalMemberCount = 0,
+  } = options
   return {
     project_id: PROJECT_ID,
     workspace_id: FICTIONAL_WORKSPACE_ID,
@@ -60,7 +70,9 @@ function member(
     project_role: projectRole,
     joined_at: '2026-08-05T01:00:00+00:00',
     is_current_user: current,
-    is_active: true,
+    is_active: isActive,
+    active_member_count: activeMemberCount,
+    inactive_historical_member_count: inactiveHistoricalMemberCount,
   }
 }
 
@@ -484,5 +496,84 @@ describe('项目成员页', () => {
       await screen.findByRole('heading', { name: '无法打开项目成员' }),
     ).toBeInTheDocument()
     expect(screen.getByText('项目不存在或你无权访问。')).toBeInTheDocument()
+  })
+})
+
+describe('成员数量当前/历史拆分', () => {
+  it('成员页区分当前在用与停用历史数量并标记停用历史卡片', async () => {
+    const inactive = {
+      ...member('99999999-9999-4999-8999-999999999999', 'member', false, {
+        isActive: false,
+        activeMemberCount: 2,
+        inactiveHistoricalMemberCount: 1,
+      }),
+      display_name: '虚构停用历史成员',
+    }
+    const value = projectValue('owner', {
+      listMembers: vi.fn(async () => ({
+        ok: true as const,
+        data: [
+          member(OWNER_ID, 'owner', false, {
+            activeMemberCount: 2,
+            inactiveHistoricalMemberCount: 1,
+          }),
+          member(FICTIONAL_APP_USER_ID, 'lead', true, {
+            activeMemberCount: 2,
+            inactiveHistoricalMemberCount: 1,
+          }),
+          inactive,
+        ],
+      })),
+    })
+    renderPage('owner', 'member', value)
+    expect(
+      await screen.findByRole('heading', { name: project.name }),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/当前在用 2 人/)).toBeInTheDocument()
+    expect(screen.getByText(/停用历史 1 人/)).toBeInTheDocument()
+    const inactiveCard = (await screen.findByText('虚构停用历史成员')).closest(
+      'li',
+    )
+    expect(inactiveCard).not.toBeNull()
+    expect(
+      within(inactiveCard!).getByText('已停用，仅保留历史'),
+    ).toBeInTheDocument()
+    // Inactive historical cards expose no member management actions.
+    expect(
+      within(inactiveCard!).queryByRole('button', { name: '移除成员' }),
+    ).toBeNull()
+  })
+
+  it('归档项目仍拆分当前与历史数量', async () => {
+    const archived = {
+      ...project,
+      status: 'archived' as const,
+      archived_at: '2026-08-05T03:00:00+00:00',
+    }
+    const inactive = {
+      ...member('99999999-9999-4999-8999-999999999999', 'member', false, {
+        isActive: false,
+        activeMemberCount: 1,
+        inactiveHistoricalMemberCount: 1,
+      }),
+      display_name: '虚构归档停用成员',
+    }
+    const value = projectValue('owner', {
+      get: vi.fn(async () => ({ ok: true as const, data: archived })),
+      listMembers: vi.fn(async () => ({
+        ok: true as const,
+        data: [
+          member(OWNER_ID, 'owner', false, {
+            activeMemberCount: 1,
+            inactiveHistoricalMemberCount: 1,
+          }),
+          inactive,
+        ],
+      })),
+    })
+    renderPage('owner', 'owner', value)
+    expect(await screen.findByText(/仅供历史查看/)).toBeInTheDocument()
+    expect(screen.getByText(/当前在用 1 人/)).toBeInTheDocument()
+    expect(screen.getByText(/停用历史 1 人/)).toBeInTheDocument()
   })
 })

@@ -212,6 +212,13 @@ export function ProjectDetailPage() {
       currentProjectMember?.project_role === 'owner' ||
       currentProjectMember?.project_role === 'lead')
 
+  const activeMemberCount = projectMembers.filter(
+    (member) => member.is_active,
+  ).length
+  const inactiveHistoricalMemberCount = projectMembers.filter(
+    (member) => !member.is_active,
+  ).length
+
   return (
     <div className="page-stack project-detail-page">
       <section className="intro project-detail-heading">
@@ -267,7 +274,12 @@ export function ProjectDetailPage() {
           </div>
           <div>
             <dt>项目成员</dt>
-            <dd>{projectMembers.length} 人</dd>
+            <dd>
+              {activeMemberCount} 人
+              {inactiveHistoricalMemberCount > 0
+                ? `；停用历史 ${inactiveHistoricalMemberCount} 人`
+                : ''}
+            </dd>
           </div>
           <div>
             <dt>开始日期</dt>
@@ -306,7 +318,11 @@ export function ProjectDetailPage() {
         <article className="card">
           <h3>项目成员</h3>
           <p>
-            当前共 {projectMembers.length} 人；负责人为
+            当前共 {activeMemberCount} 人
+            {inactiveHistoricalMemberCount > 0
+              ? `；停用历史 ${inactiveHistoricalMemberCount} 人`
+              : ''}
+            ；负责人为
             {project.owner_display_name}，牵头人为
             {project.lead_display_name ?? '暂未设置'}。
           </p>

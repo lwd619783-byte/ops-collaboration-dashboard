@@ -2,6 +2,8 @@
 
 > Task 2.2 叠加了独立的项目角色层。工作空间 owner/admin 管理所有项目成员；项目 owner 管理本项目全部成员职责；项目 lead 仅管理普通 member/viewer。工作空间角色不会被项目角色覆盖，数据库在每次 RPC 内同时检查两层身份。完整矩阵与停用语义见 [项目成员与牵头人 V1](project-membership-and-lead.md)。
 
+> 项目 owner/lead 的停用 guard（工作空间成员状态触发 `workspace_member_project_responsibility_conflict`、app user 状态触发 `app_user_project_responsibility_conflict`，均 `55000`）**仅对未归档项目生效**：归档项目保留历史负责人/牵头人关系供读取，但不再阻止该用户的停用或 app user 停用。这样归档项目不会因历史职责而永久阻塞人员停用。
+
 ## 目标与身份边界
 
 Task 1.4 为系统增加最上层组织边界。所有业务外键继续引用内部 `app_users.id`；Supabase Auth UUID、JWT `sub`、邮箱和客户端提交的用户 ID 都不是业务主键。浏览器身份只能通过 `current_app_user_id()` 解析为活动内部用户。

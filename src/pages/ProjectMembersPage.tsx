@@ -160,6 +160,11 @@ export function ProjectMembersPage() {
     (workspaceCanManage || currentMember?.project_role === 'owner'),
   )
 
+  const activeMemberCount = members.filter((member) => member.is_active).length
+  const inactiveHistoricalMemberCount = members.filter(
+    (member) => !member.is_active,
+  ).length
+
   const load = useCallback(async () => {
     if (!currentWorkspace) return
     const epoch = ++requestEpochRef.current
@@ -447,8 +452,9 @@ export function ProjectMembersPage() {
           <p className="eyebrow">项目成员</p>
           <h2>{project.name}</h2>
           <p>
-            共 {members.length}{' '}
-            人；负责人唯一，牵头人最多一名。成员目录不返回认证凭据或联系方式。
+            当前在用 {activeMemberCount} 人；停用历史{' '}
+            {inactiveHistoricalMemberCount}{' '}
+            人。负责人唯一，牵头人最多一名。成员目录不返回认证凭据或联系方式。
           </p>
         </div>
         <div className="project-detail-actions">

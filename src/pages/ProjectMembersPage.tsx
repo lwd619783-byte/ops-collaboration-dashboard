@@ -160,10 +160,9 @@ export function ProjectMembersPage() {
     (workspaceCanManage || currentMember?.project_role === 'owner'),
   )
 
-  const activeMemberCount = members.filter((member) => member.is_active).length
-  const inactiveHistoricalMemberCount = members.filter(
-    (member) => !member.is_active,
-  ).length
+  const activeMemberCount = members[0]?.active_member_count ?? 0
+  const inactiveHistoricalMemberCount =
+    members[0]?.inactive_historical_member_count ?? 0
 
   const load = useCallback(async () => {
     if (!currentWorkspace) return

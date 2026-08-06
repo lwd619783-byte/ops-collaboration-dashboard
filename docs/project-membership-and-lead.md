@@ -62,9 +62,11 @@ pgTAP 覆盖：归档项目的 owner/lead 作为普通成员被工作空间停�
 `list_project_members` 投影额外返回两个窗口计数（基于已过滤后的可见成员集合）：
 
 - `active_member_count`：当前在用的成员数（`workspace_members.status = 'active'` 且 `app_users.status = 'active'`）。
-- `inactive_historical_member_count`：停用历史成员数（其余，`workspace_members.status <> 'active'` 或 `app_users.status <> 'active'`，仅保留历史、不可恢复访问）。
+- `inactive_historical_member_count`：停用历史成员数（其余，`workspace_members.status <> 'active'` 或 `app_users.status <> 'active'`）。
 
-前端据此在成员页显示「当前在用 X 人；停用历史 Y 人」，在详情页显示当前在用数量并可选地标注停用历史数量；归档项目同样按上述口径拆分。计数由数据库统一计算，前端不再二次统计角色，只做语义展示。
+停用期间不可访问；由于关系保留，管理员明确重新启用后可恢复原项目访问——这不是永久不可恢复。
+
+`list_project_members` 由数据库统一返回这两个计数（基于已过滤的可见成员集合），每个成员行都携带相同的两个计数。service 层收到结果后做跨行一致性校验：所有行的两个计数必须完全一致、`active + inactive` 必须等于行数、且两计数必须与实际 `is_active` 为 true / false 的行数逐一吻合，否则统一返回 `unknown_service_error`；空数组允许，UI 计数为 0/0。前端直接使用 service 校验后的首行计数展示「当前在用 X 人；停用历史 Y 人」，并据此在详情页显示当前在用数量与可选的停用历史标注；前端不再对成员数组做 filter 二次统计，只做语义展示。归档项目同样按上述口径拆分。
 
 ## 前端与状态安全
 
@@ -88,13 +90,13 @@ npm run check
 
 pgTAP 覆盖结构、授权矩阵、RLS、幂等、归档、停用与关系一致性，以及归档生命周期与 actor 撤销矩阵。
 
-`db:membership:verify` 使用多个真实 PostgreSQL 连接验证并发线性化，**不依赖固定休眠**：先提交的一方释放行锁，后到达的一方在锁上真实阻塞，从而证明操作在单一锁边界上可串行化。共 23 项检查，分两组：
+`db:membership:verify` 使用多个真实 PostgreSQL 连接验证并发线性化。每个竞争场景都先让第一事务持有行锁（项目行、app_users 行或 workspace_members 行），再用第三个 observer 连接轮询 `pg_blocking_pids()`，只有在确认第二事务确实被第一事务的真实锁图阻塞后，才允许第一事务提交；若短时截止内未观察到真实阻塞，该场景判为失败。因此所有并发检查都通过 PostgreSQL 自身的锁状态（而非固定休眠）证明序列化顺序。共 38 项检查，分两组：
 
-- 既有 9 项：stale 读后写竞争（owner 转让、lead 任命、移除 vs 角色修改，含 A→B→A 与作用域不匹配丢弃）。
-- 新增 14 项真实锁竞争（7.1 / 7.2 / 7.3，均验证两种顺序）：
+- 既有 3 项 stale 读后写竞争：owner 转让、lead 任命、移除 vs 角色修改，每项均显式校验第二事务被第一事务持有的项目行锁阻塞，并校验赛后每个项目仍恰好一个对齐 owner、至多一个对齐 lead，以及移除场景不残留部分成员行。
+- 新增 35 项真实锁竞争（7.1 / 7.2 / 7.3，均验证两种顺序，并各自显式校验第二事务被第一事务持有的候选/目标/actor 锁阻塞）：
   - 7.1 lead 任命 vs 工作空间成员停用：任命先提交则后续停用被 `55000` 阻塞；停用先提交则任命被 `22023`（行锁冲突）拒绝。
   - 7.2 owner 转让 vs app user 停用：转让先提交则后续停用被 `55000` 阻塞；停用先提交则转让被 `22023` 拒绝。
-  - 7.3 工作空间 admin 降级 vs 普通成员写：写先提交则降级照常生效（无冲突）；降级先提交则成员写被 `42501` 拒绝。
+  - 7.3 工作空间 admin 降级 vs 普通成员写：两个场景互为独立夹具（各自独立的 admin actor、项目与目标普通成员，且 actor 在场景开始前确为 active 工作空间 admin、非 owner/lead）；写先提交则降级照常生效、目标成员关系确实写入；降级先提交则成员写被 `42501` 拒绝、目标成员关系未被创建；两项最终 actor 均被降级为 member。
   - 末尾 `raceInvariants`：被竞争的每个项目仍恰好一个 owner、至多一个 lead。
 
 所有并发检查只创建随机虚构本地夹具，输出不含 DB URL、JWT 或密钥；`db:verify` 已包含这项检查。

@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(47);
+select plan(62);
 
 select ok(to_regclass('public.project_members_one_owner_idx') is not null, 'partial owner uniqueness index exists');
 select ok(to_regclass('public.project_members_one_lead_idx') is not null, 'partial lead uniqueness index exists');
@@ -33,6 +33,61 @@ select ok(to_regprocedure('public.set_project_lead(uuid,uuid,timestamptz)') is n
 select ok(to_regprocedure('public.clear_project_lead(uuid,timestamptz)') is not null, 'lead clear RPC exists');
 select ok(to_regprocedure('public.transfer_project_owner(uuid,uuid,timestamptz)') is not null, 'owner transfer RPC exists');
 select ok(to_regprocedure('public.add_project_member(uuid,uuid,public.project_role,uuid)') is null, 'write RPC has no client-supplied actor overload');
+
+-- Internal lock helper used by every membership mutation RPC to close the
+-- cross-table TOCTOU. It must exist, be SECURITY DEFINER with a pinned empty
+-- search_path, carry no API-role execute grant, and accept no client-supplied
+-- actor argument.
+select ok(to_regprocedure('public.lock_membership_participants(uuid,uuid[])') is not null, 'internal lock helper exists');
+select ok((
+  select prosecdef
+  from pg_proc
+  where oid = 'public.lock_membership_participants(uuid,uuid[])'::regprocedure
+), 'internal lock helper is SECURITY DEFINER');
+select ok((
+  select array_to_string(proconfig, ',') = 'search_path=""'
+  from pg_proc
+  where oid = 'public.lock_membership_participants(uuid,uuid[])'::regprocedure
+), 'internal lock helper pins an empty search_path');
+select ok(not has_function_privilege('public', 'public.lock_membership_participants(uuid,uuid[])', 'execute'), 'PUBLIC cannot execute the lock helper');
+select ok(not has_function_privilege('anon', 'public.lock_membership_participants(uuid,uuid[])', 'execute'), 'anon cannot execute the lock helper');
+select ok(not has_function_privilege('authenticated', 'public.lock_membership_participants(uuid,uuid[])', 'execute'), 'authenticated cannot execute the lock helper');
+select ok(not has_function_privilege('service_role', 'public.lock_membership_participants(uuid,uuid[])', 'execute'), 'service_role cannot execute the lock helper');
+select ok(to_regprocedure('public.lock_membership_participants(uuid)') is null, 'lock helper has no single-argument overload');
+select ok(to_regprocedure('public.lock_membership_participants(uuid,uuid[],uuid)') is null, 'lock helper has no client-actor overload');
+
+-- All six write RPCs must actually call the lock helper inside their body so
+-- the cross-table TOCTOU guard is always engaged.
+select ok((
+  select pg_get_functiondef(oid) like '%perform public.lock_membership_participants(%'
+  from pg_proc
+  where oid = 'public.add_project_member(uuid,uuid,public.project_role)'::regprocedure
+), 'add_project_member calls the lock helper');
+select ok((
+  select pg_get_functiondef(oid) like '%perform public.lock_membership_participants(%'
+  from pg_proc
+  where oid = 'public.set_project_member_role(uuid,uuid,public.project_role)'::regprocedure
+), 'set_project_member_role calls the lock helper');
+select ok((
+  select pg_get_functiondef(oid) like '%perform public.lock_membership_participants(%'
+  from pg_proc
+  where oid = 'public.remove_project_member(uuid,uuid)'::regprocedure
+), 'remove_project_member calls the lock helper');
+select ok((
+  select pg_get_functiondef(oid) like '%perform public.lock_membership_participants(%'
+  from pg_proc
+  where oid = 'public.set_project_lead(uuid,uuid,timestamptz)'::regprocedure
+), 'set_project_lead calls the lock helper');
+select ok((
+  select pg_get_functiondef(oid) like '%perform public.lock_membership_participants(%'
+  from pg_proc
+  where oid = 'public.clear_project_lead(uuid,timestamptz)'::regprocedure
+), 'clear_project_lead calls the lock helper');
+select ok((
+  select pg_get_functiondef(oid) like '%perform public.lock_membership_participants(%'
+  from pg_proc
+  where oid = 'public.transfer_project_owner(uuid,uuid,timestamptz)'::regprocedure
+), 'transfer_project_owner calls the lock helper');
 
 select is(
   (select count(*) from pg_proc where oid = any(array[

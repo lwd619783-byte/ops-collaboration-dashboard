@@ -38,7 +38,7 @@ npm run db:verify
 
 Task 2.2 的成员写 RPC 通过内部 `public.lock_membership_participants(p_project_id, p_participant_ids)`（`SECURITY DEFINER`、固定空 `search_path`、不授予 API 角色执行权）统一消除跨表 TOCTOU：每个 RPC 先锁定 `projects` 行，再按「`app_users` 按 id → `workspace_members` 按 user_id（项目所在工作空间）」的稳定顺序锁定 actor 与参与方，最后在锁内重新校验 actor 仍为 active 工作空间成员与 active app user（否则 `42501`）。持锁至事务结束，使并发撤销 / 停用 / 转让在单一锁边界上线性化。`list_project_members` 同时返回 `active_member_count` 与 `inactive_historical_member_count` 两个窗口计数，区分当前在用与停用历史成员。
 
-具体 RPC 锁边界、锁顺序、当前 vs 归档历史职责、并发撤销线性化与计数语义见 [项目成员与牵头人 V1](project-membership-and-lead.md)。当前并发验证共 23 项：既有 9 项 stale 读后写竞争，新增 14 项真实行锁竞争（lead 任命 vs 工作空间停用、owner 转让 vs app user 停用、admin 降级 vs 普通成员写，均验证两种顺序，并校验赛后每个项目仍恰好一个 owner、至多一个 lead）。
+具体 RPC 锁边界、锁顺序、当前 vs 归档历史职责、并发撤销线性化与计数语义见 [项目成员与牵头人 V1](project-membership-and-lead.md)。当前并发验证共 38 项：3 项 stale 读后写竞争（均显式校验第二事务被第一事务持有的项目行锁阻塞），以及 35 项真实行锁竞争（lead 任命 vs 工作空间停用、owner 转让 vs app user 停用、admin 降级 vs 普通成员写，均验证两种顺序，并用独立 observer 连接通过 `pg_blocking_pids()` 显式证明第二事务被第一事务锁阻塞，校验赛后每个项目仍恰好一个 owner、至多一个 lead）。
 
 ## 创建和验证 migration
 

@@ -72,6 +72,16 @@ function invalidPayload<T>(): ProjectServiceResult<T> {
   }
 }
 
+function isFiniteNonNegativeSafeInteger(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= Number.MAX_SAFE_INTEGER
+  )
+}
+
 function parseProjectArray(value: unknown): ProjectServiceResult<Project[]> {
   if (!Array.isArray(value)) return invalidPayload()
   const projects = value.map(parseProject)
@@ -118,8 +128,8 @@ function parseProjectMember(value: unknown): ProjectMember | null {
     !isString(value.joined_at) ||
     typeof value.is_current_user !== 'boolean' ||
     typeof value.is_active !== 'boolean' ||
-    typeof value.active_member_count !== 'number' ||
-    typeof value.inactive_historical_member_count !== 'number'
+    !isFiniteNonNegativeSafeInteger(value.active_member_count) ||
+    !isFiniteNonNegativeSafeInteger(value.inactive_historical_member_count)
   ) {
     return null
   }
@@ -140,6 +150,49 @@ function parseProjectCandidate(value: unknown): ProjectMemberCandidate | null {
     return null
   }
   return value as unknown as ProjectMemberCandidate
+}
+
+// Dedicated `list_project_members` parser. The RPC returns the two member
+// counts on every row (a window over the visible membership set). Beyond the
+// per-row shape check, we validate that all rows agree on the counts and that
+// the counts are internally consistent with the per-row `is_active` flags:
+// every row must carry identical counts, the sum of the two counts must equal
+// the number of rows, and the active/inactive counts must match the number of
+// rows whose `is_active` is true/false respectively. Any inconsistency is a
+// contract violation and surfaces as a unified `unknown_service_error` rather
+// than a silently wrong UI count. An empty array is valid and yields 0/0.
+function parseProjectMembers(
+  value: unknown,
+): ProjectServiceResult<ProjectMember[]> {
+  if (!Array.isArray(value)) return invalidPayload()
+  const rows = value.map(parseProjectMember)
+  if (rows.some((row) => row === null)) return invalidPayload()
+
+  const members = rows as ProjectMember[]
+  if (members.length === 0) return { ok: true, data: [] }
+
+  const first = members[0]
+  const activeCount = first.active_member_count
+  const inactiveCount = first.inactive_historical_member_count
+
+  const allCountsConsistent = members.every(
+    (member) =>
+      member.active_member_count === activeCount &&
+      member.inactive_historical_member_count === inactiveCount,
+  )
+  if (!allCountsConsistent) return invalidPayload()
+
+  if (activeCount + inactiveCount !== members.length) {
+    return invalidPayload()
+  }
+
+  const actualActive = members.filter((member) => member.is_active).length
+  const actualInactive = members.filter((member) => !member.is_active).length
+  if (actualActive !== activeCount || actualInactive !== inactiveCount) {
+    return invalidPayload()
+  }
+
+  return { ok: true, data: members }
 }
 
 function parseRows<T>(
@@ -282,7 +335,7 @@ export async function listProjectMembers(
       p_project_id: projectId,
     })
     if (error) return { ok: false, error: mapProjectError(error) }
-    return parseRows(data, parseProjectMember)
+    return parseProjectMembers(data)
   } catch (error) {
     return { ok: false, error: mapProjectError(error) }
   }

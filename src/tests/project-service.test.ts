@@ -473,4 +473,206 @@ describe('项目 service', () => {
       expect(result.error.code).not.toBe('authentication_required')
     })
   })
+
+  describe('成员计数契约校验', () => {
+    function memberRow(overrides: Record<string, unknown> = {}) {
+      return {
+        project_id: projectRow.project_id,
+        workspace_id: FICTIONAL_WORKSPACE_ID,
+        app_user_id: 'bbbbbbbb-1111-4111-8111-111111111111',
+        display_name: '虚构成员',
+        workspace_role: 'member' as const,
+        project_role: 'member' as const,
+        joined_at: projectRow.created_at,
+        is_current_user: false,
+        is_active: true,
+        active_member_count: 1,
+        inactive_historical_member_count: 0,
+        ...overrides,
+      }
+    }
+
+    it('合法单条成员数据通过校验', async () => {
+      const supabase = createSupabaseClientMock()
+      supabase.rpc.mockResolvedValue({
+        data: [memberRow()],
+        error: null,
+      })
+      const result = await listProjectMembers(
+        supabase.client,
+        projectRow.project_id,
+      )
+      expect(result).toEqual({ ok: true, data: [memberRow()] })
+    })
+
+    it('合法混合 active/inactive 数据通过校验', async () => {
+      const active = memberRow({
+        app_user_id: 'bbbbbbbb-1111-4111-8111-111111111111',
+        is_active: true,
+        active_member_count: 1,
+        inactive_historical_member_count: 2,
+      })
+      const inactive = memberRow({
+        app_user_id: 'cccccccc-1111-4111-8111-111111111111',
+        is_active: false,
+        active_member_count: 1,
+        inactive_historical_member_count: 2,
+      })
+      const inactive2 = memberRow({
+        app_user_id: 'dddddddd-1111-4111-8111-111111111111',
+        is_active: false,
+        active_member_count: 1,
+        inactive_historical_member_count: 2,
+      })
+      const supabase = createSupabaseClientMock()
+      supabase.rpc.mockResolvedValue({
+        data: [active, inactive, inactive2],
+        error: null,
+      })
+      const result = await listProjectMembers(
+        supabase.client,
+        projectRow.project_id,
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.data).toHaveLength(3)
+    })
+
+    it('空数组合法返回空数组', async () => {
+      const supabase = createSupabaseClientMock()
+      supabase.rpc.mockResolvedValue({ data: [], error: null })
+      const result = await listProjectMembers(
+        supabase.client,
+        projectRow.project_id,
+      )
+      expect(result).toEqual({ ok: true, data: [] })
+    })
+
+    it('负计数安全失败', async () => {
+      const supabase = createSupabaseClientMock()
+      supabase.rpc.mockResolvedValue({
+        data: [
+          memberRow({
+            active_member_count: -1,
+            inactive_historical_member_count: 0,
+          }),
+        ],
+        error: null,
+      })
+      const result = await listProjectMembers(
+        supabase.client,
+        projectRow.project_id,
+      )
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error.code).toBe('unknown_service_error')
+    })
+
+    it('小数计数安全失败', async () => {
+      const supabase = createSupabaseClientMock()
+      supabase.rpc.mockResolvedValue({
+        data: [
+          memberRow({
+            active_member_count: 1.5,
+            inactive_historical_member_count: 0,
+          }),
+        ],
+        error: null,
+      })
+      const result = await listProjectMembers(
+        supabase.client,
+        projectRow.project_id,
+      )
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error.code).toBe('unknown_service_error')
+    })
+
+    it('NaN/Infinity 计数安全失败', async () => {
+      const supabase = createSupabaseClientMock()
+      supabase.rpc.mockResolvedValue({
+        data: [
+          memberRow({
+            active_member_count: Number.NaN,
+            inactive_historical_member_count: 0,
+          }),
+        ],
+        error: null,
+      })
+      const result = await listProjectMembers(
+        supabase.client,
+        projectRow.project_id,
+      )
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error.code).toBe('unknown_service_error')
+    })
+
+    it('不同成员行计数不一致安全失败', async () => {
+      const first = memberRow({
+        app_user_id: 'bbbbbbbb-1111-4111-8111-111111111111',
+        active_member_count: 2,
+        inactive_historical_member_count: 0,
+      })
+      const second = memberRow({
+        app_user_id: 'cccccccc-1111-4111-8111-111111111111',
+        active_member_count: 3,
+        inactive_historical_member_count: 0,
+      })
+      const supabase = createSupabaseClientMock()
+      supabase.rpc.mockResolvedValue({ data: [first, second], error: null })
+      const result = await listProjectMembers(
+        supabase.client,
+        projectRow.project_id,
+      )
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error.code).toBe('unknown_service_error')
+    })
+
+    it('计数之和不等于行数安全失败', async () => {
+      const first = memberRow({
+        app_user_id: 'bbbbbbbb-1111-4111-8111-111111111111',
+        is_active: true,
+        active_member_count: 5,
+        inactive_historical_member_count: 5,
+      })
+      const supabase = createSupabaseClientMock()
+      supabase.rpc.mockResolvedValue({ data: [first], error: null })
+      const result = await listProjectMembers(
+        supabase.client,
+        projectRow.project_id,
+      )
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error.code).toBe('unknown_service_error')
+    })
+
+    it('计数与 is_active 标记不一致安全失败', async () => {
+      // Both rows are active, so actualActive = 2, but the header counts claim
+      // only one active and one inactive member: the counts disagree with the
+      // per-row is_active flags and must be rejected.
+      const first = memberRow({
+        app_user_id: 'bbbbbbbb-1111-4111-8111-111111111111',
+        is_active: true,
+        active_member_count: 1,
+        inactive_historical_member_count: 1,
+      })
+      const second = memberRow({
+        app_user_id: 'cccccccc-1111-4111-8111-111111111111',
+        is_active: true,
+        active_member_count: 1,
+        inactive_historical_member_count: 1,
+      })
+      const supabase = createSupabaseClientMock()
+      supabase.rpc.mockResolvedValue({ data: [first, second], error: null })
+      const result = await listProjectMembers(
+        supabase.client,
+        projectRow.project_id,
+      )
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error.code).toBe('unknown_service_error')
+    })
+  })
 })

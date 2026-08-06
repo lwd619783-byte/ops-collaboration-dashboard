@@ -212,12 +212,9 @@ export function ProjectDetailPage() {
       currentProjectMember?.project_role === 'owner' ||
       currentProjectMember?.project_role === 'lead')
 
-  const activeMemberCount = projectMembers.filter(
-    (member) => member.is_active,
-  ).length
-  const inactiveHistoricalMemberCount = projectMembers.filter(
-    (member) => !member.is_active,
-  ).length
+  const activeMemberCount = projectMembers[0]?.active_member_count ?? 0
+  const inactiveHistoricalMemberCount =
+    projectMembers[0]?.inactive_historical_member_count ?? 0
 
   return (
     <div className="page-stack project-detail-page">

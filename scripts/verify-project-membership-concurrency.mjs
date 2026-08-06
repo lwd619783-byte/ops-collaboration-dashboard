@@ -8,9 +8,15 @@
  * so project row locks, optimistic versions and transaction rollback are
  * exercised by PostgreSQL rather than mocked in JavaScript.
  *
- * The new 7.x scenarios use genuine row-lock contention (one transaction
- * acquires and holds the lock, the other blocks until it commits) instead of
- * fixed millisecond sleeps, proving the serialization order is linearizable.
+ * Every concurrent scenario uses genuine row-lock contention: the first
+ * transaction acquires and holds its locks (project row, app_users row, or
+ * workspace_members row) until it commits, while the second transaction
+ * blocks on the very same rows. A dedicated observer connection polls
+ * `pg_blocking_pids()` and confirms that the second backend is *actually*
+ * blocked by the first backend before the first is allowed to commit. The
+ * test fails if no real blocking is observed within a short deadline, so the
+ * serialization order is proven by PostgreSQL's own lock graph rather than by
+ * a fixed millisecond sleep.
  */
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -75,50 +81,35 @@ async function rollbackQuietly(client) {
   }
 }
 
-// Stale-version race: two writers contend on the project row lock; the second
-// observes the committed outcome of the first (stale version or removed row).
-async function concurrentStaleRace({
-  firstSql,
-  firstParams,
-  secondSql,
-  secondParams,
-  subject,
-}) {
-  const first = await connect()
-  const second = await connect()
-  try {
-    await beginActor(first, subject)
-    await beginActor(second, subject)
-    const firstResult = await first.query(firstSql, firstParams)
-    const secondPending = second.query(secondSql, secondParams)
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    await first.query('commit')
-    let secondError = null
-    try {
-      await secondPending
-      await second.query('commit')
-    } catch (error) {
-      secondError = error
-      await rollbackQuietly(second)
-    }
-    return { firstResult, secondError }
-  } finally {
-    await rollbackQuietly(first)
-    await rollbackQuietly(second)
-    await first.end()
-    await second.end()
-  }
+const BLOCKING_DEADLINE_MS = 6000
+const SLEEP_STEP_MS = 25
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-// Real-lock race: `first` acquires and holds its row locks until commit, while
-// `second` blocks on the same rows. Committing `first` releases the lock so
-// `second` proceeds. firstRole/secondRole pick authenticated (JWT) or plain
-// (postgres, used for direct status/role changes) execution. No fixed sleeps.
-async function realLockRace({
+// Genuine-lock race with explicit PostgreSQL blocking proof.
+//
+// Both business connections open a transaction. We record each backend PID,
+// run the first statement so it holds its row locks, then launch the second
+// statement and bind its rejection handler *immediately* (the handler owns the
+// rejection from creation, so it never becomes an unhandled rejection). A
+// third observer connection polls `pg_blocking_pids($2)` and only after it
+// confirms the second backend is blocked by the first backend do we commit the
+// first transaction. If no real blocking is observed within the deadline the
+// scenario is recorded as failed (and the first transaction is still committed
+// to release the lock so the second can finish and the run does not hang). All
+// transactions are closed/rolled back in `finally`.
+//
+// Local `lock_timeout` / `statement_timeout` are set as a CI safety net so a
+// pathological lock never hangs the pipeline.
+async function lockWaitRace({
   firstRole,
   firstActor,
   firstSql,
   firstParams,
+  firstVerifySql,
+  firstVerifyParams,
   secondRole,
   secondActor,
   secondSql,
@@ -126,34 +117,77 @@ async function realLockRace({
 }) {
   const first = await connect()
   const second = await connect()
+  const observer = await connect()
+  let secondError = null
+  let blockedObserved = false
+  let firstResult
+  let firstVerify
   try {
     if (firstRole === 'auth') await beginActor(first, firstActor)
     else await first.query('begin')
     if (secondRole === 'auth') await beginActor(second, secondActor)
     else await second.query('begin')
-    const firstResult = await first.query(firstSql, firstParams)
-    let secondError = null
-    // Capture (do not re-throw) at creation so the rejection is owned here and
-    // never surfaces as an unhandled rejection before the await below runs.
-    const secondPending = second
-      .query(secondSql, secondParams)
-      .catch((error) => {
-        secondError = error
-      })
-    await first.query('commit')
+    // Safety nets so a CI never hangs if a lock is unexpectedly never released.
+    await first.query("set local statement_timeout = '30s'")
+    await second.query("set local lock_timeout = '20s'")
+    await second.query("set local statement_timeout = '30s'")
+
+    const firstPid = (await first.query('select pg_backend_pid() as pid'))
+      .rows[0].pid
+    const secondPid = (await second.query('select pg_backend_pid() as pid'))
+      .rows[0].pid
+
+    firstResult = await first.query(firstSql, firstParams)
+    if (firstVerifySql) {
+      firstVerify = await first.query(firstVerifySql, firstVerifyParams)
+    }
+
+    // Launch the second statement and bind its rejection handler at creation.
+    const secondPending = second.query(secondSql, secondParams)
+    secondPending.catch((error) => {
+      secondError = error
+    })
+
+    const deadline = Date.now() + BLOCKING_DEADLINE_MS
+    while (Date.now() < deadline) {
+      const probe = await observer.query(
+        'select $1 = any(pg_blocking_pids($2)) as blocked',
+        [firstPid, secondPid],
+      )
+      if (probe.rows[0]?.blocked) {
+        blockedObserved = true
+        break
+      }
+      await sleep(SLEEP_STEP_MS)
+    }
+
+    if (!blockedObserved) {
+      // Release the first transaction so the second can complete; the missing
+      // blocking observation is reported as a failed check below.
+      await first.query('commit')
+    } else {
+      await first.query('commit')
+    }
+
     try {
       await secondPending
-      if (!secondError) await second.query('commit')
-    } catch (error) {
-      secondError = error
-      await rollbackQuietly(second)
+    } catch {
+      // Already captured by the bound handler above.
     }
-    return { firstResult, secondError }
+    if (secondError) {
+      await rollbackQuietly(second)
+    } else {
+      await second.query('commit')
+    }
+
+    return { firstResult, firstVerify, secondError, blockedObserved }
   } finally {
     await rollbackQuietly(first)
     await rollbackQuietly(second)
+    await rollbackQuietly(observer)
     await first.end()
     await second.end()
+    await observer.end()
   }
 }
 
@@ -164,7 +198,10 @@ const ids = {
   candidateC: crypto.randomUUID(),
   candidateD: crypto.randomUUID(),
   ordinary: crypto.randomUUID(),
-  adminUser: crypto.randomUUID(),
+  adminWriteFirst: crypto.randomUUID(),
+  adminDemoteFirst: crypto.randomUUID(),
+  ordinaryWrite: crypto.randomUUID(),
+  ordinaryDemote: crypto.randomUUID(),
   workspace: crypto.randomUUID(),
   ownerRaceProject: crypto.randomUUID(),
   leadRaceProject: crypto.randomUUID(),
@@ -172,7 +209,8 @@ const ids = {
   tLeadProject: crypto.randomUUID(),
   tOwnerProject: crypto.randomUUID(),
   tOwnerProject2: crypto.randomUUID(),
-  tAdminProject: crypto.randomUUID(),
+  tAdminProjectWrite: crypto.randomUUID(),
+  tAdminProjectDemote: crypto.randomUUID(),
 }
 const subjects = {
   owner: `membership-concurrency-owner-${crypto.randomUUID()}`,
@@ -181,7 +219,10 @@ const subjects = {
   candidateC: `membership-concurrency-c-${crypto.randomUUID()}`,
   candidateD: `membership-concurrency-d-${crypto.randomUUID()}`,
   ordinary: `membership-concurrency-member-${crypto.randomUUID()}`,
-  adminUser: `membership-concurrency-admin-${crypto.randomUUID()}`,
+  adminWriteFirst: `membership-concurrency-admin-write-${crypto.randomUUID()}`,
+  adminDemoteFirst: `membership-concurrency-admin-demote-${crypto.randomUUID()}`,
+  ordinaryWrite: `membership-concurrency-ordinary-write-${crypto.randomUUID()}`,
+  ordinaryDemote: `membership-concurrency-ordinary-demote-${crypto.randomUUID()}`,
 }
 
 const users = {
@@ -191,11 +232,15 @@ const users = {
   candidateC: ids.candidateC,
   candidateD: ids.candidateD,
   ordinary: ids.ordinary,
-  adminUser: ids.adminUser,
+  adminWriteFirst: ids.adminWriteFirst,
+  adminDemoteFirst: ids.adminDemoteFirst,
+  ordinaryWrite: ids.ordinaryWrite,
+  ordinaryDemote: ids.ordinaryDemote,
 }
 const workspaceRoles = {
   [ids.owner]: 'owner',
-  [ids.adminUser]: 'admin',
+  [ids.adminWriteFirst]: 'admin',
+  [ids.adminDemoteFirst]: 'admin',
 }
 
 const setup = await connect()
@@ -241,7 +286,8 @@ try {
     ids.tLeadProject,
     ids.tOwnerProject,
     ids.tOwnerProject2,
-    ids.tAdminProject,
+    ids.tAdminProjectWrite,
+    ids.tAdminProjectDemote,
   ]) {
     await setup.query(
       `insert into public.projects
@@ -317,53 +363,74 @@ try {
 
 console.log('Project membership concurrency verification')
 
-const ownerRace = await concurrentStaleRace({
-  subject: subjects.owner,
+const ownerRace = await lockWaitRace({
+  firstRole: 'auth',
+  firstActor: subjects.owner,
   firstSql: 'select changed from public.transfer_project_owner($1, $2, $3)',
   firstParams: [ids.ownerRaceProject, ids.candidateA, ownerVersion],
+  secondRole: 'auth',
+  secondActor: subjects.owner,
   secondSql: 'select changed from public.transfer_project_owner($1, $2, $3)',
   secondParams: [ids.ownerRaceProject, ids.candidateB, ownerVersion],
 })
 check(
-  'first concurrent owner transfer succeeds',
+  'owner transfer stale race: first concurrent transfer succeeds',
   ownerRace.firstResult.rows[0]?.changed === true,
 )
 check(
-  'second owner transfer deterministically fails stale',
+  'owner transfer stale race: second transfer deterministically fails stale',
   ownerRace.secondError?.code === '40001',
 )
+check(
+  'owner transfer stale race: second transaction observed blocked on the project row',
+  ownerRace.blockedObserved === true,
+)
 
-const leadRace = await concurrentStaleRace({
-  subject: subjects.owner,
+const leadRace = await lockWaitRace({
+  firstRole: 'auth',
+  firstActor: subjects.owner,
   firstSql: 'select changed from public.set_project_lead($1, $2, $3)',
   firstParams: [ids.leadRaceProject, ids.candidateA, leadVersion],
+  secondRole: 'auth',
+  secondActor: subjects.owner,
   secondSql: 'select changed from public.set_project_lead($1, $2, $3)',
   secondParams: [ids.leadRaceProject, ids.candidateB, leadVersion],
 })
 check(
-  'first concurrent lead assignment succeeds',
+  'lead assignment stale race: first concurrent lead assignment succeeds',
   leadRace.firstResult.rows[0]?.changed === true,
 )
 check(
-  'second lead assignment deterministically fails stale',
+  'lead assignment stale race: second assignment deterministically fails stale',
   leadRace.secondError?.code === '40001',
 )
+check(
+  'lead assignment stale race: second transaction observed blocked on the project row',
+  leadRace.blockedObserved === true,
+)
 
-const removeRace = await concurrentStaleRace({
-  subject: subjects.owner,
+const removeRace = await lockWaitRace({
+  firstRole: 'auth',
+  firstActor: subjects.owner,
   firstSql: 'select changed from public.remove_project_member($1, $2)',
   firstParams: [ids.removeRaceProject, ids.ordinary],
+  secondRole: 'auth',
+  secondActor: subjects.owner,
   secondSql:
     "select changed from public.set_project_member_role($1, $2, 'viewer')",
   secondParams: [ids.removeRaceProject, ids.ordinary],
 })
 check(
-  'concurrent removal succeeds',
+  'remove-vs-role stale race: concurrent removal succeeds',
   removeRace.firstResult.rows[0]?.changed === true,
 )
 check(
-  'blocked role change observes committed removal',
+  'remove-vs-role stale race: blocked role change observes committed removal',
   removeRace.secondError?.code === 'P0002',
+)
+check(
+  'remove-vs-role stale race: second transaction observed blocked on the project row',
+  removeRace.blockedObserved === true,
 )
 
 const verify = await connect()
@@ -381,13 +448,13 @@ try {
     [[ids.ownerRaceProject, ids.leadRaceProject, ids.removeRaceProject]],
   )
   check(
-    'all raced projects retain exactly one aligned owner',
+    'all stale-raced projects retain exactly one aligned owner',
     invariants.rows.every(
       (row) => Number(row.owners) === 1 && row.owner_aligned === true,
     ),
   )
   check(
-    'all raced projects retain at most one aligned lead',
+    'all stale-raced projects retain at most one aligned lead',
     invariants.rows.every(
       (row) => Number(row.leads) <= 1 && row.lead_aligned === true,
     ),
@@ -408,7 +475,7 @@ try {
 // 7.1 Lead appointment vs workspace membership suspension (both orders).
 // The two operations contend on the candidate's workspace_members row lock.
 // ---------------------------------------------------------------------------
-const leadApptFirst = await realLockRace({
+const leadApptFirst = await lockWaitRace({
   firstRole: 'auth',
   firstActor: subjects.owner,
   firstSql: 'select changed from public.set_project_lead($1, $2, $3)',
@@ -427,8 +494,12 @@ check(
   '7.1 appointment-first: later workspace suspension is blocked because the candidate became an active lead',
   leadApptFirst.secondError?.code === '55000',
 )
+check(
+  '7.1 appointment-first: second transaction observed blocked on the candidate lock',
+  leadApptFirst.blockedObserved === true,
+)
 
-const leadSuspendFirst = await realLockRace({
+const leadSuspendFirst = await lockWaitRace({
   firstRole: 'auth',
   firstActor: subjects.owner,
   firstSql:
@@ -447,14 +518,18 @@ check(
   '7.1 suspension-first: lead appointment is rejected because the candidate is suspended',
   leadSuspendFirst.secondError?.code === '22023',
 )
+check(
+  '7.1 suspension-first: second transaction observed blocked on the candidate lock',
+  leadSuspendFirst.blockedObserved === true,
+)
 
 // ---------------------------------------------------------------------------
 // 7.2 Owner transfer vs app-user suspension (both orders).
-// The two operations contend on the target's app_users row lock. candidateC is
-// a plain workspace member with no project responsibility, so suspension is
-// always permitted before any transfer.
+// The two operations contend on the target's app_users row lock. candidateC and
+// candidateD are plain workspace members with no project responsibility, so
+// suspension is always permitted before any transfer.
 // ---------------------------------------------------------------------------
-const ownerTransferFirst = await realLockRace({
+const ownerTransferFirst = await lockWaitRace({
   firstRole: 'auth',
   firstActor: subjects.owner,
   firstSql: 'select changed from public.transfer_project_owner($1, $2, $3)',
@@ -472,8 +547,12 @@ check(
   '7.2 transfer-first: later app-user suspension is blocked because the target became an active owner',
   ownerTransferFirst.secondError?.code === '55000',
 )
+check(
+  '7.2 transfer-first: second transaction observed blocked on the target lock',
+  ownerTransferFirst.blockedObserved === true,
+)
 
-const ownerSuspendFirst = await realLockRace({
+const ownerSuspendFirst = await lockWaitRace({
   firstRole: 'plain',
   firstSql:
     'update public.app_users set status = $2, disabled_at = now() where id = $1',
@@ -491,48 +570,148 @@ check(
   '7.2 suspension-first: owner transfer is rejected because the target is suspended',
   ownerSuspendFirst.secondError?.code === '22023',
 )
+check(
+  '7.2 suspension-first: second transaction observed blocked on the target lock',
+  ownerSuspendFirst.blockedObserved === true,
+)
 
 // ---------------------------------------------------------------------------
 // 7.3 Workspace admin revocation vs ordinary member write (both orders).
-// The two operations contend on the admin's workspace_members row lock.
+//
+// Two fully independent scenarios. Each uses its own admin actor, its own
+// project, and its own ordinary target member; neither actor is an
+// owner/lead. The two operations contend on the actor's workspace_members row
+// lock. We explicitly pre-check that each actor starts as an active workspace
+// admin, prove the real blocking via pg_blocking_pids, and assert the expected
+// final actor role plus whether the target member relation was (or was not)
+// written.
 // ---------------------------------------------------------------------------
-const adminWriteFirst = await realLockRace({
+
+const writeFirstPre = await connect()
+try {
+  const row = (
+    await writeFirstPre.query(
+      'select role, status from public.workspace_members where workspace_id = $1 and user_id = $2',
+      [ids.workspace, ids.adminWriteFirst],
+    )
+  ).rows[0]
+  check(
+    '7.3 write-first: actor is an active workspace admin before the race',
+    row?.role === 'admin' && row?.status === 'active',
+  )
+} finally {
+  await writeFirstPre.end()
+}
+
+const demoteFirstPre = await connect()
+try {
+  const row = (
+    await demoteFirstPre.query(
+      'select role, status from public.workspace_members where workspace_id = $1 and user_id = $2',
+      [ids.workspace, ids.adminDemoteFirst],
+    )
+  ).rows[0]
+  check(
+    '7.3 demotion-first: actor is an active workspace admin before the race',
+    row?.role === 'admin' && row?.status === 'active',
+  )
+} finally {
+  await demoteFirstPre.end()
+}
+
+const adminWriteFirstRace = await lockWaitRace({
   firstRole: 'auth',
-  firstActor: subjects.adminUser,
+  firstActor: subjects.adminWriteFirst,
   firstSql: 'select changed from public.add_project_member($1, $2, $3)',
-  firstParams: [ids.tAdminProject, ids.ordinary, 'member'],
+  firstParams: [ids.tAdminProjectWrite, ids.ordinaryWrite, 'member'],
   secondRole: 'plain',
   secondSql:
     'update public.workspace_members set role = $2 where workspace_id = $1 and user_id = $3',
-  secondParams: [ids.workspace, 'member', ids.adminUser],
+  secondParams: [ids.workspace, 'member', ids.adminWriteFirst],
 })
 check(
-  '7.3 write-first: admin member write commits',
-  adminWriteFirst.firstResult.rows[0]?.changed === true,
+  '7.3 write-first: admin member write commits while holding the actor lock',
+  adminWriteFirstRace.firstResult.rows[0]?.changed === true,
 )
 check(
   '7.3 write-first: later admin demotion is applied (no lock conflict)',
-  adminWriteFirst.secondError === null,
+  adminWriteFirstRace.secondError === null,
+)
+check(
+  '7.3 write-first: second transaction observed blocked on the actor lock',
+  adminWriteFirstRace.blockedObserved === true,
 )
 
-const adminDemoteFirst = await realLockRace({
+const adminDemoteFirstRace = await lockWaitRace({
   firstRole: 'plain',
   firstSql:
     'update public.workspace_members set role = $2 where workspace_id = $1 and user_id = $3',
-  firstParams: [ids.workspace, 'member', ids.adminUser],
+  firstParams: [ids.workspace, 'member', ids.adminDemoteFirst],
   secondRole: 'auth',
-  secondActor: subjects.adminUser,
+  secondActor: subjects.adminDemoteFirst,
   secondSql: 'select changed from public.add_project_member($1, $2, $3)',
-  secondParams: [ids.tAdminProject, ids.ordinary, 'member'],
+  secondParams: [ids.tAdminProjectDemote, ids.ordinaryDemote, 'member'],
 })
 check(
-  '7.3 demotion-first: admin demotion commits',
-  adminDemoteFirst.firstResult.rowCount === 1,
+  '7.3 demotion-first: admin demotion commits while holding the actor lock',
+  adminDemoteFirstRace.firstResult.rowCount === 1,
 )
 check(
   '7.3 demotion-first: member write is rejected because the actor is no longer an admin',
-  adminDemoteFirst.secondError?.code === '42501',
+  adminDemoteFirstRace.secondError?.code === '42501',
 )
+check(
+  '7.3 demotion-first: second transaction observed blocked on the actor lock',
+  adminDemoteFirstRace.blockedObserved === true,
+)
+
+// Post-race assertions: the demotion-first target was never inserted (the RPC
+// returned 42501 before any insert), and both actors were demoted to member.
+const race7_3 = await connect()
+try {
+  const demoteMember = (
+    await race7_3.query(
+      'select count(*)::int as count from public.project_members where project_id = $1 and user_id = $2',
+      [ids.tAdminProjectDemote, ids.ordinaryDemote],
+    )
+  ).rows[0].count
+  const writeMember = (
+    await race7_3.query(
+      'select count(*)::int as count from public.project_members where project_id = $1 and user_id = $2',
+      [ids.tAdminProjectWrite, ids.ordinaryWrite],
+    )
+  ).rows[0].count
+  const writeActorRole = (
+    await race7_3.query(
+      'select role from public.workspace_members where workspace_id = $1 and user_id = $2',
+      [ids.workspace, ids.adminWriteFirst],
+    )
+  ).rows[0].role
+  const demoteActorRole = (
+    await race7_3.query(
+      'select role from public.workspace_members where workspace_id = $1 and user_id = $2',
+      [ids.workspace, ids.adminDemoteFirst],
+    )
+  ).rows[0].role
+  check(
+    '7.3 demotion-first: target member relation was NOT created',
+    demoteMember === 0,
+  )
+  check(
+    '7.3 write-first: target member relation WAS created',
+    writeMember === 1,
+  )
+  check(
+    '7.3 write-first: actor was demoted to member',
+    writeActorRole === 'member',
+  )
+  check(
+    '7.3 demotion-first: actor was demoted to member',
+    demoteActorRole === 'member',
+  )
+} finally {
+  await race7_3.end()
+}
 
 const raceInvariants = await connect()
 try {
@@ -549,7 +728,8 @@ try {
         ids.tLeadProject,
         ids.tOwnerProject,
         ids.tOwnerProject2,
-        ids.tAdminProject,
+        ids.tAdminProjectWrite,
+        ids.tAdminProjectDemote,
       ],
     ],
   )

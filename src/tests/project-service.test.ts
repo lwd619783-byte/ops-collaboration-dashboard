@@ -294,27 +294,41 @@ describe('项目 service', () => {
   })
 
   it.each([
-    ['project_module_validation_failed', 'module_validation_failed'],
-    ['project_module_name_conflict', 'module_name_conflict'],
-    ['project_module_order_invalid', 'module_order_invalid'],
-    ['project_module_not_found_or_forbidden', 'module_not_found_or_forbidden'],
-    ['project_module_not_empty', 'module_not_empty'],
-    ['project_module_permission_denied', 'permission_denied'],
-  ] as const)('模块业务错误 %s 映射为安全错误 %s', async (code, expected) => {
-    const supabase = createSupabaseClientMock()
-    supabase.rpc.mockResolvedValue({
-      data: null,
-      error: { code, message: code },
-    })
-    const result = await addProjectModule(supabase.client, {
-      projectId: projectRow.project_id,
-      name: '虚构模块',
-    })
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.error.code).toBe(expected)
-    expect(result.error.message).not.toContain('public.')
-  })
+    ['22023', 'project_module_validation_failed', 'module_validation_failed'],
+    ['23505', 'project_module_name_conflict', 'module_name_conflict'],
+    ['22023', 'project_module_order_invalid', 'module_order_invalid'],
+    [
+      '42501',
+      'project_module_not_found_or_forbidden',
+      'module_not_found_or_forbidden',
+    ],
+    ['55000', 'project_module_not_empty', 'module_not_empty'],
+    ['42501', 'project_module_permission_denied', 'permission_denied'],
+  ] as const)(
+    '真实数据库模块错误 %s / %s 映射为安全错误 %s',
+    async (code, signal, expected) => {
+      const supabase = createSupabaseClientMock()
+      supabase.rpc.mockResolvedValue({
+        data: null,
+        error: {
+          code,
+          message: signal,
+          details: 'internal relation public.project_modules must stay private',
+          hint: null,
+        },
+      })
+      const result = await addProjectModule(supabase.client, {
+        projectId: projectRow.project_id,
+        name: '虚构模块',
+      })
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error.code).toBe(expected)
+      expect(result.error.message).not.toContain('public.')
+      expect(result.error.code).not.toBe('network_unavailable')
+      expect(result.error.code).not.toBe('unknown_service_error')
+    },
+  )
 
   it('无效枚举或缺失作用域字段的 RPC 载荷安全失败，不进入 UI', async () => {
     const supabase = createSupabaseClientMock()

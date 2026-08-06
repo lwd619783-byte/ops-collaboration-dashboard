@@ -46,6 +46,10 @@ Task 2.3 在现有项目 CRUD、项目成员和统一 `app_user_id` 权限边界
 
 `create_project` 保留原八参数签名作为“默认不创建预设”的兼容包装器，并新增无默认参数的九参数重载，避免签名歧义。`projects.module_preset_initialized` 是不可变的内部幂等输入：同一幂等键用不同预设选择重试会稳定冲突。项目、owner 关系和全部预设模块在同一数据库事务中插入；任一模块失败会回滚项目和全部模块。
 
+九参数入口在读取幂等项目或写入任何业务行之前调用内部 `lock_workspace_project_creator(workspace_id)`。该函数只从 `current_app_user_id()` 解析操作者，依次锁定目标 `workspaces` 行、actor 的 `app_users` 行、目标工作空间中的 actor `workspace_members` 行，然后重新调用唯一权威规则 `can_manage_workspace_projects()`。锁后只有 active app user、active workspace membership 且角色仍为 owner / admin 的操作者可以继续；member、external collaborator、suspended membership、inactive app user、撤销身份、未知工作空间和无权限工作空间统一得到 `42501 project_permission_denied`。八参数包装器委托九参数入口，因此使用相同边界。
+
+锁顺序与撤权操作不存在反向等待：workspace role/status RPC 锁目标成员行后不再请求 workspace 或 app-user 行；app-user 状态写锁 app-user 行后不再请求 workspace 行。若 owner 已锁住 admin 的成员行准备降权，项目创建会在第三步真实等待；降权提交后，创建请求在锁内重新鉴权并失败，不会查询幂等项目，也不会留下 project、project owner relation 或预设模块。反过来，创建先取得三类锁时，后续撤权会等到原子创建事务完成。
+
 ## 写入、排序和锁
 
 模块新增、改名、完整排序与删除依次使用：
@@ -66,7 +70,7 @@ Task 2.3 在现有项目 CRUD、项目成员和统一 `app_user_id` 权限边界
 
 排序必须提交当前全部有效模块 ID。数据库拒绝 NULL、重复、缺失、多余、已删除和跨项目 ID；验证通过后先把全部位置移到不冲突区间，再在同一事务中写入完整零起点序列，因此任意交换都不会触发中间唯一冲突或留下部分顺序。项目行锁使同一项目的新增、排序和删除线性化；不同项目保持隔离。
 
-`scripts/verify-project-module-concurrency.mjs` 使用独立随机夹具、多个真实 PostgreSQL 连接、`lock_timeout`、`statement_timeout` 和 observer 连接。observer 通过 `pg_blocking_pids()` 证明发生实际锁等待后才释放首事务，覆盖：并发新增、并发完整重排、删除与排序、等待期间 lead 被降级、等待期间项目归档、跨项目模块混入。脚本在 `finally` 中只清理本轮随机夹具，不输出连接串、JWT 或密钥。
+`scripts/verify-project-module-concurrency.mjs` 使用独立随机夹具、多个真实 PostgreSQL 连接、`lock_timeout`、`statement_timeout` 和 observer 连接。observer 通过 `pg_blocking_pids()` 证明发生实际锁等待后才释放首事务，共执行 28 项检查，覆盖：workspace admin 在项目创建等待期间被 owner 降为 member（创建以 `42501` 失败且 project / project_members / project_modules 均为 0）、并发新增、并发完整重排、删除与排序、等待期间 lead 被降级、等待期间项目归档、跨项目模块混入。脚本在 `finally` 中只清理本轮随机工作空间夹具，不输出连接串、JWT 或密钥。
 
 ## 删除策略与 Task 3.1 契约
 
@@ -86,7 +90,7 @@ Task 3.1 必须同时继承以下契约：
 
 `src/features/projects` 提供严格 `ProjectModule` 模型、RPC 参数映射、运行时形状校验、项目作用域校验、连续位置与唯一 ID 校验，以及稳定错误到安全中文提示的映射。畸形、跨项目、顺序缺口或重复 ID 的响应统一安全失败，组件不直接消费未验证数据库载荷。
 
-项目详情的“工作模块”区域独立显示加载、错误重试、无权限、空状态、数量、只读原因和管理操作。owner / lead 及现有规则授权的工作空间管理员可新增、改名、上移、下移和确认删除；member / viewer 与归档项目只读。首项不能上移、末项不能下移，所有提交期间禁用重复操作。组件以项目作用域 key、请求 epoch、动作 epoch 和卸载失效共同阻止快速点击、乱序响应、工作空间切换、项目切换及 A→B→A 返回时的旧响应覆盖。
+项目详情的“工作模块”区域独立显示加载、错误重试、无权限、空状态、数量、只读原因和管理操作。owner / lead 及现有规则授权的工作空间管理员可新增、改名、上移、下移和确认删除；member / viewer 与归档项目只读。首项不能上移、末项不能下移，所有提交期间禁用重复操作。新增、改名和删除失败使用 `role="alert"` 且只在当前活动模态对话框内部显示，避免 inert 页面背景中的错误不可见或被重复播报；对话框保持打开、确认按钮恢复可用，修改输入或关闭对话框会清除旧错误。没有对话框的排序失败仍在模块区域显示页面级 alert。组件以项目作用域 key、请求 epoch、动作 epoch 和卸载失效共同阻止快速点击、乱序响应、工作空间切换、项目切换及 A→B→A 返回时的旧响应覆盖。
 
 ## 本轮不包含
 

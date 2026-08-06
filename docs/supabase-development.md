@@ -41,7 +41,7 @@ Task 2.2 的成员写 RPC 通过内部 `public.lock_membership_participants(p_pr
 
 具体 RPC 锁边界、锁顺序、当前 vs 归档历史职责、并发撤销线性化与计数语义见 [项目成员与牵头人 V1](project-membership-and-lead.md)。当前并发验证共 38 项：3 项 stale 读后写竞争（均显式校验第二事务被第一事务持有的项目行锁阻塞），以及 35 项真实行锁竞争（lead 任命 vs 工作空间停用、owner 转让 vs app user 停用、admin 降级 vs 普通成员写，均验证两种顺序，并用独立 observer 连接通过 `pg_blocking_pids()` 显式证明第二事务被第一事务锁阻塞，校验赛后每个项目仍恰好一个 owner、至多一个 lead）。
 
-Task 2.3 的模块写 RPC 统一调用内部 `lock_project_for_module_write(project_id)`：先锁 `projects`，再复用 Task 2.2 的 actor 身份锁，最后按模块 id 锁行并在锁内重查权限与归档状态。模块并发脚本共 22 项断言，覆盖并发新增、并发完整重排、删除 vs 排序、等待期间 lead 降级、等待期间项目归档及跨项目 ID 隔离；每个竞争都由 observer 通过 `pg_blocking_pids()` 证明真实阻塞。完整设计与 Task 3.1 外键契约见 [项目工作模块 V1](project-modules.md)。
+Task 2.3 的模块写 RPC 统一调用内部 `lock_project_for_module_write(project_id)`：先锁 `projects`，再复用 Task 2.2 的 actor 身份锁，最后按模块 id 锁行并在锁内重查权限与归档状态。项目创建另由内部 `lock_workspace_project_creator(workspace_id)` 按 `workspaces → actor app_users → actor workspace_members` 加锁，再复用 `can_manage_workspace_projects()` 重新鉴权；因此 admin 在等待期间被降为 member 后以 `42501` 失败，且不会留下任何项目、成员或预设模块。模块并发脚本共 28 项断言，覆盖该项目创建撤权竞态、并发新增、并发完整重排、删除 vs 排序、等待期间 lead 降级、等待期间项目归档及跨项目 ID 隔离；每个竞争都由 observer 通过 `pg_blocking_pids()` 证明真实阻塞。完整设计与 Task 3.1 外键契约见 [项目工作模块 V1](project-modules.md)。
 
 ## 创建和验证 migration
 

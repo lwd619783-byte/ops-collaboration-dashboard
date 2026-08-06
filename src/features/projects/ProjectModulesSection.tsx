@@ -238,7 +238,7 @@ export function ProjectModulesSection({
           {feedback}
         </p>
       )}
-      {mutationError && (
+      {mutationError && dialog === null && (
         <p className="form-error" role="alert">
           {mutationError}
         </p>
@@ -354,6 +354,12 @@ export function ProjectModulesSection({
             required
             value={moduleName}
           />
+          {mutationError &&
+            (dialog?.kind === 'add' || dialog?.kind === 'rename') && (
+              <p className="form-error" role="alert">
+                {mutationError}
+              </p>
+            )}
         </div>
       </Dialog>
 
@@ -368,7 +374,16 @@ export function ProjectModulesSection({
         open={dialog?.kind === 'delete'}
         title="删除工作模块"
       >
-        {dialog?.kind === 'delete' && <p>待删除模块：{dialog.module.name}</p>}
+        {dialog?.kind === 'delete' && (
+          <>
+            <p>待删除模块：{dialog.module.name}</p>
+            {mutationError && (
+              <p className="form-error" role="alert">
+                {mutationError}
+              </p>
+            )}
+          </>
+        )}
       </Dialog>
     </section>
   )

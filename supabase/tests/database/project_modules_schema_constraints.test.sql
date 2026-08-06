@@ -189,6 +189,27 @@ select ok(to_regprocedure('public.delete_project_module(uuid,uuid)') is not null
 select ok(to_regprocedure('public.add_project_module(uuid,text,uuid)') is null, 'module add RPC accepts no client actor');
 select ok(to_regprocedure('public.create_project(uuid,text,text,public.project_type,public.project_status,date,date,uuid)') is not null, 'legacy create_project signature remains');
 select ok(to_regprocedure('public.create_project(uuid,text,text,public.project_type,public.project_status,date,date,uuid,boolean)') is not null, 'preset-aware create_project signature exists');
+select ok(to_regprocedure('public.lock_workspace_project_creator(uuid)') is not null, 'project creator lock helper exists');
+select ok((
+  select prosecdef
+  from pg_proc
+  where oid = 'public.lock_workspace_project_creator(uuid)'::regprocedure
+), 'project creator lock helper is SECURITY DEFINER');
+select ok((
+  select array_to_string(proconfig, ',') = 'search_path=""'
+  from pg_proc
+  where oid = 'public.lock_workspace_project_creator(uuid)'::regprocedure
+), 'project creator lock helper pins an empty search_path');
+select is((
+  select pg_get_userbyid(proowner)
+  from pg_proc
+  where oid = 'public.lock_workspace_project_creator(uuid)'::regprocedure
+), 'postgres', 'project creator lock helper explicitly belongs to postgres');
+select ok(not has_function_privilege('public', 'public.lock_workspace_project_creator(uuid)', 'execute'), 'PUBLIC cannot execute the project creator lock helper');
+select ok(not has_function_privilege('anon', 'public.lock_workspace_project_creator(uuid)', 'execute'), 'anon cannot execute the project creator lock helper');
+select ok(not has_function_privilege('authenticated', 'public.lock_workspace_project_creator(uuid)', 'execute'), 'authenticated cannot execute the project creator lock helper');
+select ok(not has_function_privilege('service_role', 'public.lock_workspace_project_creator(uuid)', 'execute'), 'service_role cannot execute the project creator lock helper');
+select ok(to_regprocedure('public.lock_workspace_project_creator(uuid,uuid)') is null, 'project creator lock helper accepts no client actor');
 select is(
   (select pronargdefaults from pg_proc where oid = 'public.create_project(uuid,text,text,public.project_type,public.project_status,date,date,uuid,boolean)'::regprocedure),
   0::smallint,

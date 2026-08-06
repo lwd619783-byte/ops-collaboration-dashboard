@@ -42,6 +42,30 @@ as $function$
   select count(*) from public.projects where idempotency_key = p_key;
 $function$;
 
+create function pg_temp.project_member_count_for_key(p_key uuid)
+returns bigint
+language sql
+security definer
+set search_path = ''
+as $function$
+  select count(*)
+  from public.project_members as pm
+  join public.projects as p on p.id = pm.project_id
+  where p.idempotency_key = p_key;
+$function$;
+
+create function pg_temp.project_module_count_for_key(p_key uuid)
+returns bigint
+language sql
+security definer
+set search_path = ''
+as $function$
+  select count(*)
+  from public.project_modules as m
+  join public.projects as p on p.id = m.project_id
+  where p.idempotency_key = p_key;
+$function$;
+
 create function pg_temp.preset_count()
 returns bigint
 language sql
@@ -68,6 +92,8 @@ grant execute on function pg_temp.sqlstate_of(text) to public;
 grant execute on function pg_temp.module_history_count(uuid) to public;
 grant execute on function pg_temp.deleted_module_count(uuid) to public;
 grant execute on function pg_temp.project_count_for_key(uuid) to public;
+grant execute on function pg_temp.project_member_count_for_key(uuid) to public;
+grant execute on function pg_temp.project_module_count_for_key(uuid) to public;
 grant execute on function pg_temp.preset_count() to public;
 grant execute on function pg_temp.preset_match_count(uuid) to public;
 
@@ -82,7 +108,9 @@ insert into public.app_users (id, status, disabled_at) values
   ('b1000000-0000-4000-8000-000000000006', 'active', null),
   ('b1000000-0000-4000-8000-000000000007', 'active', null),
   ('b1000000-0000-4000-8000-000000000008', 'active', null),
-  ('b1000000-0000-4000-8000-000000000009', 'active', null);
+  ('b1000000-0000-4000-8000-000000000009', 'active', null),
+  ('b1000000-0000-4000-8000-000000000010', 'active', null),
+  ('b1000000-0000-4000-8000-000000000011', 'suspended', now());
 
 insert into public.profiles (user_id, display_name) values
   ('b1000000-0000-4000-8000-000000000001', 'Fictional module owner'),
@@ -93,7 +121,9 @@ insert into public.profiles (user_id, display_name) values
   ('b1000000-0000-4000-8000-000000000006', 'Fictional outsider'),
   ('b1000000-0000-4000-8000-000000000007', 'Fictional other owner'),
   ('b1000000-0000-4000-8000-000000000008', 'Fictional revoked member'),
-  ('b1000000-0000-4000-8000-000000000009', 'Fictional removable member');
+  ('b1000000-0000-4000-8000-000000000009', 'Fictional removable member'),
+  ('b1000000-0000-4000-8000-000000000010', 'Fictional suspended workspace admin'),
+  ('b1000000-0000-4000-8000-000000000011', 'Fictional inactive app admin');
 
 insert into public.user_identities (
   user_id, provider, provider_tenant, provider_subject, verified_at, revoked_at
@@ -106,7 +136,9 @@ insert into public.user_identities (
   ('b1000000-0000-4000-8000-000000000006', 'supabase_auth', 'https://module-fixture.invalid', 'module-outsider', now(), null),
   ('b1000000-0000-4000-8000-000000000007', 'supabase_auth', 'https://module-fixture.invalid', 'module-other-owner', now(), null),
   ('b1000000-0000-4000-8000-000000000008', 'supabase_auth', 'https://module-fixture.invalid', 'module-revoked', now(), now()),
-  ('b1000000-0000-4000-8000-000000000009', 'supabase_auth', 'https://module-fixture.invalid', 'module-removable', now(), null);
+  ('b1000000-0000-4000-8000-000000000009', 'supabase_auth', 'https://module-fixture.invalid', 'module-removable', now(), null),
+  ('b1000000-0000-4000-8000-000000000010', 'supabase_auth', 'https://module-fixture.invalid', 'module-suspended-admin', now(), null),
+  ('b1000000-0000-4000-8000-000000000011', 'supabase_auth', 'https://module-fixture.invalid', 'module-inactive-admin', now(), null);
 
 insert into public.workspaces (id, name, owner_id, created_by) values
   ('b2000000-0000-4000-8000-000000000001', 'Fictional module workspace', 'b1000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000001'),
@@ -123,6 +155,12 @@ insert into public.workspace_members (
   ('b2000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000008', 'member', 'active', 'b1000000-0000-4000-8000-000000000001', now()),
   ('b2000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000009', 'member', 'active', 'b1000000-0000-4000-8000-000000000001', now()),
   ('b2000000-0000-4000-8000-000000000002', 'b1000000-0000-4000-8000-000000000007', 'owner', 'active', 'b1000000-0000-4000-8000-000000000007', now());
+
+insert into public.workspace_members (
+  workspace_id, user_id, role, status, invited_by, joined_at, disabled_at
+) values
+  ('b2000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000010', 'admin', 'suspended', 'b1000000-0000-4000-8000-000000000001', now(), now()),
+  ('b2000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000011', 'admin', 'active', 'b1000000-0000-4000-8000-000000000001', now(), null);
 
 insert into public.projects (
   id, workspace_id, name, status, owner_id, lead_id, created_by,
@@ -307,7 +345,18 @@ select is((select count(name) from public.project_modules where project_id = 'b3
 select is(pg_temp.sqlstate_of($sql$ select * from public.add_project_module('b3000000-0000-4000-8000-000000000001', 'Member Denied') $sql$), '42501', 'member cannot add modules');
 select is(pg_temp.sqlstate_of($sql$ select * from public.reorder_project_modules('b3000000-0000-4000-8000-000000000001', array[]::uuid[]) $sql$), '42501', 'member cannot reorder modules');
 select is(pg_temp.sqlstate_of($sql$ select * from public.delete_project_module('b3000000-0000-4000-8000-000000000001', 'b5000000-0000-4000-8000-000000000001') $sql$), '42501', 'member cannot delete modules');
+select is(pg_temp.sqlstate_of($sql$ select public.lock_workspace_project_creator('b2000000-0000-4000-8000-000000000001') $sql$), '42501', 'authenticated browser cannot directly execute the project creator lock helper');
+select is(pg_temp.sqlstate_of($sql$
+  select * from public.create_project(
+    'b2000000-0000-4000-8000-000000000001', 'Fictional denied member create', null,
+    'operations', 'planning', null, null,
+    'b6000000-0000-4000-8000-000000000011', true
+  )
+$sql$), '42501', 'active workspace member without owner or admin role is rejected after the creator lock');
 reset role;
+select is(pg_temp.project_count_for_key('b6000000-0000-4000-8000-000000000011'), 0::bigint, 'denied member create leaves no project');
+select is(pg_temp.project_member_count_for_key('b6000000-0000-4000-8000-000000000011'), 0::bigint, 'denied member create leaves no project owner relation');
+select is(pg_temp.project_module_count_for_key('b6000000-0000-4000-8000-000000000011'), 0::bigint, 'denied member preset create leaves no modules');
 
 set local "request.jwt.claims" = '{"sub":"module-viewer","iss":"https://module-fixture.invalid","role":"authenticated"}';
 set local role authenticated;
@@ -319,14 +368,82 @@ set local "request.jwt.claims" = '{"sub":"module-admin","iss":"https://module-fi
 set local role authenticated;
 select is((select count(*) from public.list_project_modules('b3000000-0000-4000-8000-000000000002')), 1::bigint, 'workspace admin reads a project without direct project membership');
 select is((select count(*) from public.add_project_module('b3000000-0000-4000-8000-000000000002', 'Admin Added Module')), 2::bigint, 'workspace admin management strictly inherits current project rules');
+select is((select count(*) from public.create_project(
+  'b2000000-0000-4000-8000-000000000001', 'Fictional admin locked create', null,
+  'operations', 'planning', null, null,
+  'b6000000-0000-4000-8000-000000000016', false
+)), 1::bigint, 'active workspace admin remains authorized after creator locks are acquired');
 reset role;
+select is(pg_temp.project_count_for_key('b6000000-0000-4000-8000-000000000016'), 1::bigint, 'authorized admin create persists exactly one project');
+
+set local "request.jwt.claims" = '{"sub":"module-suspended-admin","iss":"https://module-fixture.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(pg_temp.sqlstate_of($sql$
+  select * from public.create_project(
+    'b2000000-0000-4000-8000-000000000001', 'Fictional suspended member create', null,
+    'operations', 'planning', null, null,
+    'b6000000-0000-4000-8000-000000000012', true
+  )
+$sql$), '42501', 'suspended workspace admin is rejected by lock-after-auth create boundary');
+reset role;
+select is(pg_temp.project_count_for_key('b6000000-0000-4000-8000-000000000012'), 0::bigint, 'suspended workspace member leaves no project');
+select is(pg_temp.project_member_count_for_key('b6000000-0000-4000-8000-000000000012'), 0::bigint, 'suspended workspace member leaves no project relation');
+select is(pg_temp.project_module_count_for_key('b6000000-0000-4000-8000-000000000012'), 0::bigint, 'suspended workspace member leaves no preset modules');
+
+set local "request.jwt.claims" = '{"sub":"module-inactive-admin","iss":"https://module-fixture.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(pg_temp.sqlstate_of($sql$
+  select * from public.create_project(
+    'b2000000-0000-4000-8000-000000000001', 'Fictional inactive app create', null,
+    'operations', 'planning', null, null,
+    'b6000000-0000-4000-8000-000000000013'
+  )
+$sql$), '42501', 'inactive app user is rejected through the legacy eight-argument wrapper');
+reset role;
+select is(pg_temp.project_count_for_key('b6000000-0000-4000-8000-000000000013'), 0::bigint, 'inactive app user leaves no project');
+select is(pg_temp.project_member_count_for_key('b6000000-0000-4000-8000-000000000013'), 0::bigint, 'inactive app user leaves no project relation');
+select is(pg_temp.project_module_count_for_key('b6000000-0000-4000-8000-000000000013'), 0::bigint, 'legacy denied create leaves no modules');
+
+set local "request.jwt.claims" = '{"sub":"module-revoked","iss":"https://module-fixture.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(pg_temp.sqlstate_of($sql$
+  select * from public.create_project(
+    'b2000000-0000-4000-8000-000000000001', 'Fictional revoked identity create', null,
+    'operations', 'planning', null, null,
+    'b6000000-0000-4000-8000-000000000014', true
+  )
+$sql$), '42501', 'revoked identity cannot enter the project creator lock boundary');
+reset role;
+select is(pg_temp.project_count_for_key('b6000000-0000-4000-8000-000000000014'), 0::bigint, 'revoked identity leaves no project');
+select is(pg_temp.project_member_count_for_key('b6000000-0000-4000-8000-000000000014'), 0::bigint, 'revoked identity leaves no project relation');
+select is(pg_temp.project_module_count_for_key('b6000000-0000-4000-8000-000000000014'), 0::bigint, 'revoked identity leaves no preset modules');
 
 set local "request.jwt.claims" = '{"sub":"module-outsider","iss":"https://module-fixture.invalid","role":"authenticated"}';
 set local role authenticated;
 select is(pg_temp.sqlstate_of($sql$ select * from public.list_project_modules('b3000000-0000-4000-8000-000000000001') $sql$), '42501', 'workspace outsider cannot list modules');
 select is((select count(name) from public.project_modules), 0::bigint, 'workspace outsider RLS reads no modules');
 select is(pg_temp.sqlstate_of($sql$ select * from public.add_project_module('b3000000-0000-4000-8000-000000000001', 'Outsider Denied') $sql$), '42501', 'workspace outsider cannot mutate guessed project modules');
+select is(pg_temp.sqlstate_of($sql$
+  select * from public.create_project(
+    'b2000000-0000-4000-8000-000000000001', 'Fictional outsider create', null,
+    'operations', 'planning', null, null,
+    'b6000000-0000-4000-8000-000000000015', true
+  )
+$sql$), '42501', 'unauthorized existing workspace returns the generic project permission state');
 reset role;
+select is(pg_temp.project_count_for_key('b6000000-0000-4000-8000-000000000015'), 0::bigint, 'outsider create leaves no project');
+
+set local "request.jwt.claims" = '{"sub":"module-owner","iss":"https://module-fixture.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(pg_temp.sqlstate_of($sql$
+  select * from public.create_project(
+    'b2000000-0000-4000-8000-00000000ffff', 'Fictional missing workspace create', null,
+    'operations', 'planning', null, null,
+    'b6000000-0000-4000-8000-000000000017', true
+  )
+$sql$), '42501', 'missing workspace returns the same generic project permission state');
+reset role;
+select is(pg_temp.project_count_for_key('b6000000-0000-4000-8000-000000000017'), 0::bigint, 'missing workspace create leaves no project');
 
 set local "request.jwt.claims" = '{"sub":"module-other-owner","iss":"https://module-fixture.invalid","role":"authenticated"}';
 set local role authenticated;
@@ -371,7 +488,8 @@ select is(pg_temp.sqlstate_of($sql$ select * from public.list_project_modules('b
 select is((select count(name) from public.project_modules), 0::bigint, 'revoked identity reads no module rows');
 reset role;
 
--- Project creation and preset insertion are one idempotent transaction. Tests
+-- The active workspace owner remains authorized after the creator locks, and
+-- project creation plus preset insertion are one idempotent transaction. Tests
 -- compare created rows to the authoritative preset function instead of
 -- maintaining a second copy of names.
 set local "request.jwt.claims" = '{"sub":"module-owner","iss":"https://module-fixture.invalid","role":"authenticated"}';
@@ -388,7 +506,7 @@ select pg_catalog.set_config(
 select is(
   (select count(*) from public.list_project_modules(current_setting('test.preset_project_id')::uuid)),
   pg_temp.preset_count(),
-  'preset-aware creation atomically creates every authoritative preset module'
+  'workspace owner remains authorized after creator locks and atomically creates every authoritative preset module'
 );
 select is(
   pg_temp.preset_match_count(current_setting('test.preset_project_id')::uuid),

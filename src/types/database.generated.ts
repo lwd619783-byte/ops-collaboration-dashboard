@@ -953,6 +953,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      lock_workspace_project_creator: {
+        Args: { p_workspace_id: string }
+        Returns: string
+      }
       mark_workspace_invitation_failed: {
         Args: { p_failure_code: string; p_invitation_id: string }
         Returns: Database["public"]["Enums"]["workspace_invitation_status"]

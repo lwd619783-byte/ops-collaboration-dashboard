@@ -149,20 +149,36 @@ function mapKnownCode(signal: string | null): ProjectErrorCode | null {
   }
 }
 
+function mapDatabaseBusinessMessage(
+  normalizedCode: string | null,
+  message: string | null,
+): ProjectErrorCode | null {
+  if (
+    normalizedCode?.length !== 5 ||
+    !message?.toLowerCase().startsWith('project_')
+  ) {
+    return null
+  }
+  return mapKnownCode(message.toLowerCase())
+}
+
 export function mapProjectError(error: unknown): SafeProjectError {
   const code = stringField(error, 'code')
   const message = stringField(error, 'message')
 
   // Normalize the structured code once so stable identifiers (PGRST301/302/303,
   // JWT codes, 42501, project_* codes) match regardless of upstream casing.
-  // `message` is intentionally NOT lower-cased here — it is only used as a
-  // loose fallback for gateway-supplied codes and is matched verbatim.
   const normalizedCode = code ? code.toLowerCase() : null
 
-  // The structured error code is authoritative. A descriptive message must
-  // never shadow an explicit code, and the code must be inspected even when a
-  // message is also present.
-  const mapped = mapKnownCode(normalizedCode) ?? mapKnownCode(message)
+  // PostgreSQL exposes custom RAISE messages with a five-character SQLSTATE in
+  // `code`. For those database-shaped errors only, an exact allow-listed
+  // `project_*` message carries the stable business reason before the generic
+  // SQLSTATE fallback. Gateway/authentication codes remain authoritative, and
+  // arbitrary database details can never become user-facing text.
+  const mapped =
+    mapDatabaseBusinessMessage(normalizedCode, message) ??
+    mapKnownCode(normalizedCode) ??
+    mapKnownCode(message?.toLowerCase() ?? null)
   if (mapped) return createSafeProjectError(mapped)
 
   // Some gateways surface authentication failures only through the message.

@@ -5,6 +5,7 @@ import {
   ProjectContext,
   type ProjectContextValue,
 } from '@/features/projects/ProjectContext'
+import { mapProjectError } from '@/features/projects/errors'
 import { ProjectModulesSection } from '@/features/projects/ProjectModulesSection'
 import type { Project, ProjectModule } from '@/features/projects/types'
 import { FICTIONAL_WORKSPACE_ID } from '@/tests/helpers/supabaseAuthMock'
@@ -316,25 +317,128 @@ describe('项目工作模块区域', () => {
     expect(screen.getByText('支撑模块乙')).toBeInTheDocument()
   })
 
-  it('安全业务错误不泄露数据库细节并允许再次操作', async () => {
-    const addModule = vi.fn(async () => ({
-      ok: false as const,
-      error: {
-        code: 'module_name_conflict' as const,
-        message: '当前项目中已存在同名模块。',
-      },
-    }))
+  it('新增冲突只在活动对话框播报，修改后可重试成功', async () => {
+    const added = [
+      ...modules,
+      module('cccccccc-3333-4333-8333-333333333333', '扩展模块丙', 2),
+    ]
+    const addModule = vi
+      .fn<ProjectContextValue['addModule']>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: mapProjectError({
+          code: '23505',
+          message: 'project_module_name_conflict',
+          details: 'duplicate key in public.project_modules',
+        }),
+      })
+      .mockResolvedValueOnce({ ok: true, data: added })
     const user = userEvent.setup()
     renderSection(projectValue({ addModule }))
     await user.click(await screen.findByRole('button', { name: '新增模块' }))
     const dialog = screen.getByRole('dialog', { name: '新增工作模块' })
-    await user.type(within(dialog).getByLabelText(/模块名称/), '核心模块甲')
+    const input = within(dialog).getByLabelText(/模块名称/)
+    await user.type(input, '核心模块甲')
     await user.click(within(dialog).getByRole('button', { name: '确认新增' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      '当前项目中已存在同名模块。',
-    )
-    expect(screen.getByRole('button', { name: '确认新增' })).toBeEnabled()
+    const alert = await within(dialog).findByRole('alert')
+    expect(alert).toHaveTextContent('当前项目中已存在同名模块。')
+    expect(screen.getAllByRole('alert', { hidden: true })).toHaveLength(1)
+    expect(dialog).toContainElement(alert)
+    expect(
+      within(dialog).getByRole('button', { name: '确认新增' }),
+    ).toBeEnabled()
     expect(screen.queryByText('public.project_modules')).toBeNull()
+
+    await user.clear(input)
+    await user.type(input, '扩展模块丙')
+    expect(within(dialog).queryByRole('alert')).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: '确认新增' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '新增工作模块' })).toBeNull(),
+    )
+    expect(addModule).toHaveBeenCalledTimes(2)
+    expect(await screen.findByText('扩展模块丙')).toBeInTheDocument()
+  })
+
+  it('改名失败在改名对话框内显示，关闭后其他对话框不继承错误', async () => {
+    const renameModule = vi.fn(async () => ({
+      ok: false as const,
+      error: mapProjectError({
+        code: '42501',
+        message: 'project_module_not_found_or_forbidden',
+        details: 'internal relation public.project_modules',
+      }),
+    }))
+    const user = userEvent.setup()
+    renderSection(projectValue({ renameModule }))
+    await user.click(
+      await screen.findByRole('button', { name: '改名模块：核心模块甲' }),
+    )
+    const dialog = screen.getByRole('dialog', { name: '修改模块名称' })
+    const input = within(dialog).getByLabelText(/模块名称/)
+    await user.clear(input)
+    await user.type(input, '新的虚构名称')
+    await user.click(within(dialog).getByRole('button', { name: '确认改名' }))
+    const alert = await within(dialog).findByRole('alert')
+    expect(alert).toHaveTextContent('模块不存在或你无权访问。')
+    expect(screen.getAllByRole('alert', { hidden: true })).toHaveLength(1)
+    expect(
+      within(dialog).getByRole('button', { name: '确认改名' }),
+    ).toBeEnabled()
+
+    await user.click(within(dialog).getByRole('button', { name: '关闭对话框' }))
+    await user.click(
+      screen.getByRole('button', { name: '删除模块：核心模块甲' }),
+    )
+    const deleteDialog = screen.getByRole('dialog', { name: '删除工作模块' })
+    expect(within(deleteDialog).queryByRole('alert')).toBeNull()
+  })
+
+  it('删除失败在删除对话框内显示且确认按钮恢复可用', async () => {
+    const deleteModule = vi.fn(async () => ({
+      ok: false as const,
+      error: mapProjectError({
+        code: '42501',
+        message: 'project_module_permission_denied',
+        details: 'internal relation public.project_modules',
+      }),
+    }))
+    const user = userEvent.setup()
+    renderSection(projectValue({ deleteModule }))
+    await user.click(
+      await screen.findByRole('button', { name: '删除模块：核心模块甲' }),
+    )
+    const dialog = screen.getByRole('dialog', { name: '删除工作模块' })
+    await user.click(within(dialog).getByRole('button', { name: '确认删除' }))
+    const alert = await within(dialog).findByRole('alert')
+    expect(alert).toHaveTextContent('你没有执行此项目操作的权限。')
+    expect(screen.getAllByRole('alert', { hidden: true })).toHaveLength(1)
+    expect(dialog).toContainElement(alert)
+    expect(
+      within(dialog).getByRole('button', { name: '确认删除' }),
+    ).toBeEnabled()
+    expect(screen.getByRole('dialog', { name: '删除工作模块' })).toBeVisible()
+  })
+
+  it('排序失败在无对话框的模块区域显示页面级 alert', async () => {
+    const reorderModules = vi.fn(async () => ({
+      ok: false as const,
+      error: mapProjectError({
+        code: '22023',
+        message: 'project_module_order_invalid',
+        details: 'internal relation public.project_modules',
+      }),
+    }))
+    const user = userEvent.setup()
+    renderSection(projectValue({ reorderModules }))
+    await user.click(
+      await screen.findByRole('button', { name: '下移模块：核心模块甲' }),
+    )
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('模块顺序已变化，请刷新后重试。')
+    expect(screen.getAllByRole('alert', { hidden: true })).toHaveLength(1)
+    expect(alert.closest('dialog')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('切换项目后旧加载结果不会覆盖新上下文', async () => {

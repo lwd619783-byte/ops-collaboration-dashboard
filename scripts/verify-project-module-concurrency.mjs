@@ -162,8 +162,10 @@ async function actorQuery(subject, sql, params) {
 
 const ids = {
   owner: crypto.randomUUID(),
+  admin: crypto.randomUUID(),
   lead: crypto.randomUUID(),
   workspace: crypto.randomUUID(),
+  createProjectKey: crypto.randomUUID(),
   addProject: crypto.randomUUID(),
   reorderProject: crypto.randomUUID(),
   deleteProject: crypto.randomUUID(),
@@ -175,6 +177,7 @@ const ids = {
 
 const subjects = {
   owner: `module-concurrency-owner-${crypto.randomUUID()}`,
+  admin: `module-concurrency-admin-${crypto.randomUUID()}`,
   lead: `module-concurrency-lead-${crypto.randomUUID()}`,
 }
 
@@ -187,7 +190,7 @@ const projectIds = [
   ids.isolationProject,
   ids.otherProject,
 ]
-const userIds = [ids.owner, ids.lead]
+const userIds = [ids.owner, ids.admin, ids.lead]
 const moduleIdsByProject = new Map()
 
 function moduleIds(projectId, count) {
@@ -212,6 +215,7 @@ async function setupFixtures() {
     await setup.query('begin')
     for (const [userId, subject, label] of [
       [ids.owner, subjects.owner, 'owner'],
+      [ids.admin, subjects.admin, 'admin'],
       [ids.lead, subjects.lead, 'lead'],
     ]) {
       await setup.query(
@@ -240,8 +244,9 @@ async function setupFixtures() {
          (workspace_id, user_id, role, status, invited_by, joined_at)
        values
          ($1, $2, 'owner', 'active', $2, now()),
-         ($1, $3, 'member', 'active', $2, now())`,
-      [ids.workspace, ids.owner, ids.lead],
+         ($1, $3, 'admin', 'active', $2, now()),
+         ($1, $4, 'member', 'active', $2, now())`,
+      [ids.workspace, ids.owner, ids.admin, ids.lead],
     )
 
     for (const projectId of projectIds) {
@@ -296,17 +301,22 @@ async function cleanupFixtures() {
     await cleanup.query('begin')
     await cleanup.query('set local session_replication_role = replica')
     await cleanup.query(
-      'delete from public.project_modules where project_id = any($1::uuid[])',
-      [projectIds],
+      `delete from public.project_modules
+       where project_id in (
+         select id from public.projects where workspace_id = $1
+       )`,
+      [ids.workspace],
     )
     await cleanup.query(
-      'delete from public.project_members where project_id = any($1::uuid[])',
-      [projectIds],
+      `delete from public.project_members
+       where project_id in (
+         select id from public.projects where workspace_id = $1
+       )`,
+      [ids.workspace],
     )
-    await cleanup.query(
-      'delete from public.projects where id = any($1::uuid[])',
-      [projectIds],
-    )
+    await cleanup.query('delete from public.projects where workspace_id = $1', [
+      ids.workspace,
+    ])
     await cleanup.query(
       'delete from public.workspace_members where workspace_id = $1',
       [ids.workspace],
@@ -355,6 +365,31 @@ async function readProjectState(projectId) {
   }
 }
 
+async function readCreationResidue(idempotencyKey) {
+  const read = await connect()
+  try {
+    return (
+      await read.query(
+        `select
+           (select count(*)::int
+            from public.projects
+            where idempotency_key = $1) as project_count,
+           (select count(*)::int
+            from public.project_members as pm
+            join public.projects as p on p.id = pm.project_id
+            where p.idempotency_key = $1) as project_member_count,
+           (select count(*)::int
+            from public.project_modules as m
+            join public.projects as p on p.id = m.project_id
+            where p.idempotency_key = $1) as project_module_count`,
+        [idempotencyKey],
+      )
+    ).rows[0]
+  } finally {
+    await read.end()
+  }
+}
+
 console.log('Project module concurrency verification')
 
 let setupComplete = false
@@ -381,6 +416,46 @@ try {
   } finally {
     await versions.end()
   }
+
+  const creatorDemotionRace = await lockWaitRace({
+    firstActor: subjects.owner,
+    firstSql: 'select * from public.set_workspace_member_role($1, $2, $3)',
+    firstParams: [ids.workspace, ids.admin, 'member'],
+    secondActor: subjects.admin,
+    secondSql: `select * from public.create_project(
+      $1, $2, null, 'operations', 'planning', null, null, $3, true
+    )`,
+    secondParams: [
+      ids.workspace,
+      'Fictional denied concurrent project create',
+      ids.createProjectKey,
+    ],
+  })
+  check(
+    'creator demotion while waiting: owner role update completed',
+    creatorDemotionRace.firstResult.rows[0]?.role === 'member',
+  )
+  check(
+    'creator demotion while waiting: create was genuinely blocked on the admin membership row',
+    creatorDemotionRace.blockedObserved,
+  )
+  check(
+    'creator demotion while waiting: lock-after-auth rejects the stale admin permission',
+    creatorDemotionRace.secondError?.code === '42501',
+  )
+  const creatorResidue = await readCreationResidue(ids.createProjectKey)
+  check(
+    'creator demotion while waiting: denied request leaves no project',
+    creatorResidue.project_count === 0,
+  )
+  check(
+    'creator demotion while waiting: denied request leaves no project owner relation',
+    creatorResidue.project_member_count === 0,
+  )
+  check(
+    'creator demotion while waiting: denied preset request leaves no modules',
+    creatorResidue.project_module_count === 0,
+  )
 
   const addRace = await lockWaitRace({
     firstActor: subjects.owner,

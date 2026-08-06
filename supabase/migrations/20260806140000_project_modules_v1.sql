@@ -672,6 +672,75 @@ revoke all on function public.delete_project_module(uuid, uuid)
 grant execute on function public.delete_project_module(uuid, uuid)
   to authenticated;
 
+-- Internal project-creation authorization boundary. The browser never calls
+-- this helper directly. It resolves the actor from the verified identity,
+-- takes locks in a single documented order, and only then re-evaluates the
+-- existing workspace-project authority rule:
+--   1. target workspaces row;
+--   2. current actor app_users row;
+--   3. current actor workspace_members row in the target workspace.
+--
+-- Workspace role/status mutations lock the target workspace_members row and
+-- do not subsequently request the workspace or app-user rows. App-user status
+-- writes lock the app_users row and do not request the workspace row. This
+-- helper can therefore wait behind either revocation path without introducing
+-- a reverse lock order. Once acquired, its locks remain held through the
+-- create transaction, so a later revocation waits rather than racing the
+-- project, owner relation, or preset inserts.
+create function public.lock_workspace_project_creator(p_workspace_id uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_actor_id uuid := public.current_app_user_id();
+begin
+  if p_workspace_id is null or v_actor_id is null then
+    raise exception 'project_permission_denied' using errcode = '42501';
+  end if;
+
+  -- Missing and unauthorized workspaces deliberately share the same browser
+  -- error. No idempotency lookup or business write happens before this lock.
+  perform 1
+  from public.workspaces as w
+  where w.id = p_workspace_id
+  for update;
+
+  if not found then
+    raise exception 'project_permission_denied' using errcode = '42501';
+  end if;
+
+  perform 1
+  from public.app_users as u
+  where u.id = v_actor_id
+  for update;
+
+  if not found then
+    raise exception 'project_permission_denied' using errcode = '42501';
+  end if;
+
+  perform 1
+  from public.workspace_members as wm
+  where wm.workspace_id = p_workspace_id
+    and wm.user_id = v_actor_id
+  for update;
+
+  if not found
+     or public.current_app_user_id() is distinct from v_actor_id
+     or not public.can_manage_workspace_projects(p_workspace_id)
+  then
+    raise exception 'project_permission_denied' using errcode = '42501';
+  end if;
+
+  return v_actor_id;
+end;
+$function$;
+
+alter function public.lock_workspace_project_creator(uuid) owner to postgres;
+revoke all on function public.lock_workspace_project_creator(uuid)
+  from public, anon, authenticated, service_role;
+
 -- Add the preset-aware overload without defaults. The original eight-argument
 -- signature remains as a wrapper, so existing named or positional calls stay
 -- unambiguous and preserve the old no-preset behavior.
@@ -710,18 +779,14 @@ security definer
 set search_path = ''
 as $function$
 declare
-  v_actor_id uuid := public.current_app_user_id();
+  v_actor_id uuid;
   v_existing public.projects%rowtype;
   v_project_id uuid;
   v_name text := pg_catalog.btrim(p_name);
   v_description text := nullif(pg_catalog.btrim(p_description), '');
   v_was_existing boolean := false;
 begin
-  if v_actor_id is null
-     or not public.can_manage_workspace_projects(p_workspace_id)
-  then
-    raise exception 'project_permission_denied' using errcode = '42501';
-  end if;
+  v_actor_id := public.lock_workspace_project_creator(p_workspace_id);
 
   if p_workspace_id is null
      or p_idempotency_key is null
@@ -738,11 +803,6 @@ begin
   then
     raise exception 'project_validation_failed' using errcode = '22023';
   end if;
-
-  perform 1
-  from public.workspaces as w
-  where w.id = p_workspace_id
-  for update;
 
   select p.* into v_existing
   from public.projects as p

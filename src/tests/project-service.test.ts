@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import {
   addProjectMember,
+  addProjectModule,
   archiveProject,
   clearProjectLead,
   createProject,
+  deleteProjectModule,
   getProject,
   listProjectMemberCandidates,
   listProjectMembers,
+  listProjectModules,
   listProjects,
   removeProjectMember,
+  renameProjectModule,
+  reorderProjectModules,
   setProjectLead,
   setProjectMemberRole,
   transferProjectOwner,
@@ -51,6 +56,29 @@ const projectMemberRow = {
   active_member_count: 1,
   inactive_historical_member_count: 0,
 }
+
+const projectModuleRows = [
+  {
+    module_id: 'cccccccc-1111-4111-8111-111111111111',
+    project_id: projectRow.project_id,
+    name: '准备与计划',
+    sort_position: 0,
+    created_by: projectRow.owner_id,
+    updated_by: projectRow.owner_id,
+    created_at: projectRow.created_at,
+    updated_at: projectRow.updated_at,
+  },
+  {
+    module_id: 'cccccccc-2222-4222-8222-222222222222',
+    project_id: projectRow.project_id,
+    name: '实施与变更',
+    sort_position: 1,
+    created_by: projectRow.owner_id,
+    updated_by: projectRow.owner_id,
+    created_at: projectRow.created_at,
+    updated_at: projectRow.updated_at,
+  },
+]
 
 describe('项目 service', () => {
   it('映射列表成功响应并只提交当前工作空间的受控筛选', async () => {
@@ -104,6 +132,7 @@ describe('项目 service', () => {
       startDate: '2026-08-04',
       dueDate: '2026-08-20',
       idempotencyKey: 'bbbbbbbb-1111-4111-8111-111111111111',
+      initializeModules: false,
     })
 
     expect(result.ok).toBe(true)
@@ -116,6 +145,7 @@ describe('项目 service', () => {
       p_start_date: '2026-08-04',
       p_due_date: '2026-08-20',
       p_idempotency_key: 'bbbbbbbb-1111-4111-8111-111111111111',
+      p_initialize_modules: false,
     })
     const args = supabase.rpc.mock.calls[0][1]
     expect(args).not.toHaveProperty('created_by')
@@ -160,6 +190,130 @@ describe('项目 service', () => {
       'list_project_member_candidates',
       { p_project_id: projectRow.project_id },
     )
+  })
+
+  it('模块列表验证项目作用域、连续顺序和稳定字段', async () => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc.mockResolvedValue({ data: projectModuleRows, error: null })
+
+    const result = await listProjectModules(
+      supabase.client,
+      projectRow.project_id,
+    )
+
+    expect(result).toEqual({ ok: true, data: projectModuleRows })
+    expect(supabase.rpc).toHaveBeenCalledWith('list_project_modules', {
+      p_project_id: projectRow.project_id,
+    })
+  })
+
+  it.each([
+    [
+      '跨项目响应',
+      [
+        {
+          ...projectModuleRows[0],
+          project_id: 'dddddddd-1111-4111-8111-111111111111',
+        },
+      ],
+    ],
+    ['顺序缺口', [{ ...projectModuleRows[0], sort_position: 1 }]],
+    [
+      '重复 ID',
+      [
+        projectModuleRows[0],
+        { ...projectModuleRows[1], module_id: projectModuleRows[0].module_id },
+      ],
+    ],
+    ['未规范名称', [{ ...projectModuleRows[0], name: ' 未规范 ' }]],
+  ])('模块 RPC 返回%s时安全失败', async (_label, payload) => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc.mockResolvedValue({ data: payload, error: null })
+    const result = await listProjectModules(
+      supabase.client,
+      projectRow.project_id,
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('unknown_service_error')
+  })
+
+  it('模块写操作只提交项目、模块、规范名称或完整顺序', async () => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc.mockResolvedValue({ data: projectModuleRows, error: null })
+
+    const results = await Promise.all([
+      addProjectModule(supabase.client, {
+        projectId: projectRow.project_id,
+        name: '  新增   模块 ',
+      }),
+      renameProjectModule(supabase.client, {
+        projectId: projectRow.project_id,
+        moduleId: projectModuleRows[0].module_id,
+        name: '  改名   模块 ',
+      }),
+      reorderProjectModules(supabase.client, {
+        projectId: projectRow.project_id,
+        moduleIds: projectModuleRows.map((module) => module.module_id),
+      }),
+      deleteProjectModule(supabase.client, {
+        projectId: projectRow.project_id,
+        moduleId: projectModuleRows[1].module_id,
+      }),
+    ])
+
+    expect(results.every((result) => result.ok)).toBe(true)
+    expect(supabase.rpc.mock.calls).toEqual([
+      [
+        'add_project_module',
+        { p_project_id: projectRow.project_id, p_name: '新增 模块' },
+      ],
+      [
+        'rename_project_module',
+        {
+          p_project_id: projectRow.project_id,
+          p_module_id: projectModuleRows[0].module_id,
+          p_name: '改名 模块',
+        },
+      ],
+      [
+        'reorder_project_modules',
+        {
+          p_project_id: projectRow.project_id,
+          p_module_ids: projectModuleRows.map((module) => module.module_id),
+        },
+      ],
+      [
+        'delete_project_module',
+        {
+          p_project_id: projectRow.project_id,
+          p_module_id: projectModuleRows[1].module_id,
+        },
+      ],
+    ])
+  })
+
+  it.each([
+    ['project_module_validation_failed', 'module_validation_failed'],
+    ['project_module_name_conflict', 'module_name_conflict'],
+    ['project_module_order_invalid', 'module_order_invalid'],
+    ['project_module_not_found_or_forbidden', 'module_not_found_or_forbidden'],
+    ['project_module_not_empty', 'module_not_empty'],
+    ['project_module_permission_denied', 'permission_denied'],
+  ] as const)('模块业务错误 %s 映射为安全错误 %s', async (code, expected) => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc.mockResolvedValue({
+      data: null,
+      error: { code, message: code },
+    })
+    const result = await addProjectModule(supabase.client, {
+      projectId: projectRow.project_id,
+      name: '虚构模块',
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe(expected)
+    expect(result.error.message).not.toContain('public.')
   })
 
   it('无效枚举或缺失作用域字段的 RPC 载荷安全失败，不进入 UI', async () => {

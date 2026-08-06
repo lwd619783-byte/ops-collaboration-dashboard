@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
 import { InputField } from '@/components/forms/InputField'
 import { SelectField } from '@/components/forms/SelectField'
 import { TextareaField } from '@/components/forms/TextareaField'
@@ -26,11 +26,13 @@ type ProjectFormProps = {
   serviceError?: string | null
   onDirty?: () => void
   onSubmit: (values: ProjectFormValues) => void
+  extraFields?: ReactNode
 }
 
 export function ProjectForm({
   initialValues,
   isSubmitting,
+  extraFields,
   onDirty,
   onSubmit,
   serviceError,
@@ -136,6 +138,7 @@ export function ProjectForm({
           value={values.dueDate}
         />
       </div>
+      {extraFields}
       {serviceError && (
         <p className="form-error" role="alert">
           {serviceError}

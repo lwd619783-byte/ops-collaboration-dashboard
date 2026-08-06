@@ -13,6 +13,11 @@ export type ProjectErrorCode =
   | 'member_role_conflict'
   | 'member_not_found'
   | 'protected_member_role'
+  | 'module_validation_failed'
+  | 'module_name_conflict'
+  | 'module_order_invalid'
+  | 'module_not_found_or_forbidden'
+  | 'module_not_empty'
   | 'unknown_service_error'
 
 export type SafeProjectError = {
@@ -35,6 +40,11 @@ const messages: Record<ProjectErrorCode, string> = {
   member_role_conflict: '该成员已有受保护或冲突的项目角色。',
   member_not_found: '该项目成员不存在或已被移除。',
   protected_member_role: '负责人和牵头人须通过专用操作调整。',
+  module_validation_failed: '模块名称不完整或格式不正确。',
+  module_name_conflict: '当前项目中已存在同名模块。',
+  module_order_invalid: '模块顺序已变化，请刷新后重试。',
+  module_not_found_or_forbidden: '模块不存在或你无权访问。',
+  module_not_empty: '该模块已有任务，不能删除。',
   unknown_service_error: '项目操作暂时无法完成，请稍后重试。',
 }
 
@@ -122,6 +132,18 @@ function mapKnownCode(signal: string | null): ProjectErrorCode | null {
       return 'member_not_found'
     case 'project_member_role_protected':
       return 'protected_member_role'
+    case 'project_module_validation_failed':
+      return 'module_validation_failed'
+    case 'project_module_name_conflict':
+      return 'module_name_conflict'
+    case 'project_module_order_invalid':
+      return 'module_order_invalid'
+    case 'project_module_not_found_or_forbidden':
+      return 'module_not_found_or_forbidden'
+    case 'project_module_not_empty':
+      return 'module_not_empty'
+    case 'project_module_permission_denied':
+      return 'permission_denied'
     default:
       return null
   }

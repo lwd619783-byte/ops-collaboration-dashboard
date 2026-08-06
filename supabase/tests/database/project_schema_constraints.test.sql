@@ -74,9 +74,10 @@ select columns_are(
   array[
     'id','workspace_id','name','description','project_type','status',
     'owner_id','lead_id','start_date','due_date','created_by',
-    'idempotency_key','created_at','updated_at','archived_at'
+    'idempotency_key','created_at','updated_at','archived_at',
+    'module_preset_initialized'
   ],
-  'projects has the reviewed Task 2.1 columns'
+  'projects retains reviewed fields and the Task 2.3 preset idempotency input'
 );
 select columns_are(
   'public',

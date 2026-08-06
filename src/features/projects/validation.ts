@@ -5,6 +5,23 @@ export const PROJECT_LIMITS = {
   description: 2000,
 } as const
 
+export const PROJECT_MODULE_LIMITS = {
+  name: 120,
+} as const
+
+export function normalizeProjectModuleName(value: string): string {
+  return value.trim().replace(/\s+/gu, ' ')
+}
+
+export function validateProjectModuleName(value: string): string | null {
+  const normalized = normalizeProjectModuleName(value)
+  if (normalized.length === 0) return '模块名称不能为空。'
+  if (normalized.length > PROJECT_MODULE_LIMITS.name) {
+    return `模块名称不能超过 ${PROJECT_MODULE_LIMITS.name} 个字符。`
+  }
+  return null
+}
+
 export type ProjectFormErrors = Partial<Record<keyof ProjectFormValues, string>>
 
 export function validateProjectForm(

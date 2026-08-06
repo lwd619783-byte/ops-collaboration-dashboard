@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/Button'
 import { DateDisplay } from '@/components/ui/DateDisplay'
 import { Dialog } from '@/components/ui/Dialog'
 import { ProjectStatusBadge } from '@/features/projects/ProjectStatusBadge'
+import { ProjectModulesSection } from '@/features/projects/ProjectModulesSection'
 import { projectTypeLabels } from '@/features/projects/projectMeta'
 import {
   useProjects,
@@ -330,11 +331,13 @@ export function ProjectDetailPage() {
             {canManageMembers ? '管理项目成员' : '查看项目成员'}
           </Link>
         </article>
-        <article className="card">
-          <h3>项目模块</h3>
-          <p>运维项目预设模块将在 Task 2.3 开放。</p>
-        </article>
       </section>
+
+      <ProjectModulesSection
+        canManage={canManageMembers}
+        key={scopeKey ?? project.project_id}
+        project={project}
+      />
 
       <Dialog
         confirmDisabled={isArchiving}

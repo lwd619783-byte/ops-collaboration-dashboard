@@ -43,6 +43,7 @@ git diff --check
 npm run db:reset
 npm run db:test
 npm run db:membership:verify
+npm run db:modules:verify
 npm run db:lint
 npm run db:types
 npm run db:types:check

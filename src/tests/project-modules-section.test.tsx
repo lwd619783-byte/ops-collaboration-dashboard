@@ -51,8 +51,8 @@ function module(
 }
 
 const modules = [
-  module('cccccccc-1111-4111-8111-111111111111', '准备与计划', 0),
-  module('cccccccc-2222-4222-8222-222222222222', '实施与变更', 1),
+  module('cccccccc-1111-4111-8111-111111111111', '核心模块甲', 0),
+  module('cccccccc-2222-4222-8222-222222222222', '支撑模块乙', 1),
 ]
 
 function projectValue(
@@ -134,19 +134,19 @@ describe('项目工作模块区域', () => {
 
     expect(await screen.findByText('共 2 个模块')).toBeInTheDocument()
     const rows = screen.getAllByRole('listitem')
-    expect(within(rows[0]).getByText('准备与计划')).toBeInTheDocument()
-    expect(within(rows[1]).getByText('实施与变更')).toBeInTheDocument()
+    expect(within(rows[0]).getByText('核心模块甲')).toBeInTheDocument()
+    expect(within(rows[1]).getByText('支撑模块乙')).toBeInTheDocument()
     expect(
-      within(rows[0]).getByRole('button', { name: '上移模块：准备与计划' }),
+      within(rows[0]).getByRole('button', { name: '上移模块：核心模块甲' }),
     ).toBeDisabled()
     expect(
-      within(rows[1]).getByRole('button', { name: '下移模块：实施与变更' }),
+      within(rows[1]).getByRole('button', { name: '下移模块：支撑模块乙' }),
     ).toBeDisabled()
     expect(
-      within(rows[0]).getByRole('button', { name: '改名模块：准备与计划' }),
+      within(rows[0]).getByRole('button', { name: '改名模块：核心模块甲' }),
     ).toBeVisible()
     expect(
-      within(rows[0]).getByRole('button', { name: '删除模块：准备与计划' }),
+      within(rows[0]).getByRole('button', { name: '删除模块：核心模块甲' }),
     ).toBeVisible()
   })
 
@@ -218,7 +218,7 @@ describe('项目工作模块区域', () => {
     }>()
     const added = [
       ...modules,
-      module('cccccccc-3333-4333-8333-333333333333', '验证与观察', 2),
+      module('cccccccc-3333-4333-8333-333333333333', '扩展 模块丙', 2),
     ]
     const addModule = vi.fn(() => pending.promise)
     const user = userEvent.setup()
@@ -230,12 +230,12 @@ describe('项目工作模块区域', () => {
     expect(within(dialog).getByText('模块名称不能为空。')).toBeInTheDocument()
     await user.type(
       within(dialog).getByLabelText(/模块名称/),
-      '  验证   与观察  ',
+      '  扩展   模块丙  ',
     )
     await user.click(within(dialog).getByRole('button', { name: '确认新增' }))
     expect(addModule).toHaveBeenCalledWith({
       projectId: PROJECT_ID,
-      name: '验证 与观察',
+      name: '扩展 模块丙',
     })
     const pendingButton = within(dialog).getByRole('button', {
       name: /^正在保存/,
@@ -244,7 +244,7 @@ describe('项目工作模块区域', () => {
     await user.click(pendingButton)
     expect(addModule).toHaveBeenCalledTimes(1)
     await act(async () => pending.resolve({ ok: true, data: added }))
-    expect(await screen.findByText('验证与观察')).toBeInTheDocument()
+    expect(await screen.findByText('扩展 模块丙')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('模块已新增')
   })
 
@@ -257,7 +257,7 @@ describe('项目工作模块区域', () => {
     const user = userEvent.setup()
     renderSection(projectValue({ renameModule }))
     await user.click(
-      await screen.findByRole('button', { name: '改名模块：准备与计划' }),
+      await screen.findByRole('button', { name: '改名模块：核心模块甲' }),
     )
     const dialog = screen.getByRole('dialog', { name: '修改模块名称' })
     const input = within(dialog).getByLabelText(/模块名称/)
@@ -284,14 +284,14 @@ describe('项目工作模块区域', () => {
     const user = userEvent.setup()
     renderSection(projectValue({ reorderModules }))
     await user.click(
-      await screen.findByRole('button', { name: '下移模块：准备与计划' }),
+      await screen.findByRole('button', { name: '下移模块：核心模块甲' }),
     )
     expect(reorderModules).toHaveBeenCalledWith({
       projectId: PROJECT_ID,
       moduleIds: [modules[1].module_id, modules[0].module_id],
     })
     const rows = await screen.findAllByRole('listitem')
-    expect(within(rows[0]).getByText('实施与变更')).toBeInTheDocument()
+    expect(within(rows[0]).getByText('支撑模块乙')).toBeInTheDocument()
   })
 
   it('删除前确认并在成功后显示剩余模块', async () => {
@@ -302,18 +302,18 @@ describe('项目工作模块区域', () => {
     const user = userEvent.setup()
     renderSection(projectValue({ deleteModule }))
     await user.click(
-      await screen.findByRole('button', { name: '删除模块：准备与计划' }),
+      await screen.findByRole('button', { name: '删除模块：核心模块甲' }),
     )
     const dialog = screen.getByRole('dialog', { name: '删除工作模块' })
-    expect(dialog).toHaveTextContent('待删除模块：准备与计划')
+    expect(dialog).toHaveTextContent('待删除模块：核心模块甲')
     expect(dialog).toHaveTextContent('不能在当前版本中撤销')
     await user.click(within(dialog).getByRole('button', { name: '确认删除' }))
     expect(deleteModule).toHaveBeenCalledWith({
       projectId: PROJECT_ID,
       moduleId: modules[0].module_id,
     })
-    await waitFor(() => expect(screen.queryByText('准备与计划')).toBeNull())
-    expect(screen.getByText('实施与变更')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('核心模块甲')).toBeNull())
+    expect(screen.getByText('支撑模块乙')).toBeInTheDocument()
   })
 
   it('安全业务错误不泄露数据库细节并允许再次操作', async () => {
@@ -328,7 +328,7 @@ describe('项目工作模块区域', () => {
     renderSection(projectValue({ addModule }))
     await user.click(await screen.findByRole('button', { name: '新增模块' }))
     const dialog = screen.getByRole('dialog', { name: '新增工作模块' })
-    await user.type(within(dialog).getByLabelText(/模块名称/), '准备与计划')
+    await user.type(within(dialog).getByLabelText(/模块名称/), '核心模块甲')
     await user.click(within(dialog).getByRole('button', { name: '确认新增' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(
       '当前项目中已存在同名模块。',
@@ -379,6 +379,6 @@ describe('项目工作模块区域', () => {
     expect(await screen.findByText('当前项目模块')).toBeInTheDocument()
     await act(async () => oldRequest.resolve({ ok: true, data: modules }))
     expect(screen.getByText('当前项目模块')).toBeInTheDocument()
-    expect(screen.queryByText('准备与计划')).toBeNull()
+    expect(screen.queryByText('核心模块甲')).toBeNull()
   })
 })

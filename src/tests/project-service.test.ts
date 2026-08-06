@@ -61,7 +61,7 @@ const projectModuleRows = [
   {
     module_id: 'cccccccc-1111-4111-8111-111111111111',
     project_id: projectRow.project_id,
-    name: '准备与计划',
+    name: '核心模块甲',
     sort_position: 0,
     created_by: projectRow.owner_id,
     updated_by: projectRow.owner_id,
@@ -71,7 +71,7 @@ const projectModuleRows = [
   {
     module_id: 'cccccccc-2222-4222-8222-222222222222',
     project_id: projectRow.project_id,
-    name: '实施与变更',
+    name: '支撑模块乙',
     sort_position: 1,
     created_by: projectRow.owner_id,
     updated_by: projectRow.owner_id,

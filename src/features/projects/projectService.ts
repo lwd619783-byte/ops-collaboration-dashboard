@@ -21,9 +21,15 @@ import type {
   ProjectMemberCandidate,
   ProjectMemberInput,
   ProjectMemberRoleInput,
+  ProjectModule,
+  ProjectModuleInput,
+  ProjectModuleNameInput,
+  ProjectModuleRenameInput,
+  ProjectModuleReorderInput,
   ProjectMutationResult,
   ProjectUpdateInput,
 } from '@/features/projects/types'
+import { normalizeProjectModuleName } from '@/features/projects/validation'
 
 export type ProjectServiceResult<T> =
   { ok: true; data: T } | { ok: false; error: SafeProjectError }
@@ -152,6 +158,48 @@ function parseProjectCandidate(value: unknown): ProjectMemberCandidate | null {
   return value as unknown as ProjectMemberCandidate
 }
 
+function parseProjectModule(value: unknown): ProjectModule | null {
+  if (!isRecord(value)) return null
+  if (
+    !isString(value.module_id) ||
+    !isString(value.project_id) ||
+    !isString(value.name) ||
+    value.name.trim().length === 0 ||
+    value.name.trim().replace(/\s+/gu, ' ') !== value.name ||
+    value.name.length > 120 ||
+    !isFiniteNonNegativeSafeInteger(value.sort_position) ||
+    !isString(value.created_by) ||
+    !isString(value.updated_by) ||
+    !isString(value.created_at) ||
+    !isString(value.updated_at)
+  ) {
+    return null
+  }
+  return value as unknown as ProjectModule
+}
+
+function parseProjectModules(
+  value: unknown,
+  expectedProjectId: string,
+): ProjectServiceResult<ProjectModule[]> {
+  if (!Array.isArray(value)) return invalidPayload()
+  const rows = value.map(parseProjectModule)
+  if (rows.some((row) => row === null)) return invalidPayload()
+  const modules = rows as ProjectModule[]
+  const ids = new Set<string>()
+  for (const [index, module] of modules.entries()) {
+    if (
+      module.project_id !== expectedProjectId ||
+      module.sort_position !== index ||
+      ids.has(module.module_id)
+    ) {
+      return invalidPayload()
+    }
+    ids.add(module.module_id)
+  }
+  return { ok: true, data: modules }
+}
+
 // Dedicated `list_project_members` parser. The RPC returns the two member
 // counts on every row (a window over the visible membership set). Beyond the
 // per-row shape check, we validate that all rows agree on the counts and that
@@ -240,8 +288,13 @@ export async function getProject(
   }
 }
 
-type NullableCreateArgs = Omit<
+type PresetCreateArgs = Extract<
   Database['public']['Functions']['create_project']['Args'],
+  { p_initialize_modules: boolean }
+>
+
+type NullableCreateArgs = Omit<
+  PresetCreateArgs,
   'p_description' | 'p_due_date' | 'p_start_date'
 > & {
   p_description: string | null
@@ -262,6 +315,7 @@ export async function createProject(
     p_start_date: input.startDate,
     p_due_date: input.dueDate,
     p_idempotency_key: input.idempotencyKey,
+    p_initialize_modules: input.initializeModules,
   }
   try {
     const { data, error } = await client.rpc(
@@ -339,6 +393,83 @@ export async function listProjectMembers(
   } catch (error) {
     return { ok: false, error: mapProjectError(error) }
   }
+}
+
+export async function listProjectModules(
+  client: SupabaseClient<Database>,
+  projectId: string,
+): Promise<ProjectServiceResult<ProjectModule[]>> {
+  try {
+    const { data, error } = await client.rpc('list_project_modules', {
+      p_project_id: projectId,
+    })
+    if (error) return { ok: false, error: mapProjectError(error) }
+    return parseProjectModules(data, projectId)
+  } catch (error) {
+    return { ok: false, error: mapProjectError(error) }
+  }
+}
+
+async function runProjectModuleMutation(
+  projectId: string,
+  operation: () => PromiseLike<{ data: unknown; error: unknown }>,
+): Promise<ProjectServiceResult<ProjectModule[]>> {
+  try {
+    const { data, error } = await operation()
+    if (error) return { ok: false, error: mapProjectError(error) }
+    return parseProjectModules(data, projectId)
+  } catch (error) {
+    return { ok: false, error: mapProjectError(error) }
+  }
+}
+
+export function addProjectModule(
+  client: SupabaseClient<Database>,
+  input: ProjectModuleNameInput,
+): Promise<ProjectServiceResult<ProjectModule[]>> {
+  return runProjectModuleMutation(input.projectId, () =>
+    client.rpc('add_project_module', {
+      p_project_id: input.projectId,
+      p_name: normalizeProjectModuleName(input.name),
+    }),
+  )
+}
+
+export function renameProjectModule(
+  client: SupabaseClient<Database>,
+  input: ProjectModuleRenameInput,
+): Promise<ProjectServiceResult<ProjectModule[]>> {
+  return runProjectModuleMutation(input.projectId, () =>
+    client.rpc('rename_project_module', {
+      p_project_id: input.projectId,
+      p_module_id: input.moduleId,
+      p_name: normalizeProjectModuleName(input.name),
+    }),
+  )
+}
+
+export function reorderProjectModules(
+  client: SupabaseClient<Database>,
+  input: ProjectModuleReorderInput,
+): Promise<ProjectServiceResult<ProjectModule[]>> {
+  return runProjectModuleMutation(input.projectId, () =>
+    client.rpc('reorder_project_modules', {
+      p_project_id: input.projectId,
+      p_module_ids: input.moduleIds,
+    }),
+  )
+}
+
+export function deleteProjectModule(
+  client: SupabaseClient<Database>,
+  input: ProjectModuleInput,
+): Promise<ProjectServiceResult<ProjectModule[]>> {
+  return runProjectModuleMutation(input.projectId, () =>
+    client.rpc('delete_project_module', {
+      p_project_id: input.projectId,
+      p_module_id: input.moduleId,
+    }),
+  )
 }
 
 export async function listProjectMemberCandidates(

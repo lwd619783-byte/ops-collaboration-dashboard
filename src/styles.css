@@ -670,6 +670,29 @@ a {
   display: flex;
   justify-content: flex-end;
 }
+.project-module-preset-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid #bae6fd;
+  border-radius: 0.65rem;
+  background: #f0f9ff;
+  cursor: pointer;
+}
+.project-module-preset-option input {
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-top: 0.15rem;
+}
+.project-module-preset-option span {
+  display: grid;
+  gap: 0.3rem;
+}
+.project-module-preset-option small {
+  color: #526075;
+  line-height: 1.5;
+}
 .project-detail-actions {
   display: flex;
   flex-wrap: wrap;
@@ -695,8 +718,94 @@ a {
 }
 .project-future-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
   gap: 1rem;
+}
+.project-modules-section {
+  min-width: 0;
+  padding: 1.25rem;
+  border: 1px solid #dce3ed;
+  border-radius: 0.75rem;
+  background: #fff;
+}
+.project-modules-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.project-modules-heading h3,
+.project-modules-heading p {
+  margin: 0;
+}
+.project-modules-heading p {
+  margin-top: 0.3rem;
+  color: #64748b;
+}
+.project-modules-readonly,
+.project-modules-state,
+.project-modules-empty {
+  margin: 1rem 0 0;
+  padding: 0.9rem 1rem;
+  border-radius: 0.6rem;
+  color: #475569;
+  background: #f8fafc;
+}
+.project-modules-readonly {
+  border: 1px solid #cbd5e1;
+}
+.project-modules-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.project-modules-state p {
+  margin: 0;
+}
+.project-module-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.project-module-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.65rem;
+  background: #f8fafc;
+}
+.project-module-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.75rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.project-module-position {
+  display: inline-grid;
+  width: 1.8rem;
+  height: 1.8rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 999px;
+  color: #075985;
+  background: #e0f2fe;
+  font-size: 0.8rem;
+}
+.project-module-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
 }
 .project-members-heading h2 {
   margin: 0;
@@ -904,6 +1013,24 @@ a {
   }
   .project-card-heading {
     align-items: flex-start;
+  }
+  .project-modules-heading,
+  .project-module-row,
+  .project-modules-state {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .project-modules-heading .button,
+  .project-modules-state .button {
+    width: 100%;
+  }
+  .project-module-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+  .project-module-actions .button {
+    width: 100%;
   }
   .project-card-meta {
     grid-template-columns: 1fr;

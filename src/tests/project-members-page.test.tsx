@@ -140,6 +140,11 @@ function projectValue(
     update: vi.fn(async () => ({ ok: true as const, data: currentProject })),
     archive: vi.fn(async () => ({ ok: true as const, data: currentProject })),
     listMembers: vi.fn(async () => ({ ok: true as const, data: members })),
+    listModules: vi.fn(async () => ({ ok: true as const, data: [] })),
+    addModule: vi.fn(async () => ({ ok: true as const, data: [] })),
+    renameModule: vi.fn(async () => ({ ok: true as const, data: [] })),
+    reorderModules: vi.fn(async () => ({ ok: true as const, data: [] })),
+    deleteModule: vi.fn(async () => ({ ok: true as const, data: [] })),
     listMemberCandidates: vi.fn(async () => ({
       ok: true as const,
       data: [candidate],

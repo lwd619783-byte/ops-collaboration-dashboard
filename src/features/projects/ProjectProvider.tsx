@@ -3,14 +3,19 @@ import { createSafeProjectError } from '@/features/projects/errors'
 import { ProjectContext } from '@/features/projects/ProjectContext'
 import {
   addProjectMember,
+  addProjectModule,
   archiveProject,
   clearProjectLead,
   createProject,
+  deleteProjectModule,
   getProject,
   listProjectMemberCandidates,
   listProjectMembers,
+  listProjectModules,
   listProjects,
   removeProjectMember,
+  renameProjectModule,
+  reorderProjectModules,
   setProjectLead,
   setProjectMemberRole,
   transferProjectOwner,
@@ -68,6 +73,16 @@ export function ProjectProvider({
         ),
       listMembers: (projectId: string) =>
         withClient((client) => listProjectMembers(client, projectId)),
+      listModules: (projectId: string) =>
+        withClient((client) => listProjectModules(client, projectId)),
+      addModule: (input: Parameters<typeof addProjectModule>[1]) =>
+        withClient((client) => addProjectModule(client, input)),
+      renameModule: (input: Parameters<typeof renameProjectModule>[1]) =>
+        withClient((client) => renameProjectModule(client, input)),
+      reorderModules: (input: Parameters<typeof reorderProjectModules>[1]) =>
+        withClient((client) => reorderProjectModules(client, input)),
+      deleteModule: (input: Parameters<typeof deleteProjectModule>[1]) =>
+        withClient((client) => deleteProjectModule(client, input)),
       listMemberCandidates: (projectId: string) =>
         withClient((client) => listProjectMemberCandidates(client, projectId)),
       addMember: (input: Parameters<typeof addProjectMember>[1]) =>

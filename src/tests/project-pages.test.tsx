@@ -102,6 +102,11 @@ function projectValue(
       ok: true as const,
       data: [],
     })),
+    listModules: vi.fn(async () => ({ ok: true as const, data: [] })),
+    addModule: vi.fn(async () => ({ ok: true as const, data: [] })),
+    renameModule: vi.fn(async () => ({ ok: true as const, data: [] })),
+    reorderModules: vi.fn(async () => ({ ok: true as const, data: [] })),
+    deleteModule: vi.fn(async () => ({ ok: true as const, data: [] })),
     listMemberCandidates: vi.fn(async () => ({
       ok: true as const,
       data: [],
@@ -505,10 +510,13 @@ describe('创建项目', () => {
 
   it('创建成功后导航到详情，并只提交稳定幂等键和允许字段', async () => {
     const user = userEvent.setup()
-    const create = vi.fn(async () => ({
-      ok: true as const,
-      data: currentProject,
-    }))
+    const create = vi.fn(async (input: ProjectCreateInput) => {
+      void input
+      return {
+        ok: true as const,
+        data: currentProject,
+      }
+    })
     vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue(
       'bbbbbbbb-1111-4111-8111-111111111111',
     )
@@ -534,7 +542,71 @@ describe('创建项目', () => {
       startDate: null,
       dueDate: null,
       idempotencyKey: 'bbbbbbbb-1111-4111-8111-111111111111',
+      initializeModules: false,
     })
+  })
+
+  it('运维预设选项默认不勾选，勾选后只增加原子初始化布尔参数', async () => {
+    const user = userEvent.setup()
+    const create = vi.fn(async (input: ProjectCreateInput) => {
+      void input
+      return {
+        ok: true as const,
+        data: currentProject,
+      }
+    })
+    renderWithContexts(
+      '/projects/new',
+      <Routes>
+        <Route path="/projects/new" element={<NewProjectPage />} />
+        <Route
+          path="/projects/:projectId"
+          element={<p>已进入预设项目详情</p>}
+        />
+      </Routes>,
+      'owner',
+      projectValue({ create }),
+    )
+    const preset = screen.getByRole('checkbox', {
+      name: /同时创建运维预设模块/,
+    })
+    expect(preset).not.toBeChecked()
+    await user.click(preset)
+    await user.type(screen.getByLabelText(/项目名称/), '虚构预设项目')
+    await user.click(screen.getByRole('button', { name: '创建项目' }))
+    expect(await screen.findByText('已进入预设项目详情')).toBeInTheDocument()
+    expect(create.mock.calls[0][0].initializeModules).toBe(true)
+  })
+
+  it('预设原子初始化失败时不显示虚假成功且保留勾选状态', async () => {
+    const user = userEvent.setup()
+    const create = vi.fn(async () => ({
+      ok: false as const,
+      error: {
+        code: 'unknown_service_error' as const,
+        message: '项目和预设模块未创建，请重试。',
+      },
+    }))
+    renderWithContexts(
+      '/projects/new',
+      <Routes>
+        <Route path="/projects/new" element={<NewProjectPage />} />
+        <Route path="/projects/:projectId" element={<p>不应进入详情</p>} />
+      </Routes>,
+      'owner',
+      projectValue({ create }),
+    )
+    const preset = screen.getByRole('checkbox', {
+      name: /同时创建运维预设模块/,
+    })
+    await user.click(preset)
+    await user.type(screen.getByLabelText(/项目名称/), '虚构失败项目')
+    await user.click(screen.getByRole('button', { name: '创建项目' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '项目和预设模块未创建，请重试。',
+    )
+    expect(preset).toBeChecked()
+    expect(screen.queryByText('不应进入详情')).toBeNull()
   })
 
   it('失败后保留输入且未修改表单的重试复用同一幂等键', async () => {
@@ -616,8 +688,71 @@ describe('项目详情、编辑与归档', () => {
       screen.getByRole('heading', { name: '项目成员' }),
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('heading', { name: '项目模块' }),
+      screen.getByRole('heading', { name: '工作模块' }),
     ).toBeInTheDocument()
+  })
+
+  it('工作空间 owner 按现有项目管理规则获得模块管理入口', async () => {
+    renderWithContexts(
+      `/projects/${PROJECT_ID}`,
+      <Routes>
+        <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+      </Routes>,
+    )
+    expect(
+      await screen.findByRole('button', { name: '新增模块' }),
+    ).toBeInTheDocument()
+  })
+
+  it('项目 lead 获得模块管理入口，member 只有只读视图', async () => {
+    const currentLead: ProjectMember = {
+      project_id: PROJECT_ID,
+      workspace_id: FICTIONAL_WORKSPACE_ID,
+      app_user_id: FICTIONAL_APP_USER_ID,
+      display_name: '虚构当前牵头人',
+      workspace_role: 'member',
+      project_role: 'lead',
+      joined_at: currentProject.created_at,
+      is_current_user: true,
+      is_active: true,
+      active_member_count: 1,
+      inactive_historical_member_count: 0,
+    }
+    const leadProjects = projectValue({
+      listMembers: vi.fn(async () => ({
+        ok: true as const,
+        data: [currentLead],
+      })),
+    })
+    const { unmount } = renderWithContexts(
+      `/projects/${PROJECT_ID}`,
+      <Routes>
+        <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+      </Routes>,
+      'member',
+      leadProjects,
+    )
+    expect(
+      await screen.findByRole('button', { name: '新增模块' }),
+    ).toBeInTheDocument()
+    unmount()
+
+    const currentMember = { ...currentLead, project_role: 'member' as const }
+    renderWithContexts(
+      `/projects/${PROJECT_ID}`,
+      <Routes>
+        <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+      </Routes>,
+      'member',
+      projectValue({
+        listMembers: vi.fn(async () => ({
+          ok: true as const,
+          data: [currentMember],
+        })),
+      }),
+    )
+    expect(await screen.findByText(/你可以查看模块/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '新增模块' })).toBeNull()
   })
 
   it('不存在和无权访问使用同一安全状态', async () => {

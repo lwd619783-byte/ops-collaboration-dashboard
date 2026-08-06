@@ -43,6 +43,11 @@ export type ProjectMutationResult = Project & {
   changed: boolean
 }
 
+type GeneratedProjectModule =
+  Database['public']['Functions']['list_project_modules']['Returns'][number]
+
+export type ProjectModule = GeneratedProjectModule
+
 export type ProjectMemberRole = Extract<ProjectRole, 'member' | 'viewer'>
 
 export type ProjectMemberInput = {
@@ -72,6 +77,26 @@ export type ProjectCreateInput = {
   startDate: string | null
   dueDate: string | null
   idempotencyKey: string
+  initializeModules: boolean
+}
+
+export type ProjectModuleInput = {
+  projectId: string
+  moduleId: string
+}
+
+export type ProjectModuleNameInput = {
+  projectId: string
+  name: string
+}
+
+export type ProjectModuleRenameInput = ProjectModuleInput & {
+  name: string
+}
+
+export type ProjectModuleReorderInput = {
+  projectId: string
+  moduleIds: string[]
 }
 
 export type ProjectUpdateInput = {

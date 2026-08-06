@@ -23,6 +23,7 @@ export function NewProjectPage() {
   const [isSubmitting, setSubmitting] = useState(false)
   const [serviceError, setServiceError] = useState<string | null>(null)
   const [requestKey, setRequestKey] = useState<string | null>(null)
+  const [initializeModules, setInitializeModules] = useState(false)
   const canManage =
     currentWorkspace?.role === 'owner' || currentWorkspace?.role === 'admin'
 
@@ -72,6 +73,7 @@ export function NewProjectPage() {
     setSubmitting(false)
     setServiceError(null)
     setRequestKey(null)
+    setInitializeModules(false)
   }
 
   if (!currentWorkspace) return null
@@ -107,6 +109,7 @@ export function NewProjectPage() {
       startDate: values.startDate || null,
       dueDate: values.dueDate || null,
       idempotencyKey,
+      initializeModules,
     })
     if (!mountedRef.current) return
     if (actionEpochRef.current !== actionEpoch) return
@@ -144,6 +147,26 @@ export function NewProjectPage() {
         </Link>
       </section>
       <ProjectForm
+        extraFields={
+          <label className="project-module-preset-option">
+            <input
+              checked={initializeModules}
+              disabled={isSubmitting}
+              onChange={(event) => {
+                setInitializeModules(event.target.checked)
+                setRequestKey(null)
+                setServiceError(null)
+              }}
+              type="checkbox"
+            />
+            <span>
+              <strong>同时创建运维预设模块</strong>
+              <small>
+                默认不创建；勾选后项目与预设模块会在同一事务中完成。
+              </small>
+            </span>
+          </label>
+        }
         key={scopeKey ?? 'new'}
         initialValues={initialValues}
         isSubmitting={isSubmitting}

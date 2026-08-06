@@ -181,6 +181,74 @@ export type Database = {
           },
         ]
       }
+      project_modules: {
+        Row: {
+          created_at: string
+          created_by: string
+          deleted_at: string | null
+          deleted_by: string | null
+          id: string
+          name: string
+          project_id: string
+          sort_position: number
+          updated_at: string
+          updated_by: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          deleted_at?: string | null
+          deleted_by?: string | null
+          id?: string
+          name: string
+          project_id: string
+          sort_position: number
+          updated_at?: string
+          updated_by: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          deleted_at?: string | null
+          deleted_by?: string | null
+          id?: string
+          name?: string
+          project_id?: string
+          sort_position?: number
+          updated_at?: string
+          updated_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_modules_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_modules_deleted_by_fkey"
+            columns: ["deleted_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_modules_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_modules_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       projects: {
         Row: {
           archived_at: string | null
@@ -191,6 +259,7 @@ export type Database = {
           id: string
           idempotency_key: string
           lead_id: string | null
+          module_preset_initialized: boolean
           name: string
           owner_id: string
           project_type: Database["public"]["Enums"]["project_type"]
@@ -208,6 +277,7 @@ export type Database = {
           id?: string
           idempotency_key: string
           lead_id?: string | null
+          module_preset_initialized?: boolean
           name: string
           owner_id: string
           project_type?: Database["public"]["Enums"]["project_type"]
@@ -225,6 +295,7 @@ export type Database = {
           id?: string
           idempotency_key?: string
           lead_id?: string | null
+          module_preset_initialized?: boolean
           name?: string
           owner_id?: string
           project_type?: Database["public"]["Enums"]["project_type"]
@@ -549,6 +620,19 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      add_project_module: {
+        Args: { p_name: string; p_project_id: string }
+        Returns: {
+          created_at: string
+          created_by: string
+          module_id: string
+          name: string
+          project_id: string
+          sort_position: number
+          updated_at: string
+          updated_by: string
+        }[]
+      }
       archive_project: {
         Args: { p_expected_updated_at: string; p_project_id: string }
         Returns: {
@@ -626,38 +710,84 @@ export type Database = {
         }
         Returns: string
       }
-      create_project: {
-        Args: {
-          p_description: string
-          p_due_date: string
-          p_idempotency_key: string
-          p_initial_status: Database["public"]["Enums"]["project_status"]
-          p_name: string
-          p_project_type: Database["public"]["Enums"]["project_type"]
-          p_start_date: string
-          p_workspace_id: string
-        }
+      create_project:
+        | {
+            Args: {
+              p_description: string
+              p_due_date: string
+              p_idempotency_key: string
+              p_initial_status: Database["public"]["Enums"]["project_status"]
+              p_name: string
+              p_project_type: Database["public"]["Enums"]["project_type"]
+              p_start_date: string
+              p_workspace_id: string
+            }
+            Returns: {
+              archived_at: string
+              created_at: string
+              created_by: string
+              description: string
+              due_date: string
+              lead_display_name: string
+              lead_id: string
+              name: string
+              owner_display_name: string
+              owner_id: string
+              project_id: string
+              project_type: Database["public"]["Enums"]["project_type"]
+              start_date: string
+              status: Database["public"]["Enums"]["project_status"]
+              updated_at: string
+              was_existing: boolean
+              workspace_id: string
+            }[]
+          }
+        | {
+            Args: {
+              p_description: string
+              p_due_date: string
+              p_idempotency_key: string
+              p_initial_status: Database["public"]["Enums"]["project_status"]
+              p_initialize_modules: boolean
+              p_name: string
+              p_project_type: Database["public"]["Enums"]["project_type"]
+              p_start_date: string
+              p_workspace_id: string
+            }
+            Returns: {
+              archived_at: string
+              created_at: string
+              created_by: string
+              description: string
+              due_date: string
+              lead_display_name: string
+              lead_id: string
+              name: string
+              owner_display_name: string
+              owner_id: string
+              project_id: string
+              project_type: Database["public"]["Enums"]["project_type"]
+              start_date: string
+              status: Database["public"]["Enums"]["project_status"]
+              updated_at: string
+              was_existing: boolean
+              workspace_id: string
+            }[]
+          }
+      current_app_user_id: { Args: never; Returns: string }
+      delete_project_module: {
+        Args: { p_module_id: string; p_project_id: string }
         Returns: {
-          archived_at: string
           created_at: string
           created_by: string
-          description: string
-          due_date: string
-          lead_display_name: string
-          lead_id: string
+          module_id: string
           name: string
-          owner_display_name: string
-          owner_id: string
           project_id: string
-          project_type: Database["public"]["Enums"]["project_type"]
-          start_date: string
-          status: Database["public"]["Enums"]["project_status"]
+          sort_position: number
           updated_at: string
-          was_existing: boolean
-          workspace_id: string
+          updated_by: string
         }[]
       }
-      current_app_user_id: { Args: never; Returns: string }
       get_project: {
         Args: { p_project_id: string }
         Returns: {
@@ -738,6 +868,19 @@ export type Database = {
           workspace_role: Database["public"]["Enums"]["workspace_role"]
         }[]
       }
+      list_project_modules: {
+        Args: { p_project_id: string }
+        Returns: {
+          created_at: string
+          created_by: string
+          module_id: string
+          name: string
+          project_id: string
+          sort_position: number
+          updated_at: string
+          updated_by: string
+        }[]
+      }
       list_projects: {
         Args: {
           p_archived_only?: boolean
@@ -783,9 +926,51 @@ export type Database = {
         Args: { p_participant_ids?: string[]; p_project_id: string }
         Returns: undefined
       }
+      lock_project_for_module_write: {
+        Args: { p_project_id: string }
+        Returns: {
+          archived_at: string | null
+          created_at: string
+          created_by: string
+          description: string | null
+          due_date: string | null
+          id: string
+          idempotency_key: string
+          lead_id: string | null
+          module_preset_initialized: boolean
+          name: string
+          owner_id: string
+          project_type: Database["public"]["Enums"]["project_type"]
+          start_date: string | null
+          status: Database["public"]["Enums"]["project_status"]
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "projects"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      lock_workspace_project_creator: {
+        Args: { p_workspace_id: string }
+        Returns: string
+      }
       mark_workspace_invitation_failed: {
         Args: { p_failure_code: string; p_invitation_id: string }
         Returns: Database["public"]["Enums"]["workspace_invitation_status"]
+      }
+      normalize_project_module_name: {
+        Args: { p_name: string }
+        Returns: string
+      }
+      operations_project_module_presets: {
+        Args: never
+        Returns: {
+          module_name: string
+          sort_position: number
+        }[]
       }
       prepare_workspace_invitation: {
         Args: {
@@ -801,6 +986,19 @@ export type Database = {
           invitation_status: Database["public"]["Enums"]["workspace_invitation_status"]
           operation_kind: string
           should_send: boolean
+        }[]
+      }
+      project_module_snapshot: {
+        Args: { p_project_id: string }
+        Returns: {
+          created_at: string
+          created_by: string
+          module_id: string
+          name: string
+          project_id: string
+          sort_position: number
+          updated_at: string
+          updated_by: string
         }[]
       }
       project_role_for_current_user: {
@@ -848,6 +1046,32 @@ export type Database = {
           status: Database["public"]["Enums"]["project_status"]
           updated_at: string
           workspace_id: string
+        }[]
+      }
+      rename_project_module: {
+        Args: { p_module_id: string; p_name: string; p_project_id: string }
+        Returns: {
+          created_at: string
+          created_by: string
+          module_id: string
+          name: string
+          project_id: string
+          sort_position: number
+          updated_at: string
+          updated_by: string
+        }[]
+      }
+      reorder_project_modules: {
+        Args: { p_module_ids: string[]; p_project_id: string }
+        Returns: {
+          created_at: string
+          created_by: string
+          module_id: string
+          name: string
+          project_id: string
+          sort_position: number
+          updated_at: string
+          updated_by: string
         }[]
       }
       resolve_app_user_id: {

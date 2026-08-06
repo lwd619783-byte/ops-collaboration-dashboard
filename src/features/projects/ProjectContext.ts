@@ -10,6 +10,11 @@ import type {
   ProjectMemberCandidate,
   ProjectMemberInput,
   ProjectMemberRoleInput,
+  ProjectModule,
+  ProjectModuleInput,
+  ProjectModuleNameInput,
+  ProjectModuleRenameInput,
+  ProjectModuleReorderInput,
   ProjectMutationResult,
   ProjectUpdateInput,
 } from '@/features/projects/types'
@@ -26,6 +31,21 @@ export type ProjectContextValue = {
   listMembers: (
     projectId: string,
   ) => Promise<ProjectServiceResult<ProjectMember[]>>
+  listModules: (
+    projectId: string,
+  ) => Promise<ProjectServiceResult<ProjectModule[]>>
+  addModule: (
+    input: ProjectModuleNameInput,
+  ) => Promise<ProjectServiceResult<ProjectModule[]>>
+  renameModule: (
+    input: ProjectModuleRenameInput,
+  ) => Promise<ProjectServiceResult<ProjectModule[]>>
+  reorderModules: (
+    input: ProjectModuleReorderInput,
+  ) => Promise<ProjectServiceResult<ProjectModule[]>>
+  deleteModule: (
+    input: ProjectModuleInput,
+  ) => Promise<ProjectServiceResult<ProjectModule[]>>
   listMemberCandidates: (
     projectId: string,
   ) => Promise<ProjectServiceResult<ProjectMemberCandidate[]>>

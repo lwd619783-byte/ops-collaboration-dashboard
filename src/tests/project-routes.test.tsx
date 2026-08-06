@@ -92,6 +92,61 @@ describe('项目路由嵌套', () => {
     ).toBe(false)
   })
 
+  it('成员动态路由保持认证与工作空间门禁并加载安全成员投影', async () => {
+    const supabase = createSupabaseClientMock({ hasSession: true })
+    supabase.rpc.mockImplementation(async (name: string) => {
+      if (name === 'current_app_user_id') {
+        return { data: FICTIONAL_APP_USER_ID, error: null }
+      }
+      if (name === 'list_my_workspaces') {
+        return { data: [fictionalWorkspace], error: null }
+      }
+      if (name === 'list_my_pending_workspace_invitations') {
+        return { data: [], error: null }
+      }
+      if (name === 'get_project') {
+        return { data: [projectRow], error: null }
+      }
+      if (name === 'list_project_members') {
+        return {
+          data: [
+            {
+              project_id: projectRow.project_id,
+              workspace_id: FICTIONAL_WORKSPACE_ID,
+              app_user_id: FICTIONAL_APP_USER_ID,
+              display_name: '虚构负责人',
+              workspace_role: 'owner',
+              project_role: 'owner',
+              joined_at: projectRow.created_at,
+              is_current_user: true,
+              is_active: true,
+              active_member_count: 1,
+              inactive_historical_member_count: 0,
+            },
+          ],
+          error: null,
+        }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[`/projects/${projectRow.project_id}/members`]}
+      >
+        <AppRouter resolveClient={readyResolver(supabase)} />
+      </MemoryRouter>,
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: projectRow.name }),
+    ).toBeInTheDocument()
+    expect(await screen.findByText('项目负责人')).toBeInTheDocument()
+    expect(supabase.rpc).toHaveBeenCalledWith('list_project_members', {
+      p_project_id: projectRow.project_id,
+    })
+  })
+
   it('未登录访问动态项目路径时安全回到登录页', async () => {
     const supabase = createSupabaseClientMock({ hasSession: false })
 

@@ -13,7 +13,11 @@ import { DateDisplay } from '@/components/ui/DateDisplay'
 import { Dialog } from '@/components/ui/Dialog'
 import { ProjectStatusBadge } from '@/features/projects/ProjectStatusBadge'
 import { projectTypeLabels } from '@/features/projects/projectMeta'
-import { useProjects, type Project } from '@/features/projects'
+import {
+  useProjects,
+  type Project,
+  type ProjectMember,
+} from '@/features/projects'
 import { createSafeProjectError } from '@/features/projects/errors'
 import { useWorkspace } from '@/features/workspaces'
 
@@ -23,6 +27,7 @@ export function ProjectDetailPage() {
   const projects = useProjects()
   const currentWorkspace = workspace.currentWorkspace
   const [project, setProject] = useState<Project | null>(null)
+  const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>(
     'loading',
   )
@@ -91,19 +96,31 @@ export function ProjectDetailPage() {
     const requestScopeKey = scopeKeyRef.current
     setLoadState('loading')
     setLoadedScopeKey(null)
-    const result = await projects.get(projectId)
+    const [result, membersResult] = await Promise.all([
+      projects.get(projectId),
+      projects.listMembers(projectId),
+    ])
     if (!mountedRef.current || requestEpochRef.current !== epoch) return
     if (requestScopeKey !== scopeKeyRef.current) return
     if (
       !result.ok ||
-      result.data.workspace_id !== currentWorkspace.workspace_id
+      !membersResult.ok ||
+      (projectId !== '' && result.data.project_id !== projectId) ||
+      result.data.workspace_id !== currentWorkspace.workspace_id ||
+      membersResult.data.some(
+        (member) =>
+          (projectId !== '' && member.project_id !== projectId) ||
+          member.workspace_id !== currentWorkspace.workspace_id,
+      )
     ) {
       setProject(null)
+      setProjectMembers([])
       setLoadedScopeKey(requestScopeKey)
       setLoadState('error')
       return
     }
     setProject(result.data)
+    setProjectMembers(membersResult.data)
     setLoadedScopeKey(requestScopeKey)
     setLoadState('ready')
   }, [currentWorkspace, projectId, projects])
@@ -186,6 +203,19 @@ export function ProjectDetailPage() {
     )
   }
 
+  const currentProjectMember = projectMembers.find(
+    (member) => member.is_current_user,
+  )
+  const canManageMembers =
+    project.status !== 'archived' &&
+    (canManage ||
+      currentProjectMember?.project_role === 'owner' ||
+      currentProjectMember?.project_role === 'lead')
+
+  const activeMemberCount = projectMembers[0]?.active_member_count ?? 0
+  const inactiveHistoricalMemberCount =
+    projectMembers[0]?.inactive_historical_member_count ?? 0
+
   return (
     <div className="page-stack project-detail-page">
       <section className="intro project-detail-heading">
@@ -240,6 +270,15 @@ export function ProjectDetailPage() {
             <dd>{project.lead_display_name ?? '暂未设置'}</dd>
           </div>
           <div>
+            <dt>项目成员</dt>
+            <dd>
+              {activeMemberCount} 人
+              {inactiveHistoricalMemberCount > 0
+                ? `；停用历史 ${inactiveHistoricalMemberCount} 人`
+                : ''}
+            </dd>
+          </div>
+          <div>
             <dt>开始日期</dt>
             <dd>
               <DateDisplay value={project.start_date} />
@@ -275,7 +314,21 @@ export function ProjectDetailPage() {
       <section className="project-future-grid" aria-label="后续项目能力">
         <article className="card">
           <h3>项目成员</h3>
-          <p>成员添加、移除和角色管理将在 Task 2.2 开放。</p>
+          <p>
+            当前共 {activeMemberCount} 人
+            {inactiveHistoricalMemberCount > 0
+              ? `；停用历史 ${inactiveHistoricalMemberCount} 人`
+              : ''}
+            ；负责人为
+            {project.owner_display_name}，牵头人为
+            {project.lead_display_name ?? '暂未设置'}。
+          </p>
+          <Link
+            className="button button-secondary button-md"
+            to={`/projects/${project.project_id}/members`}
+          >
+            {canManageMembers ? '管理项目成员' : '查看项目成员'}
+          </Link>
         </article>
         <article className="card">
           <h3>项目模块</h3>

@@ -5,42 +5,204 @@ import {
   mapProjectError,
   type SafeProjectError,
 } from '@/features/projects/errors'
+import {
+  isProjectRole,
+  isProjectStatus,
+  isProjectType,
+  isProjectWorkspaceRole,
+} from '@/features/projects/projectMeta'
 import type {
   Project,
+  ProjectClearLeadInput,
   ProjectCreateInput,
+  ProjectLeadershipInput,
   ProjectListInput,
+  ProjectMember,
+  ProjectMemberCandidate,
+  ProjectMemberInput,
+  ProjectMemberRoleInput,
+  ProjectMutationResult,
   ProjectUpdateInput,
 } from '@/features/projects/types'
 
 export type ProjectServiceResult<T> =
   { ok: true; data: T } | { ok: false; error: SafeProjectError }
 
-type GeneratedProject =
-  Database['public']['Functions']['list_projects']['Returns'][number]
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
 
-function mapProject(row: GeneratedProject): Project {
+function isString(value: unknown): value is string {
+  return typeof value === 'string'
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || isString(value)
+}
+
+function parseProject(value: unknown): Project | null {
+  if (!isRecord(value)) return null
+  if (
+    !isString(value.project_id) ||
+    !isString(value.workspace_id) ||
+    !isString(value.name) ||
+    !isNullableString(value.description) ||
+    !isProjectType(value.project_type) ||
+    !isProjectStatus(value.status) ||
+    !isString(value.owner_id) ||
+    !isString(value.owner_display_name) ||
+    !isNullableString(value.lead_id) ||
+    !isNullableString(value.lead_display_name) ||
+    !isString(value.created_by) ||
+    !isNullableString(value.start_date) ||
+    !isNullableString(value.due_date) ||
+    !isString(value.created_at) ||
+    !isString(value.updated_at) ||
+    !isNullableString(value.archived_at)
+  ) {
+    return null
+  }
+  return value as unknown as Project
+}
+
+function invalidPayload<T>(): ProjectServiceResult<T> {
   return {
-    ...row,
-    archived_at: row.archived_at ?? null,
-    description: row.description ?? null,
-    due_date: row.due_date ?? null,
-    lead_display_name: row.lead_display_name ?? null,
-    lead_id: row.lead_id ?? null,
-    start_date: row.start_date ?? null,
+    ok: false,
+    error: createSafeProjectError('unknown_service_error'),
   }
 }
 
-function firstProject(
-  rows: GeneratedProject[] | null,
-): ProjectServiceResult<Project> {
-  const row = rows?.[0]
+function isFiniteNonNegativeSafeInteger(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= Number.MAX_SAFE_INTEGER
+  )
+}
+
+function parseProjectArray(value: unknown): ProjectServiceResult<Project[]> {
+  if (!Array.isArray(value)) return invalidPayload()
+  const projects = value.map(parseProject)
+  if (projects.some((project) => project === null)) return invalidPayload()
+  return { ok: true, data: projects as Project[] }
+}
+
+function firstProject(rows: unknown): ProjectServiceResult<Project> {
+  if (!Array.isArray(rows)) return invalidPayload()
+  const row = rows[0]
   if (!row) {
     return {
       ok: false,
       error: createSafeProjectError('not_found_or_forbidden'),
     }
   }
-  return { ok: true, data: mapProject(row) }
+  const project = parseProject(row)
+  return project ? { ok: true, data: project } : invalidPayload()
+}
+
+function firstProjectMutation(
+  rows: unknown,
+): ProjectServiceResult<ProjectMutationResult> {
+  if (!Array.isArray(rows)) return invalidPayload()
+  const row = rows[0]
+  if (!isRecord(row) || typeof row.changed !== 'boolean') {
+    return invalidPayload()
+  }
+  const project = parseProject(row)
+  return project
+    ? { ok: true, data: { ...project, changed: row.changed } }
+    : invalidPayload()
+}
+
+function parseProjectMember(value: unknown): ProjectMember | null {
+  if (!isRecord(value)) return null
+  if (
+    !isString(value.project_id) ||
+    !isString(value.workspace_id) ||
+    !isString(value.app_user_id) ||
+    !isString(value.display_name) ||
+    !isProjectRole(value.project_role) ||
+    !isProjectWorkspaceRole(value.workspace_role) ||
+    !isString(value.joined_at) ||
+    typeof value.is_current_user !== 'boolean' ||
+    typeof value.is_active !== 'boolean' ||
+    !isFiniteNonNegativeSafeInteger(value.active_member_count) ||
+    !isFiniteNonNegativeSafeInteger(value.inactive_historical_member_count)
+  ) {
+    return null
+  }
+  return value as unknown as ProjectMember
+}
+
+function parseProjectCandidate(value: unknown): ProjectMemberCandidate | null {
+  if (!isRecord(value)) return null
+  if (
+    !isString(value.project_id) ||
+    !isString(value.workspace_id) ||
+    !isString(value.app_user_id) ||
+    !isString(value.display_name) ||
+    !isProjectWorkspaceRole(value.workspace_role) ||
+    (value.existing_project_role !== null &&
+      !isProjectRole(value.existing_project_role))
+  ) {
+    return null
+  }
+  return value as unknown as ProjectMemberCandidate
+}
+
+// Dedicated `list_project_members` parser. The RPC returns the two member
+// counts on every row (a window over the visible membership set). Beyond the
+// per-row shape check, we validate that all rows agree on the counts and that
+// the counts are internally consistent with the per-row `is_active` flags:
+// every row must carry identical counts, the sum of the two counts must equal
+// the number of rows, and the active/inactive counts must match the number of
+// rows whose `is_active` is true/false respectively. Any inconsistency is a
+// contract violation and surfaces as a unified `unknown_service_error` rather
+// than a silently wrong UI count. An empty array is valid and yields 0/0.
+function parseProjectMembers(
+  value: unknown,
+): ProjectServiceResult<ProjectMember[]> {
+  if (!Array.isArray(value)) return invalidPayload()
+  const rows = value.map(parseProjectMember)
+  if (rows.some((row) => row === null)) return invalidPayload()
+
+  const members = rows as ProjectMember[]
+  if (members.length === 0) return { ok: true, data: [] }
+
+  const first = members[0]
+  const activeCount = first.active_member_count
+  const inactiveCount = first.inactive_historical_member_count
+
+  const allCountsConsistent = members.every(
+    (member) =>
+      member.active_member_count === activeCount &&
+      member.inactive_historical_member_count === inactiveCount,
+  )
+  if (!allCountsConsistent) return invalidPayload()
+
+  if (activeCount + inactiveCount !== members.length) {
+    return invalidPayload()
+  }
+
+  const actualActive = members.filter((member) => member.is_active).length
+  const actualInactive = members.filter((member) => !member.is_active).length
+  if (actualActive !== activeCount || actualInactive !== inactiveCount) {
+    return invalidPayload()
+  }
+
+  return { ok: true, data: members }
+}
+
+function parseRows<T>(
+  value: unknown,
+  parser: (row: unknown) => T | null,
+): ProjectServiceResult<T[]> {
+  if (!Array.isArray(value)) return invalidPayload()
+  const rows = value.map(parser)
+  if (rows.some((row) => row === null)) return invalidPayload()
+  return { ok: true, data: rows as T[] }
 }
 
 export async function listProjects(
@@ -57,7 +219,7 @@ export async function listProjects(
   try {
     const { data, error } = await client.rpc('list_projects', args)
     if (error) return { ok: false, error: mapProjectError(error) }
-    return { ok: true, data: (data ?? []).map(mapProject) }
+    return parseProjectArray(data)
   } catch (error) {
     return { ok: false, error: mapProjectError(error) }
   }
@@ -162,4 +324,122 @@ export async function archiveProject(
   } catch (error) {
     return { ok: false, error: mapProjectError(error) }
   }
+}
+
+export async function listProjectMembers(
+  client: SupabaseClient<Database>,
+  projectId: string,
+): Promise<ProjectServiceResult<ProjectMember[]>> {
+  try {
+    const { data, error } = await client.rpc('list_project_members', {
+      p_project_id: projectId,
+    })
+    if (error) return { ok: false, error: mapProjectError(error) }
+    return parseProjectMembers(data)
+  } catch (error) {
+    return { ok: false, error: mapProjectError(error) }
+  }
+}
+
+export async function listProjectMemberCandidates(
+  client: SupabaseClient<Database>,
+  projectId: string,
+): Promise<ProjectServiceResult<ProjectMemberCandidate[]>> {
+  try {
+    const { data, error } = await client.rpc('list_project_member_candidates', {
+      p_project_id: projectId,
+    })
+    if (error) return { ok: false, error: mapProjectError(error) }
+    return parseRows(data, parseProjectCandidate)
+  } catch (error) {
+    return { ok: false, error: mapProjectError(error) }
+  }
+}
+
+async function runProjectMutation(
+  operation: () => PromiseLike<{ data: unknown; error: unknown }>,
+): Promise<ProjectServiceResult<ProjectMutationResult>> {
+  try {
+    const { data, error } = await operation()
+    if (error) return { ok: false, error: mapProjectError(error) }
+    return firstProjectMutation(data)
+  } catch (error) {
+    return { ok: false, error: mapProjectError(error) }
+  }
+}
+
+export function addProjectMember(
+  client: SupabaseClient<Database>,
+  input: ProjectMemberRoleInput,
+): Promise<ProjectServiceResult<ProjectMutationResult>> {
+  return runProjectMutation(() =>
+    client.rpc('add_project_member', {
+      p_project_id: input.projectId,
+      p_user_id: input.userId,
+      p_role: input.role,
+    }),
+  )
+}
+
+export function setProjectMemberRole(
+  client: SupabaseClient<Database>,
+  input: ProjectMemberRoleInput,
+): Promise<ProjectServiceResult<ProjectMutationResult>> {
+  return runProjectMutation(() =>
+    client.rpc('set_project_member_role', {
+      p_project_id: input.projectId,
+      p_user_id: input.userId,
+      p_role: input.role,
+    }),
+  )
+}
+
+export function removeProjectMember(
+  client: SupabaseClient<Database>,
+  input: ProjectMemberInput,
+): Promise<ProjectServiceResult<ProjectMutationResult>> {
+  return runProjectMutation(() =>
+    client.rpc('remove_project_member', {
+      p_project_id: input.projectId,
+      p_user_id: input.userId,
+    }),
+  )
+}
+
+export function setProjectLead(
+  client: SupabaseClient<Database>,
+  input: ProjectLeadershipInput,
+): Promise<ProjectServiceResult<ProjectMutationResult>> {
+  return runProjectMutation(() =>
+    client.rpc('set_project_lead', {
+      p_project_id: input.projectId,
+      p_user_id: input.userId,
+      p_expected_updated_at: input.expectedUpdatedAt,
+    }),
+  )
+}
+
+export function clearProjectLead(
+  client: SupabaseClient<Database>,
+  input: ProjectClearLeadInput,
+): Promise<ProjectServiceResult<ProjectMutationResult>> {
+  return runProjectMutation(() =>
+    client.rpc('clear_project_lead', {
+      p_project_id: input.projectId,
+      p_expected_updated_at: input.expectedUpdatedAt,
+    }),
+  )
+}
+
+export function transferProjectOwner(
+  client: SupabaseClient<Database>,
+  input: ProjectLeadershipInput,
+): Promise<ProjectServiceResult<ProjectMutationResult>> {
+  return runProjectMutation(() =>
+    client.rpc('transfer_project_owner', {
+      p_project_id: input.projectId,
+      p_user_id: input.userId,
+      p_expected_updated_at: input.expectedUpdatedAt,
+    }),
+  )
 }

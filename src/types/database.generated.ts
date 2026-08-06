@@ -523,6 +523,32 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      add_project_member: {
+        Args: {
+          p_project_id: string
+          p_role: Database["public"]["Enums"]["project_role"]
+          p_user_id: string
+        }
+        Returns: {
+          archived_at: string
+          changed: boolean
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          lead_display_name: string
+          lead_id: string
+          name: string
+          owner_display_name: string
+          owner_id: string
+          project_id: string
+          project_type: Database["public"]["Enums"]["project_type"]
+          start_date: string
+          status: Database["public"]["Enums"]["project_status"]
+          updated_at: string
+          workspace_id: string
+        }[]
+      }
       archive_project: {
         Args: { p_expected_updated_at: string; p_project_id: string }
         Returns: {
@@ -544,9 +570,21 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      assert_active_project_candidate: {
+        Args: { p_project_id: string; p_user_id: string }
+        Returns: undefined
+      }
       bootstrap_default_workspace: {
         Args: { p_idempotency_key: string; p_name: string; p_owner_id: string }
         Returns: string
+      }
+      can_manage_project_leadership: {
+        Args: { p_project_id: string }
+        Returns: boolean
+      }
+      can_manage_project_members: {
+        Args: { p_project_id: string }
+        Returns: boolean
       }
       can_manage_workspace_members: {
         Args: { p_workspace_id: string }
@@ -557,6 +595,28 @@ export type Database = {
         Returns: boolean
       }
       can_read_project: { Args: { p_project_id: string }; Returns: boolean }
+      clear_project_lead: {
+        Args: { p_expected_updated_at: string; p_project_id: string }
+        Returns: {
+          archived_at: string
+          changed: boolean
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          lead_display_name: string
+          lead_id: string
+          name: string
+          owner_display_name: string
+          owner_id: string
+          project_id: string
+          project_type: Database["public"]["Enums"]["project_type"]
+          start_date: string
+          status: Database["public"]["Enums"]["project_status"]
+          updated_at: string
+          workspace_id: string
+        }[]
+      }
       confirm_workspace_auth_invitation_result: {
         Args: {
           p_invitation_id: string
@@ -651,6 +711,33 @@ export type Database = {
           workspace_name: string
         }[]
       }
+      list_project_member_candidates: {
+        Args: { p_project_id: string }
+        Returns: {
+          app_user_id: string
+          display_name: string
+          existing_project_role: Database["public"]["Enums"]["project_role"]
+          project_id: string
+          workspace_id: string
+          workspace_role: Database["public"]["Enums"]["workspace_role"]
+        }[]
+      }
+      list_project_members: {
+        Args: { p_project_id: string }
+        Returns: {
+          active_member_count: number
+          app_user_id: string
+          display_name: string
+          inactive_historical_member_count: number
+          is_active: boolean
+          is_current_user: boolean
+          joined_at: string
+          project_id: string
+          project_role: Database["public"]["Enums"]["project_role"]
+          workspace_id: string
+          workspace_role: Database["public"]["Enums"]["workspace_role"]
+        }[]
+      }
       list_projects: {
         Args: {
           p_archived_only?: boolean
@@ -692,6 +779,10 @@ export type Database = {
           user_id: string
         }[]
       }
+      lock_membership_participants: {
+        Args: { p_participant_ids?: string[]; p_project_id: string }
+        Returns: undefined
+      }
       mark_workspace_invitation_failed: {
         Args: { p_failure_code: string; p_invitation_id: string }
         Returns: Database["public"]["Enums"]["workspace_invitation_status"]
@@ -712,10 +803,36 @@ export type Database = {
           should_send: boolean
         }[]
       }
+      project_role_for_current_user: {
+        Args: { p_project_id: string }
+        Returns: Database["public"]["Enums"]["project_role"]
+      }
       project_snapshot: {
         Args: { p_project_id: string }
         Returns: {
           archived_at: string
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          lead_display_name: string
+          lead_id: string
+          name: string
+          owner_display_name: string
+          owner_id: string
+          project_id: string
+          project_type: Database["public"]["Enums"]["project_type"]
+          start_date: string
+          status: Database["public"]["Enums"]["project_status"]
+          updated_at: string
+          workspace_id: string
+        }[]
+      }
+      remove_project_member: {
+        Args: { p_project_id: string; p_user_id: string }
+        Returns: {
+          archived_at: string
+          changed: boolean
           created_at: string
           created_by: string
           description: string
@@ -741,6 +858,58 @@ export type Database = {
         }
         Returns: string
       }
+      set_project_lead: {
+        Args: {
+          p_expected_updated_at: string
+          p_project_id: string
+          p_user_id: string
+        }
+        Returns: {
+          archived_at: string
+          changed: boolean
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          lead_display_name: string
+          lead_id: string
+          name: string
+          owner_display_name: string
+          owner_id: string
+          project_id: string
+          project_type: Database["public"]["Enums"]["project_type"]
+          start_date: string
+          status: Database["public"]["Enums"]["project_status"]
+          updated_at: string
+          workspace_id: string
+        }[]
+      }
+      set_project_member_role: {
+        Args: {
+          p_project_id: string
+          p_role: Database["public"]["Enums"]["project_role"]
+          p_user_id: string
+        }
+        Returns: {
+          archived_at: string
+          changed: boolean
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          lead_display_name: string
+          lead_id: string
+          name: string
+          owner_display_name: string
+          owner_id: string
+          project_id: string
+          project_type: Database["public"]["Enums"]["project_type"]
+          start_date: string
+          status: Database["public"]["Enums"]["project_status"]
+          updated_at: string
+          workspace_id: string
+        }[]
+      }
       set_workspace_member_role: {
         Args: {
           p_role: Database["public"]["Enums"]["workspace_role"]
@@ -764,6 +933,32 @@ export type Database = {
           role: Database["public"]["Enums"]["workspace_role"]
           status: Database["public"]["Enums"]["workspace_member_status"]
           user_id: string
+        }[]
+      }
+      transfer_project_owner: {
+        Args: {
+          p_expected_updated_at: string
+          p_project_id: string
+          p_user_id: string
+        }
+        Returns: {
+          archived_at: string
+          changed: boolean
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          lead_display_name: string
+          lead_id: string
+          name: string
+          owner_display_name: string
+          owner_id: string
+          project_id: string
+          project_type: Database["public"]["Enums"]["project_type"]
+          start_date: string
+          status: Database["public"]["Enums"]["project_status"]
+          updated_at: string
+          workspace_id: string
         }[]
       }
       update_project: {

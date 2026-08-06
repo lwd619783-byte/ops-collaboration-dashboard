@@ -2,8 +2,15 @@ import { createContext, useContext } from 'react'
 import type { ProjectServiceResult } from '@/features/projects/projectService'
 import type {
   Project,
+  ProjectClearLeadInput,
   ProjectCreateInput,
+  ProjectLeadershipInput,
   ProjectListInput,
+  ProjectMember,
+  ProjectMemberCandidate,
+  ProjectMemberInput,
+  ProjectMemberRoleInput,
+  ProjectMutationResult,
   ProjectUpdateInput,
 } from '@/features/projects/types'
 
@@ -16,6 +23,30 @@ export type ProjectContextValue = {
     projectId: string,
     expectedUpdatedAt: string,
   ) => Promise<ProjectServiceResult<Project>>
+  listMembers: (
+    projectId: string,
+  ) => Promise<ProjectServiceResult<ProjectMember[]>>
+  listMemberCandidates: (
+    projectId: string,
+  ) => Promise<ProjectServiceResult<ProjectMemberCandidate[]>>
+  addMember: (
+    input: ProjectMemberRoleInput,
+  ) => Promise<ProjectServiceResult<ProjectMutationResult>>
+  setMemberRole: (
+    input: ProjectMemberRoleInput,
+  ) => Promise<ProjectServiceResult<ProjectMutationResult>>
+  removeMember: (
+    input: ProjectMemberInput,
+  ) => Promise<ProjectServiceResult<ProjectMutationResult>>
+  setLead: (
+    input: ProjectLeadershipInput,
+  ) => Promise<ProjectServiceResult<ProjectMutationResult>>
+  clearLead: (
+    input: ProjectClearLeadInput,
+  ) => Promise<ProjectServiceResult<ProjectMutationResult>>
+  transferOwner: (
+    input: ProjectLeadershipInput,
+  ) => Promise<ProjectServiceResult<ProjectMutationResult>>
 }
 
 export const ProjectContext = createContext<ProjectContextValue | null>(null)

@@ -36,3 +36,17 @@ npm run build
 npm run check
 git diff --check
 ```
+
+涉及数据库和 Task 2.2 项目成员边界时，还必须使用本地 Supabase 执行：
+
+```bash
+npm run db:reset
+npm run db:test
+npm run db:membership:verify
+npm run db:lint
+npm run db:types
+npm run db:types:check
+npm run db:verify
+```
+
+成员并发脚本只允许随机虚构夹具和本地连接，不得输出本地数据库连接串、publishable/secret key 或 JWT。功能分支普通推送后，必须等待与最终 commit SHA 精确匹配的 Frontend checks、Database checks、Edge Function checks；CI 通过只代表实现与远端流程完成，不能替代后续独立代码审计。本任务不创建 PR，审计结论保持待处理。

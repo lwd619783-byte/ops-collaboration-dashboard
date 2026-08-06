@@ -55,6 +55,12 @@ export function Dialog({
         event.preventDefault()
         onClose()
       }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          onClose()
+        }
+      }}
       ref={dialogRef}
     >
       <div className="dialog-content">

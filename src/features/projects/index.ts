@@ -3,9 +3,17 @@ export { useProjects } from '@/features/projects/ProjectContext'
 export type { ProjectContextValue } from '@/features/projects/ProjectContext'
 export type {
   Project,
+  ProjectClearLeadInput,
   ProjectCreateInput,
   ProjectFormValues,
+  ProjectLeadershipInput,
   ProjectListInput,
+  ProjectMember,
+  ProjectMemberCandidate,
+  ProjectMemberInput,
+  ProjectMemberRole,
+  ProjectMemberRoleInput,
+  ProjectMutationResult,
   ProjectRole,
   ProjectStatus,
   ProjectType,

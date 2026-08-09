@@ -48,7 +48,7 @@ view、status 和 priority 只接受封闭词汇；模块、负责人和协作�
 
 ## 当前不包含
 
-Task 3.3 不改变本页面的 summary 敏感字段或只读边界。数据库状态变化后，重新进入或刷新任务中心会通过原 `list_project_tasks()` 自然显示最新状态；blocker reason、阻塞人和状态历史只出现在授权的任务详情。任务中心仍不实现 progress mutation、拖拽、inline action、批量操作、通知、飞书、微信小程序、私人任务、甘特图、团队负荷、全局“我的任务”或阶段 4 管理者工作台。
+Task 3.3/3.4 不改变本页面的 summary 敏感字段或只读边界。数据库状态或 progress 变化后，重新进入或刷新任务中心会通过原 `list_project_tasks()` 自然显示最新值；blocker、状态历史和每日进展时间线只出现在授权的任务详情。任务中心仍不实现 progress mutation、拖拽、inline action、批量操作、通知、飞书、微信小程序、私人任务、甘特图、团队负荷、全局“我的任务”或阶段 4 管理者工作台。
 
 ## 本地验证
 

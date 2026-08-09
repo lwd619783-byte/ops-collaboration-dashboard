@@ -3,10 +3,12 @@ import {
   blockTask,
   cancelTask,
   createTask,
+  createTaskProgressUpdate,
   getTask,
   listProjectTasks,
   listTaskAssignmentCandidates,
   listTaskStatusHistory,
+  listTaskUpdates,
   resumeTask,
   startTask,
   updateTask,
@@ -22,6 +24,7 @@ const PROJECT_ID = 'aaaaaaaa-1111-4111-8111-111111111111'
 const MODULE_ID = 'bbbbbbbb-1111-4111-8111-111111111111'
 const TASK_ID = 'cccccccc-1111-4111-8111-111111111111'
 const REVIEWER_ID = '22222222-2222-4222-8222-222222222222'
+const UPDATE_ID = 'eeeeeeee-3333-4333-8333-333333333333'
 
 const taskRow = {
   task_id: TASK_ID,
@@ -46,6 +49,9 @@ const taskRow = {
   visibility_users: [],
   status: 'todo' as const,
   progress: 0,
+  last_progress_at: null,
+  last_progress_by: null,
+  last_progress_by_display_name: null,
   blocker_reason: null,
   blocked_at: null,
   blocked_by: null,
@@ -94,6 +100,23 @@ const createInput = {
   visibility: 'project' as const,
   visibilityUserIds: [] as string[],
   idempotencyKey: 'dddddddd-1111-4111-8111-111111111111',
+}
+
+const progressRow = {
+  update_id: UPDATE_ID,
+  task_id: TASK_ID,
+  sequence: 1,
+  record_date: '2026-08-10',
+  completed_content: 'Fictional completed work',
+  progress: 40,
+  issues: null,
+  next_steps: 'Fictional next step',
+  needs_assistance: true,
+  is_blocked: false,
+  block_transition_id: null,
+  created_by: FICTIONAL_APP_USER_ID,
+  created_by_display_name: '虚构负责人',
+  created_at: '2026-08-10T02:00:00+00:00',
 }
 
 describe('任务 service', () => {
@@ -252,10 +275,16 @@ describe('任务 service', () => {
 
   it('创建仅发送白名单字段，不发送 actor、status 或 progress', async () => {
     const supabase = createSupabaseClientMock()
-    supabase.rpc.mockResolvedValue({
-      data: [{ ...taskRow, was_existing: false }],
-      error: null,
-    })
+    const legacyCreatePayload: Record<string, unknown> = {
+      ...taskRow,
+      was_existing: false,
+    }
+    delete legacyCreatePayload.last_progress_at
+    delete legacyCreatePayload.last_progress_by
+    delete legacyCreatePayload.last_progress_by_display_name
+    supabase.rpc
+      .mockResolvedValueOnce({ data: [legacyCreatePayload], error: null })
+      .mockResolvedValueOnce({ data: [taskRow], error: null })
 
     const result = await createTask(supabase.client, createInput)
 
@@ -297,10 +326,19 @@ describe('任务 service', () => {
 
   it('编辑发送 expected_updated_at 且没有幂等键或状态后门', async () => {
     const supabase = createSupabaseClientMock()
-    supabase.rpc.mockResolvedValue({
-      data: [{ ...taskRow, title: '更新后的虚构任务' }],
-      error: null,
-    })
+    const legacyUpdatePayload: Record<string, unknown> = {
+      ...taskRow,
+      title: '更新后的虚构任务',
+    }
+    delete legacyUpdatePayload.last_progress_at
+    delete legacyUpdatePayload.last_progress_by
+    delete legacyUpdatePayload.last_progress_by_display_name
+    supabase.rpc
+      .mockResolvedValueOnce({ data: [legacyUpdatePayload], error: null })
+      .mockResolvedValueOnce({
+        data: [{ ...taskRow, title: '更新后的虚构任务' }],
+        error: null,
+      })
 
     const result = await updateTask(supabase.client, {
       ...createInput,
@@ -659,6 +697,111 @@ describe('任务 service', () => {
     expect(malformed.ok).toBe(false)
   })
 
+  it('进展列表按 task scope 和连续 sequence 校验安全投影', async () => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc.mockResolvedValue({ data: [progressRow], error: null })
+
+    await expect(listTaskUpdates(supabase.client, TASK_ID)).resolves.toEqual({
+      ok: true,
+      data: [progressRow],
+    })
+    expect(supabase.rpc).toHaveBeenCalledWith('list_task_updates', {
+      p_task_id: TASK_ID,
+    })
+
+    supabase.rpc.mockResolvedValue({
+      data: [{ ...progressRow, sequence: 2 }],
+      error: null,
+    })
+    expect((await listTaskUpdates(supabase.client, TASK_ID)).ok).toBe(false)
+  })
+
+  it('新增进展只发送白名单 payload 并严格校验 task/update 原子结果', async () => {
+    const supabase = createSupabaseClientMock()
+    const progressedTask = {
+      ...taskRow,
+      status: 'in_progress' as const,
+      progress: 40,
+      last_progress_at: progressRow.created_at,
+      last_progress_by: FICTIONAL_APP_USER_ID,
+      last_progress_by_display_name: '虚构负责人',
+      updated_at: progressRow.created_at,
+    }
+    supabase.rpc.mockResolvedValue({
+      data: {
+        task: progressedTask,
+        update: progressRow,
+        was_existing: false,
+      },
+      error: null,
+    })
+    const input = {
+      taskId: TASK_ID,
+      projectId: PROJECT_ID,
+      workspaceId: FICTIONAL_WORKSPACE_ID,
+      recordDate: '2026-08-10',
+      completedContent: 'Fictional completed work',
+      progress: 40,
+      issues: '',
+      nextSteps: 'Fictional next step',
+      needsAssistance: true,
+      markBlocked: false,
+      blockerReason: '',
+      idempotencyKey: createInput.idempotencyKey,
+    }
+
+    const result = await createTaskProgressUpdate(supabase.client, input)
+
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        task: progressedTask,
+        update: progressRow,
+        was_existing: false,
+      },
+    })
+    expect(supabase.rpc).toHaveBeenCalledWith('create_task_update', {
+      p_task_id: TASK_ID,
+      p_record_date: '2026-08-10',
+      p_completed_content: 'Fictional completed work',
+      p_progress: 40,
+      p_issues: null,
+      p_next_steps: 'Fictional next step',
+      p_needs_assistance: true,
+      p_mark_blocked: false,
+      p_blocker_reason: null,
+      p_idempotency_key: createInput.idempotencyKey,
+    })
+    expect(supabase.rpc.mock.calls[0][1]).not.toHaveProperty('actor_id')
+
+    supabase.rpc.mockResolvedValue({
+      data: {
+        task: { ...progressedTask, last_progress_at: taskRow.created_at },
+        update: progressRow,
+        was_existing: false,
+      },
+      error: null,
+    })
+    expect((await createTaskProgressUpdate(supabase.client, input)).ok).toBe(
+      false,
+    )
+
+    supabase.rpc.mockResolvedValue({
+      data: {
+        task: progressedTask,
+        update: {
+          ...progressRow,
+          completed_content: 'Fictional unrelated replay',
+        },
+        was_existing: true,
+      },
+      error: null,
+    })
+    expect((await createTaskProgressUpdate(supabase.client, input)).ok).toBe(
+      false,
+    )
+  })
+
   it('数据库错误只映射稳定安全分类', () => {
     expect(
       mapTaskError({ code: '55000', message: 'task_project_archived' }),
@@ -678,5 +821,11 @@ describe('任务 service', () => {
         message: 'task_transition_idempotency_conflict',
       }).code,
     ).toBe('transition_idempotency_conflict')
+    expect(
+      mapTaskError({
+        code: '23505',
+        message: 'task_update_idempotency_conflict',
+      }).code,
+    ).toBe('progress_idempotency_conflict')
   })
 })

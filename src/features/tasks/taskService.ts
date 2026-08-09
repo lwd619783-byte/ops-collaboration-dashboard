@@ -18,6 +18,9 @@ import type {
   TaskCreateInput,
   TaskListInput,
   TaskPerson,
+  TaskProgressInput,
+  TaskProgressResult,
+  TaskProgressUpdate,
   TaskStatus,
   TaskStatusAction,
   TaskStatusHistoryItem,
@@ -208,6 +211,15 @@ function parseTaskCore(value: unknown): TaskCore | null {
   if (!isRecord(value)) return null
   const collaborators = parsePeople(value.collaborators)
   const visibilityUsers = parsePeople(value.visibility_users)
+  const validLatestProgress =
+    isTimestamp(value.last_progress_at) &&
+    isUuid(value.last_progress_by) &&
+    isString(value.last_progress_by_display_name) &&
+    value.last_progress_by_display_name.trim().length > 0
+  const emptyLatestProgress =
+    value.last_progress_at === null &&
+    value.last_progress_by === null &&
+    value.last_progress_by_display_name === null
   if (
     !isUuid(value.task_id) ||
     !isUuid(value.project_id) ||
@@ -247,7 +259,8 @@ function parseTaskCore(value: unknown): TaskCore | null {
     !isUuid(value.created_by) ||
     !isTimestamp(value.created_at) ||
     !isUuid(value.updated_by) ||
-    !isTimestamp(value.updated_at)
+    !isTimestamp(value.updated_at) ||
+    (!validLatestProgress && !emptyLatestProgress)
   ) {
     return null
   }
@@ -288,7 +301,21 @@ function parseTaskCore(value: unknown): TaskCore | null {
     visibility_users: visibilityUsers,
     workload_level: value.workload_level,
     workspace_id: value.workspace_id,
+    last_progress_at: value.last_progress_at as string | null,
+    last_progress_by: value.last_progress_by as string | null,
+    last_progress_by_display_name: value.last_progress_by_display_name as
+      string | null,
   }
+}
+
+function parseLegacyMutationTaskCore(value: unknown): TaskCore | null {
+  if (!isRecord(value)) return null
+  return parseTaskCore({
+    ...value,
+    last_progress_at: null,
+    last_progress_by: null,
+    last_progress_by_display_name: null,
+  })
 }
 
 function parseTask(value: unknown): Task | null {
@@ -336,7 +363,7 @@ function firstCreatedTask(rows: unknown): TaskServiceResult<TaskCore> {
     return invalidPayload()
   }
   if (typeof rows[0].was_existing !== 'boolean') return invalidPayload()
-  const task = parseTaskCore(rows[0])
+  const task = parseLegacyMutationTaskCore(rows[0])
   return task ? { ok: true, data: task } : invalidPayload()
 }
 
@@ -396,7 +423,11 @@ function parseTransitionResult(
   if (!isRecord(value) || typeof value.was_existing !== 'boolean') {
     return invalidPayload()
   }
-  const task = parseTask(value.task)
+  const transitionTaskCore = parseLegacyMutationTaskCore(value.task)
+  const task =
+    transitionTaskCore && isRecord(value.task)
+      ? parseTask({ ...value.task, ...transitionTaskCore })
+      : null
   const transition = parseTransition(value.transition)
   if (
     !task ||
@@ -411,7 +442,137 @@ function parseTransitionResult(
   }
   return {
     ok: true,
-    data: { task, transition, was_existing: value.was_existing },
+    data: { transition, was_existing: value.was_existing },
+  }
+}
+
+function parseProgressUpdate(value: unknown): TaskProgressUpdate | null {
+  if (
+    !isRecord(value) ||
+    !isUuid(value.update_id) ||
+    !isUuid(value.task_id) ||
+    typeof value.sequence !== 'number' ||
+    !Number.isSafeInteger(value.sequence) ||
+    value.sequence < 1 ||
+    !isDateOnly(value.record_date) ||
+    !isString(value.completed_content) ||
+    value.completed_content.trim() !== value.completed_content ||
+    value.completed_content.length === 0 ||
+    value.completed_content.length > 10000 ||
+    typeof value.progress !== 'number' ||
+    !Number.isInteger(value.progress) ||
+    value.progress < 0 ||
+    value.progress > 100 ||
+    !isNullableString(value.issues) ||
+    !isNullableString(value.next_steps) ||
+    (value.issues !== null &&
+      (value.issues.trim() !== value.issues ||
+        value.issues.length === 0 ||
+        value.issues.length > 10000)) ||
+    (value.next_steps !== null &&
+      (value.next_steps.trim() !== value.next_steps ||
+        value.next_steps.length === 0 ||
+        value.next_steps.length > 10000)) ||
+    typeof value.needs_assistance !== 'boolean' ||
+    typeof value.is_blocked !== 'boolean' ||
+    !isUuid(value.created_by) ||
+    !isString(value.created_by_display_name) ||
+    value.created_by_display_name.trim().length === 0 ||
+    !isTimestamp(value.created_at)
+  ) {
+    return null
+  }
+  const blockTransitionId =
+    value.block_transition_id === null
+      ? null
+      : isUuid(value.block_transition_id)
+        ? value.block_transition_id
+        : undefined
+  if (
+    blockTransitionId === undefined ||
+    (blockTransitionId && !value.is_blocked)
+  ) {
+    return null
+  }
+  return {
+    block_transition_id: blockTransitionId,
+    completed_content: value.completed_content,
+    created_at: value.created_at,
+    created_by: value.created_by,
+    created_by_display_name: value.created_by_display_name,
+    is_blocked: value.is_blocked,
+    issues: value.issues,
+    needs_assistance: value.needs_assistance,
+    next_steps: value.next_steps,
+    progress: value.progress,
+    record_date: value.record_date,
+    sequence: value.sequence,
+    task_id: value.task_id,
+    update_id: value.update_id,
+  }
+}
+
+function parseProgressUpdates(
+  value: unknown,
+  taskId: string,
+): TaskServiceResult<TaskProgressUpdate[]> {
+  if (!Array.isArray(value)) return invalidPayload()
+  const updates = value.map(parseProgressUpdate)
+  if (updates.some((update) => update === null)) return invalidPayload()
+  const rows = updates as TaskProgressUpdate[]
+  const updateIds = new Set<string>()
+  const transitionIds = new Set<string>()
+  for (const [index, update] of rows.entries()) {
+    if (
+      update.task_id !== taskId ||
+      update.sequence !== index + 1 ||
+      updateIds.has(update.update_id) ||
+      (update.block_transition_id !== null &&
+        transitionIds.has(update.block_transition_id))
+    ) {
+      return invalidPayload()
+    }
+    updateIds.add(update.update_id)
+    if (update.block_transition_id)
+      transitionIds.add(update.block_transition_id)
+  }
+  return { ok: true, data: rows }
+}
+
+function parseProgressResult(
+  value: unknown,
+  input: TaskProgressInput,
+): TaskServiceResult<TaskProgressResult> {
+  if (!isRecord(value) || typeof value.was_existing !== 'boolean') {
+    return invalidPayload()
+  }
+  const task = parseTask(value.task)
+  const update = parseProgressUpdate(value.update)
+  if (
+    !task ||
+    !update ||
+    task.task_id !== input.taskId ||
+    task.project_id !== input.projectId ||
+    task.workspace_id !== input.workspaceId ||
+    update.task_id !== input.taskId ||
+    update.record_date !== input.recordDate ||
+    update.completed_content !== input.completedContent.trim() ||
+    update.progress !== input.progress ||
+    update.issues !== (input.issues.trim() || null) ||
+    update.next_steps !== (input.nextSteps.trim() || null) ||
+    update.needs_assistance !== input.needsAssistance ||
+    (update.block_transition_id !== null) !== input.markBlocked ||
+    (!value.was_existing &&
+      (task.progress !== update.progress ||
+        task.last_progress_at !== update.created_at ||
+        task.last_progress_by !== update.created_by ||
+        (update.block_transition_id !== null && task.status !== 'blocked')))
+  ) {
+    return invalidPayload()
+  }
+  return {
+    ok: true,
+    data: { task, update, was_existing: value.was_existing },
   }
 }
 
@@ -681,7 +842,7 @@ export async function updateTask(
     )
     if (error) return { ok: false, error: mapTaskError(error) }
     if (!Array.isArray(data) || data.length !== 1) return invalidPayload()
-    const updated = parseTaskCore(data[0])
+    const updated = parseLegacyMutationTaskCore(data[0])
     if (!updated) return invalidPayload()
     const refreshed = await getTask(client, updated.task_id)
     if (
@@ -769,6 +930,62 @@ export async function listTaskStatusHistory(
     })
     if (error) return { ok: false, error: mapTaskError(error) }
     return parseHistory(data, taskId)
+  } catch (error) {
+    return { ok: false, error: mapTaskError(error) }
+  }
+}
+
+export async function listTaskUpdates(
+  client: SupabaseClient<Database>,
+  taskId: string,
+): Promise<TaskServiceResult<TaskProgressUpdate[]>> {
+  try {
+    const { data, error } = await client.rpc('list_task_updates', {
+      p_task_id: taskId,
+    })
+    if (error) return { ok: false, error: mapTaskError(error) }
+    return parseProgressUpdates(data, taskId)
+  } catch (error) {
+    return { ok: false, error: mapTaskError(error) }
+  }
+}
+
+type CreateProgressArgs =
+  Database['public']['Functions']['create_task_update']['Args']
+type NullableCreateProgressArgs = Omit<
+  CreateProgressArgs,
+  'p_blocker_reason' | 'p_issues' | 'p_next_steps'
+> & {
+  p_blocker_reason: string | null
+  p_issues: string | null
+  p_next_steps: string | null
+}
+
+export async function createTaskProgressUpdate(
+  client: SupabaseClient<Database>,
+  input: TaskProgressInput,
+): Promise<TaskServiceResult<TaskProgressResult>> {
+  const args: NullableCreateProgressArgs = {
+    p_task_id: input.taskId,
+    p_record_date: input.recordDate,
+    p_completed_content: input.completedContent.trim(),
+    p_progress: input.progress,
+    p_issues: input.issues.trim() || null,
+    p_next_steps: input.nextSteps.trim() || null,
+    p_needs_assistance: input.needsAssistance,
+    p_mark_blocked: input.markBlocked,
+    p_blocker_reason: input.markBlocked
+      ? input.blockerReason.trim() || null
+      : null,
+    p_idempotency_key: input.idempotencyKey,
+  }
+  try {
+    const { data, error } = await client.rpc(
+      'create_task_update',
+      args as unknown as CreateProgressArgs,
+    )
+    if (error) return { ok: false, error: mapTaskError(error) }
+    return parseProgressResult(data, input)
   } catch (error) {
     return { ok: false, error: mapTaskError(error) }
   }

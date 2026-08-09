@@ -8,19 +8,39 @@ import {
 import { Link, useParams } from 'react-router'
 import { ErrorState } from '@/components/feedback/ErrorState'
 import { LoadingState } from '@/components/feedback/LoadingState'
+import { TextareaField } from '@/components/forms/TextareaField'
 import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
 import { DateDisplay } from '@/components/ui/DateDisplay'
+import { Dialog } from '@/components/ui/Dialog'
 import { useAuth } from '@/features/auth'
 import { useProjects, type Project } from '@/features/projects'
-import { useTasks, type Task } from '@/features/tasks'
+import {
+  useTasks,
+  type Task,
+  type TaskStatusAction,
+  type TaskStatusHistoryItem,
+  loadConsistentTaskState,
+  refreshConsistentTaskState,
+  TASK_STATE_CONFLICT_MESSAGE,
+} from '@/features/tasks'
 import {
   canManageProjectTasks,
   taskPriorityLabels,
+  taskStatusActionLabels,
   taskStatusLabels,
   taskVisibilityLabels,
   taskWorkloadLabels,
 } from '@/features/tasks/taskMeta'
 import { useWorkspace } from '@/features/workspaces'
+
+const BLOCKER_REASON_LIMIT = 2000
+
+type StatusIntent = {
+  action: TaskStatusAction
+  idempotencyKey: string
+  blockerReason: string | null
+}
 
 export function TaskDetailPage() {
   const { projectId = '', taskId = '' } = useParams()
@@ -32,11 +52,24 @@ export function TaskDetailPage() {
   const appUserId = auth.appUser?.id ?? null
   const [project, setProject] = useState<Project | null>(null)
   const [task, setTask] = useState<Task | null>(null)
+  const [history, setHistory] = useState<TaskStatusHistoryItem[]>([])
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>(
     'loading',
   )
   const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null)
+  const [actionLoading, setActionLoading] = useState<TaskStatusAction | null>(
+    null,
+  )
+  const actionBusy = actionLoading !== null
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [dialog, setDialog] = useState<'block' | 'cancel' | null>(null)
+  const [blockerReason, setBlockerReason] = useState('')
+  const [blockerReasonError, setBlockerReasonError] = useState<string | null>(
+    null,
+  )
   const requestEpochRef = useRef(0)
+  const actionEpochRef = useRef(0)
+  const intentRef = useRef<StatusIntent | null>(null)
   const mountedRef = useRef(true)
   const scopeKey =
     currentWorkspace && appUserId
@@ -46,6 +79,8 @@ export function TaskDetailPage() {
 
   useLayoutEffect(() => {
     scopeKeyRef.current = scopeKey
+    actionEpochRef.current += 1
+    intentRef.current = null
   }, [scopeKey])
 
   useEffect(() => {
@@ -53,6 +88,7 @@ export function TaskDetailPage() {
     return () => {
       mountedRef.current = false
       requestEpochRef.current += 1
+      actionEpochRef.current += 1
     }
   }, [])
 
@@ -62,29 +98,36 @@ export function TaskDetailPage() {
     const requestScopeKey = scopeKey
     setLoadState('loading')
     setLoadedScopeKey(null)
-    const [projectResult, taskResult] = await Promise.all([
+    setActionError(null)
+    setActionLoading(null)
+    setDialog(null)
+    intentRef.current = null
+    const [projectResult, stateResult] = await Promise.all([
       projects.get(projectId),
-      tasks.get(taskId),
+      loadConsistentTaskState(tasks, taskId),
     ])
     if (!mountedRef.current || requestEpochRef.current !== epoch) return
     if (scopeKeyRef.current !== requestScopeKey) return
     if (
       !projectResult.ok ||
-      !taskResult.ok ||
+      !stateResult.ok ||
       projectResult.data.project_id !== projectId ||
       projectResult.data.workspace_id !== currentWorkspace.workspace_id ||
-      taskResult.data.task_id !== taskId ||
-      taskResult.data.project_id !== projectId ||
-      taskResult.data.workspace_id !== currentWorkspace.workspace_id
+      stateResult.data.task.task_id !== taskId ||
+      stateResult.data.task.project_id !== projectId ||
+      stateResult.data.task.workspace_id !== currentWorkspace.workspace_id ||
+      stateResult.data.history.some((item) => item.task_id !== taskId)
     ) {
       setProject(null)
       setTask(null)
+      setHistory([])
       setLoadedScopeKey(requestScopeKey)
       setLoadState('error')
       return
     }
     setProject(projectResult.data)
-    setTask(taskResult.data)
+    setTask(stateResult.data.task)
+    setHistory(stateResult.data.history)
     setLoadedScopeKey(requestScopeKey)
     setLoadState('ready')
   }, [
@@ -107,6 +150,131 @@ export function TaskDetailPage() {
       requestEpochRef.current += 1
     }
   }, [load])
+
+  const runAction = useCallback(
+    async (action: TaskStatusAction, reason: string | null = null) => {
+      if (!project || !task || !scopeKey || !currentWorkspace) return false
+      const normalizedReason = reason?.trim() || null
+      const existingIntent = intentRef.current
+      const idempotencyKey =
+        existingIntent?.action === action &&
+        existingIntent.blockerReason === normalizedReason
+          ? existingIntent.idempotencyKey
+          : crypto.randomUUID()
+      intentRef.current = {
+        action,
+        idempotencyKey,
+        blockerReason: normalizedReason,
+      }
+      const epoch = ++actionEpochRef.current
+      const requestScopeKey = scopeKey
+      setActionLoading(action)
+      setActionError(null)
+      const input = {
+        taskId: task.task_id,
+        projectId: project.project_id,
+        workspaceId: currentWorkspace.workspace_id,
+        idempotencyKey,
+      }
+      const result =
+        action === 'start'
+          ? await tasks.start(input)
+          : action === 'block'
+            ? await tasks.block({
+                ...input,
+                blockerReason: normalizedReason ?? '',
+              })
+            : action === 'resume'
+              ? await tasks.resume(input)
+              : await tasks.cancel(input)
+      if (
+        !mountedRef.current ||
+        actionEpochRef.current !== epoch ||
+        scopeKeyRef.current !== requestScopeKey
+      ) {
+        return false
+      }
+      if (!result.ok) {
+        if (
+          result.error.code !== 'network_unavailable' &&
+          result.error.code !== 'unknown_service_error'
+        ) {
+          intentRef.current = null
+        }
+        setActionError(result.error.message)
+        setActionLoading(null)
+        return false
+      }
+
+      const refreshResult = await refreshConsistentTaskState(
+        tasks,
+        task.task_id,
+        result.data.transition.transition_id,
+      )
+      if (
+        !mountedRef.current ||
+        actionEpochRef.current !== epoch ||
+        scopeKeyRef.current !== requestScopeKey
+      ) {
+        return false
+      }
+      if (!refreshResult.ok) {
+        intentRef.current = null
+        setActionError(TASK_STATE_CONFLICT_MESSAGE)
+        setActionLoading(null)
+        return false
+      }
+      if (
+        refreshResult.data.task.task_id !== task.task_id ||
+        refreshResult.data.task.project_id !== project.project_id ||
+        refreshResult.data.task.workspace_id !==
+          currentWorkspace.workspace_id ||
+        refreshResult.data.history.some((item) => item.task_id !== task.task_id)
+      ) {
+        intentRef.current = null
+        setActionError(TASK_STATE_CONFLICT_MESSAGE)
+        setActionLoading(null)
+        return false
+      }
+      setTask(refreshResult.data.task)
+      setHistory(refreshResult.data.history)
+      setActionLoading(null)
+      setActionError(null)
+      intentRef.current = null
+      return true
+    },
+    [currentWorkspace, project, scopeKey, task, tasks],
+  )
+
+  const closeDialog = () => {
+    if (actionLoading) return
+    setDialog(null)
+    setActionError(null)
+    setBlockerReasonError(null)
+    setBlockerReason('')
+    intentRef.current = null
+  }
+
+  const submitBlock = async () => {
+    const normalized = blockerReason.trim()
+    if (!normalized) {
+      setBlockerReasonError('请填写阻塞原因。')
+      return
+    }
+    if (normalized.length > BLOCKER_REASON_LIMIT) {
+      setBlockerReasonError(`阻塞原因不能超过 ${BLOCKER_REASON_LIMIT} 个字符。`)
+      return
+    }
+    setBlockerReasonError(null)
+    if (await runAction('block', normalized)) {
+      setDialog(null)
+      setBlockerReason('')
+    }
+  }
+
+  const submitCancel = async () => {
+    if (await runAction('cancel')) setDialog(null)
+  }
 
   if (!currentWorkspace || !auth.appUser) return null
   if (loadState === 'loading' || loadedScopeKey !== scopeKey) {
@@ -131,6 +299,13 @@ export function TaskDetailPage() {
     currentWorkspace.role,
     auth.appUser.id,
   )
+  const canExecute =
+    project.status !== 'archived' &&
+    (canManage || task.assignee_id === auth.appUser.id)
+  const hasTaskAction =
+    project.status !== 'archived' &&
+    ['todo', 'in_progress', 'blocked'].includes(task.status) &&
+    (canExecute || canManage)
   const peopleText = (people: Task['collaborators']) =>
     people.length === 0
       ? '未指定'
@@ -176,6 +351,83 @@ export function TaskDetailPage() {
           )}
         </div>
       </section>
+
+      <section className="task-detail-card task-status-actions">
+        <h3>状态操作</h3>
+        <p>当前状态：{taskStatusLabels[task.status]}</p>
+        {hasTaskAction ? (
+          <div className="task-status-action-buttons">
+            {task.status === 'todo' && canExecute && (
+              <Button
+                loading={actionLoading === 'start'}
+                disabled={actionBusy && actionLoading !== 'start'}
+                onClick={() => void runAction('start')}
+              >
+                开始任务
+              </Button>
+            )}
+            {task.status === 'in_progress' && canExecute && (
+              <Button
+                loading={actionLoading === 'block'}
+                disabled={actionBusy && actionLoading !== 'block'}
+                onClick={() => {
+                  if (actionBusy) return
+                  setActionError(null)
+                  setBlockerReasonError(null)
+                  setDialog('block')
+                }}
+              >
+                标记阻塞
+              </Button>
+            )}
+            {task.status === 'blocked' && canExecute && (
+              <Button
+                loading={actionLoading === 'resume'}
+                disabled={actionBusy && actionLoading !== 'resume'}
+                onClick={() => void runAction('resume')}
+              >
+                恢复进行中
+              </Button>
+            )}
+            {canManage && (
+              <Button
+                disabled={actionBusy}
+                onClick={() => {
+                  if (actionBusy) return
+                  setActionError(null)
+                  setDialog('cancel')
+                }}
+                variant="danger"
+              >
+                取消任务
+              </Button>
+            )}
+          </div>
+        ) : (
+          <p className="muted">当前没有可执行的 Task 3.3 状态操作。</p>
+        )}
+        {actionError && !dialog && <p role="alert">{actionError}</p>}
+      </section>
+
+      {task.status === 'blocked' && (
+        <section className="task-detail-card task-current-blocker">
+          <h3>当前阻塞</h3>
+          <p className="task-current-blocker-label">已阻塞</p>
+          <p>{task.blocker_reason}</p>
+          <dl className="task-detail-grid">
+            <div>
+              <dt>阻塞人</dt>
+              <dd>{task.blocked_by_display_name}</dd>
+            </div>
+            <div>
+              <dt>阻塞于</dt>
+              <dd>
+                <DateDisplay kind="date-time" value={task.blocked_at} />
+              </dd>
+            </div>
+          </dl>
+        </section>
+      )}
 
       <section className="task-detail-card">
         <h3>任务职责与计划</h3>
@@ -254,6 +506,76 @@ export function TaskDetailPage() {
           <p>{peopleText(task.visibility_users)}</p>
         </section>
       )}
+
+      <section className="task-detail-card task-status-history">
+        <h3>状态历史</h3>
+        {history.length === 0 ? (
+          <p className="muted">尚无状态变更记录。</p>
+        ) : (
+          <ol className="task-status-history-list">
+            {history.map((item) => (
+              <li key={item.transition_id}>
+                <div className="task-status-history-heading">
+                  <strong>
+                    {item.actor_display_name} ·{' '}
+                    {taskStatusActionLabels[item.action]}
+                  </strong>
+                  <span>#{item.sequence}</span>
+                </div>
+                <p>
+                  {taskStatusLabels[item.from_status]} →{' '}
+                  {taskStatusLabels[item.to_status]}
+                </p>
+                {item.reason && <p>阻塞原因：{item.reason}</p>}
+                <DateDisplay kind="date-time" value={item.created_at} />
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+
+      <Dialog
+        confirmDisabled={
+          !blockerReason.trim() ||
+          blockerReason.trim().length > BLOCKER_REASON_LIMIT
+        }
+        confirmLabel="确认标记阻塞"
+        confirmLoading={actionLoading === 'block'}
+        description="请填写当前任务无法继续推进的原因。"
+        onClose={closeDialog}
+        onConfirm={() => void submitBlock()}
+        open={dialog === 'block'}
+        title="标记任务阻塞"
+      >
+        <TextareaField
+          description={`${blockerReason.length}/${BLOCKER_REASON_LIMIT}`}
+          error={blockerReasonError ?? undefined}
+          label="阻塞原因"
+          maxLength={BLOCKER_REASON_LIMIT}
+          onChange={(event) => {
+            setBlockerReason(event.target.value)
+            setBlockerReasonError(null)
+            setActionError(null)
+          }}
+          required
+          rows={5}
+          value={blockerReason}
+        />
+        {actionError && <p role="alert">{actionError}</p>}
+      </Dialog>
+
+      <Dialog
+        confirmLabel="确认取消任务"
+        confirmLoading={actionLoading === 'cancel'}
+        danger
+        description="取消后 Task 3.3 不提供恢复入口，任务及其历史记录仍会保留。"
+        onClose={closeDialog}
+        onConfirm={() => void submitCancel()}
+        open={dialog === 'cancel'}
+        title="确认取消任务？"
+      >
+        {actionError && <p role="alert">{actionError}</p>}
+      </Dialog>
     </div>
   )
 }

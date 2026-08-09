@@ -3,9 +3,13 @@ import type { TaskServiceResult } from '@/features/tasks/taskService'
 import type {
   Task,
   TaskAssignmentCandidate,
+  TaskBlockInput,
   TaskCreateInput,
   TaskListInput,
+  TaskStatusHistoryItem,
   TaskSummary,
+  TaskTransitionInput,
+  TaskTransitionResult,
   TaskUpdateInput,
 } from '@/features/tasks/types'
 
@@ -17,6 +21,21 @@ export type TaskContextValue = {
   ) => Promise<TaskServiceResult<TaskAssignmentCandidate[]>>
   create: (input: TaskCreateInput) => Promise<TaskServiceResult<Task>>
   update: (input: TaskUpdateInput) => Promise<TaskServiceResult<Task>>
+  start: (
+    input: TaskTransitionInput,
+  ) => Promise<TaskServiceResult<TaskTransitionResult>>
+  block: (
+    input: TaskBlockInput,
+  ) => Promise<TaskServiceResult<TaskTransitionResult>>
+  resume: (
+    input: TaskTransitionInput,
+  ) => Promise<TaskServiceResult<TaskTransitionResult>>
+  cancel: (
+    input: TaskTransitionInput,
+  ) => Promise<TaskServiceResult<TaskTransitionResult>>
+  listStatusHistory: (
+    taskId: string,
+  ) => Promise<TaskServiceResult<TaskStatusHistoryItem[]>>
 }
 
 export const TaskContext = createContext<TaskContextValue | null>(null)

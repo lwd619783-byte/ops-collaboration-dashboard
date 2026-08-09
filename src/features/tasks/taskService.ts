@@ -14,10 +14,17 @@ import {
 import type {
   Task,
   TaskAssignmentCandidate,
+  TaskBlockInput,
   TaskCreateInput,
   TaskListInput,
   TaskPerson,
+  TaskStatus,
+  TaskStatusAction,
+  TaskStatusHistoryItem,
   TaskSummary,
+  TaskTransitionInput,
+  TaskTransitionResult,
+  TaskStatusTransition,
   TaskUpdateInput,
 } from '@/features/tasks/types'
 
@@ -193,15 +200,19 @@ function parseTaskSummaries(
   return { ok: true, data: rows }
 }
 
-function parseTask(value: unknown): Task | null {
+type TaskBlockerKey =
+  'blocked_at' | 'blocked_by' | 'blocked_by_display_name' | 'blocker_reason'
+type TaskCore = Omit<Task, TaskBlockerKey>
+
+function parseTaskCore(value: unknown): TaskCore | null {
   if (!isRecord(value)) return null
   const collaborators = parsePeople(value.collaborators)
   const visibilityUsers = parsePeople(value.visibility_users)
   if (
-    !isString(value.task_id) ||
-    !isString(value.project_id) ||
-    !isString(value.workspace_id) ||
-    !isString(value.module_id) ||
+    !isUuid(value.task_id) ||
+    !isUuid(value.project_id) ||
+    !isUuid(value.workspace_id) ||
+    !isUuid(value.module_id) ||
     !isString(value.module_name) ||
     value.module_name.length === 0 ||
     !isString(value.title) ||
@@ -210,9 +221,9 @@ function parseTask(value: unknown): Task | null {
     value.title.length > 200 ||
     !isNullableString(value.description) ||
     !isNullableString(value.acceptance_criteria) ||
-    !isString(value.assignee_id) ||
+    !isUuid(value.assignee_id) ||
     !isString(value.assignee_display_name) ||
-    !isString(value.reviewer_id) ||
+    !isUuid(value.reviewer_id) ||
     !isString(value.reviewer_display_name) ||
     !isTaskPriority(value.priority) ||
     !isNullableDateOnly(value.start_date) ||
@@ -233,9 +244,9 @@ function parseTask(value: unknown): Task | null {
     value.progress > 100 ||
     collaborators === null ||
     visibilityUsers === null ||
-    !isString(value.created_by) ||
+    !isUuid(value.created_by) ||
     !isTimestamp(value.created_at) ||
-    !isString(value.updated_by) ||
+    !isUuid(value.updated_by) ||
     !isTimestamp(value.updated_at)
   ) {
     return null
@@ -280,6 +291,36 @@ function parseTask(value: unknown): Task | null {
   }
 }
 
+function parseTask(value: unknown): Task | null {
+  const core = parseTaskCore(value)
+  if (!core || !isRecord(value)) return null
+  const blocked = core.status === 'blocked'
+  const validBlockedFields =
+    isString(value.blocker_reason) &&
+    value.blocker_reason.trim() === value.blocker_reason &&
+    value.blocker_reason.length > 0 &&
+    value.blocker_reason.length <= 2000 &&
+    isTimestamp(value.blocked_at) &&
+    isUuid(value.blocked_by) &&
+    isString(value.blocked_by_display_name) &&
+    value.blocked_by_display_name.trim().length > 0
+  const emptyBlockedFields =
+    value.blocker_reason === null &&
+    value.blocked_at === null &&
+    value.blocked_by === null &&
+    value.blocked_by_display_name === null
+  if ((blocked && !validBlockedFields) || (!blocked && !emptyBlockedFields)) {
+    return null
+  }
+  return {
+    ...core,
+    blocked_at: value.blocked_at as string | null,
+    blocked_by: value.blocked_by as string | null,
+    blocked_by_display_name: value.blocked_by_display_name as string | null,
+    blocker_reason: value.blocker_reason as string | null,
+  }
+}
+
 function firstTask(rows: unknown): TaskServiceResult<Task> {
   if (!Array.isArray(rows)) return invalidPayload()
   if (rows.length === 0) {
@@ -290,13 +331,158 @@ function firstTask(rows: unknown): TaskServiceResult<Task> {
   return task ? { ok: true, data: task } : invalidPayload()
 }
 
-function firstCreatedTask(rows: unknown): TaskServiceResult<Task> {
+function firstCreatedTask(rows: unknown): TaskServiceResult<TaskCore> {
   if (!Array.isArray(rows) || rows.length !== 1 || !isRecord(rows[0])) {
     return invalidPayload()
   }
   if (typeof rows[0].was_existing !== 'boolean') return invalidPayload()
-  const task = parseTask(rows[0])
+  const task = parseTaskCore(rows[0])
   return task ? { ok: true, data: task } : invalidPayload()
+}
+
+const actionTransitions: Record<
+  TaskStatusAction,
+  { from: readonly TaskStatus[]; to: TaskStatus }
+> = {
+  start: { from: ['todo'], to: 'in_progress' },
+  block: { from: ['in_progress'], to: 'blocked' },
+  resume: { from: ['blocked'], to: 'in_progress' },
+  cancel: { from: ['todo', 'in_progress', 'blocked'], to: 'cancelled' },
+}
+
+function isTaskStatusAction(value: unknown): value is TaskStatusAction {
+  return ['start', 'block', 'resume', 'cancel'].includes(
+    typeof value === 'string' ? value : '',
+  )
+}
+
+function parseTransition(value: unknown): TaskStatusTransition | null {
+  if (
+    !isRecord(value) ||
+    !isUuid(value.transition_id) ||
+    !isUuid(value.task_id) ||
+    typeof value.sequence !== 'number' ||
+    !Number.isSafeInteger(value.sequence) ||
+    value.sequence < 1 ||
+    !isTaskStatus(value.from_status) ||
+    !isTaskStatus(value.to_status) ||
+    !isTaskStatusAction(value.action) ||
+    !isTimestamp(value.created_at)
+  ) {
+    return null
+  }
+  const expected = actionTransitions[value.action]
+  if (
+    !expected.from.includes(value.from_status) ||
+    expected.to !== value.to_status
+  ) {
+    return null
+  }
+  return {
+    transition_id: value.transition_id,
+    task_id: value.task_id,
+    sequence: value.sequence,
+    from_status: value.from_status,
+    to_status: value.to_status,
+    action: value.action,
+    created_at: value.created_at,
+  }
+}
+
+function parseTransitionResult(
+  value: unknown,
+  input: TaskTransitionInput,
+): TaskServiceResult<TaskTransitionResult> {
+  if (!isRecord(value) || typeof value.was_existing !== 'boolean') {
+    return invalidPayload()
+  }
+  const task = parseTask(value.task)
+  const transition = parseTransition(value.transition)
+  if (
+    !task ||
+    !transition ||
+    task.task_id !== input.taskId ||
+    task.project_id !== input.projectId ||
+    task.workspace_id !== input.workspaceId ||
+    transition.task_id !== input.taskId ||
+    (!value.was_existing && task.status !== transition.to_status)
+  ) {
+    return invalidPayload()
+  }
+  return {
+    ok: true,
+    data: { task, transition, was_existing: value.was_existing },
+  }
+}
+
+function parseHistoryItem(value: unknown): TaskStatusHistoryItem | null {
+  if (
+    !isRecord(value) ||
+    !isUuid(value.transition_id) ||
+    !isUuid(value.task_id) ||
+    typeof value.sequence !== 'number' ||
+    !Number.isSafeInteger(value.sequence) ||
+    value.sequence < 1 ||
+    !isTaskStatus(value.from_status) ||
+    !isTaskStatus(value.to_status) ||
+    !isTaskStatusAction(value.action) ||
+    !isUuid(value.actor_id) ||
+    !isString(value.actor_display_name) ||
+    value.actor_display_name.trim().length === 0 ||
+    !isTimestamp(value.created_at)
+  ) {
+    return null
+  }
+  const expected = actionTransitions[value.action]
+  const validReason =
+    value.action === 'block'
+      ? isString(value.reason) &&
+        value.reason.trim() === value.reason &&
+        value.reason.length > 0 &&
+        value.reason.length <= 2000
+      : value.reason === null
+  if (
+    !expected.from.includes(value.from_status) ||
+    expected.to !== value.to_status ||
+    !validReason
+  ) {
+    return null
+  }
+  return {
+    transition_id: value.transition_id,
+    task_id: value.task_id,
+    sequence: value.sequence,
+    from_status: value.from_status,
+    to_status: value.to_status,
+    action: value.action,
+    reason: value.reason as string | null,
+    actor_id: value.actor_id,
+    actor_display_name: value.actor_display_name,
+    created_at: value.created_at,
+  }
+}
+
+function parseHistory(
+  value: unknown,
+  taskId: string,
+): TaskServiceResult<TaskStatusHistoryItem[]> {
+  if (!Array.isArray(value)) return invalidPayload()
+  const history = value.map(parseHistoryItem)
+  if (history.some((item) => item === null)) return invalidPayload()
+  const rows = history as TaskStatusHistoryItem[]
+  const transitionIds = new Set<string>()
+  for (const [index, item] of rows.entries()) {
+    if (
+      item.task_id !== taskId ||
+      item.sequence !== index + 1 ||
+      transitionIds.has(item.transition_id) ||
+      (index > 0 && rows[index - 1].to_status !== item.from_status)
+    ) {
+      return invalidPayload()
+    }
+    transitionIds.add(item.transition_id)
+  }
+  return { ok: true, data: rows }
 }
 
 function parseCandidate(value: unknown): TaskAssignmentCandidate | null {
@@ -433,7 +619,17 @@ export async function createTask(
       createArgs(input) as unknown as CreateArgs,
     )
     if (error) return { ok: false, error: mapTaskError(error) }
-    return firstCreatedTask(data)
+    const created = firstCreatedTask(data)
+    if (!created.ok) return created
+    const refreshed = await getTask(client, created.data.task_id)
+    if (
+      !refreshed.ok ||
+      refreshed.data.project_id !== input.projectId ||
+      refreshed.data.workspace_id !== created.data.workspace_id
+    ) {
+      return refreshed.ok ? invalidPayload() : refreshed
+    }
+    return refreshed
   } catch (error) {
     return { ok: false, error: mapTaskError(error) }
   }
@@ -484,7 +680,95 @@ export async function updateTask(
       args as unknown as UpdateArgs,
     )
     if (error) return { ok: false, error: mapTaskError(error) }
-    return firstTask(data)
+    if (!Array.isArray(data) || data.length !== 1) return invalidPayload()
+    const updated = parseTaskCore(data[0])
+    if (!updated) return invalidPayload()
+    const refreshed = await getTask(client, updated.task_id)
+    if (
+      !refreshed.ok ||
+      refreshed.data.project_id !== input.projectId ||
+      refreshed.data.workspace_id !== updated.workspace_id
+    ) {
+      return refreshed.ok ? invalidPayload() : refreshed
+    }
+    return refreshed
+  } catch (error) {
+    return { ok: false, error: mapTaskError(error) }
+  }
+}
+
+async function runTransition(
+  input: TaskTransitionInput,
+  request: () => Promise<{ data: unknown; error: unknown }>,
+): Promise<TaskServiceResult<TaskTransitionResult>> {
+  try {
+    const { data, error } = await request()
+    if (error) return { ok: false, error: mapTaskError(error) }
+    return parseTransitionResult(data, input)
+  } catch (error) {
+    return { ok: false, error: mapTaskError(error) }
+  }
+}
+
+export async function startTask(
+  client: SupabaseClient<Database>,
+  input: TaskTransitionInput,
+): Promise<TaskServiceResult<TaskTransitionResult>> {
+  return runTransition(input, async () =>
+    client.rpc('start_task', {
+      p_task_id: input.taskId,
+      p_idempotency_key: input.idempotencyKey,
+    }),
+  )
+}
+
+export async function blockTask(
+  client: SupabaseClient<Database>,
+  input: TaskBlockInput,
+): Promise<TaskServiceResult<TaskTransitionResult>> {
+  return runTransition(input, async () =>
+    client.rpc('block_task', {
+      p_task_id: input.taskId,
+      p_blocker_reason: input.blockerReason,
+      p_idempotency_key: input.idempotencyKey,
+    }),
+  )
+}
+
+export async function resumeTask(
+  client: SupabaseClient<Database>,
+  input: TaskTransitionInput,
+): Promise<TaskServiceResult<TaskTransitionResult>> {
+  return runTransition(input, async () =>
+    client.rpc('resume_task', {
+      p_task_id: input.taskId,
+      p_idempotency_key: input.idempotencyKey,
+    }),
+  )
+}
+
+export async function cancelTask(
+  client: SupabaseClient<Database>,
+  input: TaskTransitionInput,
+): Promise<TaskServiceResult<TaskTransitionResult>> {
+  return runTransition(input, async () =>
+    client.rpc('cancel_task', {
+      p_task_id: input.taskId,
+      p_idempotency_key: input.idempotencyKey,
+    }),
+  )
+}
+
+export async function listTaskStatusHistory(
+  client: SupabaseClient<Database>,
+  taskId: string,
+): Promise<TaskServiceResult<TaskStatusHistoryItem[]>> {
+  try {
+    const { data, error } = await client.rpc('list_task_status_history', {
+      p_task_id: taskId,
+    })
+    if (error) return { ok: false, error: mapTaskError(error) }
+    return parseHistory(data, taskId)
   } catch (error) {
     return { ok: false, error: mapTaskError(error) }
   }

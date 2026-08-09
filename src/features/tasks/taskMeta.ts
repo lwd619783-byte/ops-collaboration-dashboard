@@ -1,6 +1,7 @@
 import type {
   TaskPriority,
   TaskStatus,
+  TaskStatusAction,
   TaskVisibility,
   TaskWorkloadLevel,
 } from '@/features/tasks/types'
@@ -34,6 +35,13 @@ export const taskStatusLabels: Record<TaskStatus, string> = {
   pending_review: '待验收',
   completed: '已完成',
   cancelled: '已取消',
+}
+
+export const taskStatusActionLabels: Record<TaskStatusAction, string> = {
+  start: '开始任务',
+  block: '标记阻塞',
+  resume: '恢复进行中',
+  cancel: '取消任务',
 }
 
 export function isTaskPriority(value: unknown): value is TaskPriority {

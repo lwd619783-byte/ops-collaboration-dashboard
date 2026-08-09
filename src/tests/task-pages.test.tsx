@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Link, Route, Routes } from 'react-router'
 import { describe, expect, it, vi } from 'vitest'
@@ -13,10 +13,16 @@ import {
   type TaskContextValue,
 } from '@/features/tasks/TaskContext'
 import type { Task, TaskAssignmentCandidate } from '@/features/tasks'
+import { TASK_STATE_CONSISTENCY_MAX_ATTEMPTS } from '@/features/tasks'
+import type {
+  TaskStatusHistoryItem,
+  TaskTransitionResult,
+} from '@/features/tasks'
 import {
   WorkspaceContext,
   type WorkspaceContextValue,
 } from '@/features/workspaces/WorkspaceContext'
+import type { WorkspaceRole } from '@/features/workspaces'
 import { EditTaskPage } from '@/pages/EditTaskPage'
 import { NewTaskPage } from '@/pages/NewTaskPage'
 import { TaskDetailPage } from '@/pages/TaskDetailPage'
@@ -105,10 +111,33 @@ const task: Task = {
   visibility_users: [],
   status: 'todo',
   progress: 0,
+  blocker_reason: null,
+  blocked_at: null,
+  blocked_by: null,
+  blocked_by_display_name: null,
   created_by: FICTIONAL_APP_USER_ID,
   created_at: '2026-08-09T01:00:00+00:00',
   updated_by: FICTIONAL_APP_USER_ID,
   updated_at: '2026-08-09T01:00:00+00:00',
+}
+
+function transitionResult(
+  nextTask: Task,
+  transition: TaskTransitionResult['transition'],
+): TaskTransitionResult {
+  return { task: nextTask, transition, was_existing: false }
+}
+
+function historyItem(
+  transition: TaskTransitionResult['transition'],
+  reason: string | null = null,
+): TaskStatusHistoryItem {
+  return {
+    ...transition,
+    reason,
+    actor_id: FICTIONAL_APP_USER_ID,
+    actor_display_name: '虚构负责人',
+  }
 }
 
 function authValue(): AuthContextValue {
@@ -144,14 +173,14 @@ function authValue(): AuthContextValue {
   }
 }
 
-function workspaceValue(): WorkspaceContextValue {
+function workspaceValue(role: WorkspaceRole = 'owner'): WorkspaceContextValue {
   return {
     status: 'ready',
     workspaces: [],
     currentWorkspace: {
       workspace_id: FICTIONAL_WORKSPACE_ID,
       workspace_name: '虚构协同空间',
-      role: 'owner',
+      role,
       status: 'active',
       joined_at: '2026-08-01T00:00:00+00:00',
     },
@@ -214,6 +243,23 @@ function taskValue(
     })),
     create: vi.fn(async () => ({ ok: true as const, data: task })),
     update: vi.fn(async () => ({ ok: true as const, data: task })),
+    start: vi.fn(async () => ({
+      ok: false as const,
+      error: { code: 'permission_denied' as const, message: '不可用' },
+    })),
+    block: vi.fn(async () => ({
+      ok: false as const,
+      error: { code: 'permission_denied' as const, message: '不可用' },
+    })),
+    resume: vi.fn(async () => ({
+      ok: false as const,
+      error: { code: 'permission_denied' as const, message: '不可用' },
+    })),
+    cancel: vi.fn(async () => ({
+      ok: false as const,
+      error: { code: 'permission_denied' as const, message: '不可用' },
+    })),
+    listStatusHistory: vi.fn(async () => ({ ok: true as const, data: [] })),
     ...overrides,
   }
 }
@@ -223,11 +269,12 @@ function renderTaskRoutes(
   routes: React.ReactNode,
   projects = projectValue(),
   tasks = taskValue(),
+  workspaceContext = workspaceValue(),
 ) {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <AuthContext.Provider value={authValue()}>
-        <WorkspaceContext.Provider value={workspaceValue()}>
+        <WorkspaceContext.Provider value={workspaceContext}>
           <ProjectContext.Provider value={projects}>
             <TaskContext.Provider value={tasks}>
               <Routes>{routes}</Routes>
@@ -338,6 +385,244 @@ describe('任务页面', () => {
       'href',
       `/projects/${PROJECT_ID}/tasks/${TASK_ID}/edit`,
     )
+    expect(screen.getByRole('button', { name: '开始任务' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '取消任务' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: '状态历史' }),
+    ).toBeInTheDocument()
+  })
+
+  it('todo assignee 可开始但非管理者不能取消', async () => {
+    const memberProject = {
+      ...project,
+      owner_id: MEMBER_ID,
+      owner_display_name: '虚构其他负责人',
+    }
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue({
+        get: vi.fn(async () => ({ ok: true as const, data: memberProject })),
+      }),
+      taskValue(),
+      workspaceValue('member'),
+    )
+
+    expect(
+      await screen.findByRole('button', { name: '开始任务' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '取消任务' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('阻塞 Dialog 拒绝空白原因，成功后同步 current blocker 与历史', async () => {
+    const user = userEvent.setup()
+    const inProgressTask: Task = { ...task, status: 'in_progress' }
+    const blockedTask: Task = {
+      ...inProgressTask,
+      status: 'blocked',
+      blocker_reason: 'Fictional dependency',
+      blocked_at: '2026-08-09T02:00:00+00:00',
+      blocked_by: FICTIONAL_APP_USER_ID,
+      blocked_by_display_name: '虚构负责人',
+      updated_at: '2026-08-09T02:00:00+00:00',
+    }
+    const startTransition = {
+      transition_id: 'dddddddd-1111-4111-8111-111111111110',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-09T01:30:00+00:00',
+    }
+    const blockTransition = {
+      transition_id: 'eeeeeeee-1111-4111-8111-111111111111',
+      task_id: TASK_ID,
+      sequence: 2,
+      from_status: 'in_progress' as const,
+      to_status: 'blocked' as const,
+      action: 'block' as const,
+      created_at: '2026-08-09T02:00:00+00:00',
+    }
+    const listStatusHistory = vi
+      .fn<TaskContextValue['listStatusHistory']>()
+      .mockResolvedValueOnce({ ok: true, data: [historyItem(startTransition)] })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: [
+          historyItem(startTransition),
+          historyItem(blockTransition, 'Fictional dependency'),
+        ],
+      })
+    const tasks = taskValue({
+      get: vi
+        .fn<TaskContextValue['get']>()
+        .mockResolvedValueOnce({ ok: true as const, data: inProgressTask })
+        .mockResolvedValueOnce({ ok: true as const, data: blockedTask }),
+      block: vi.fn(async () => ({
+        ok: true as const,
+        data: transitionResult(blockedTask, blockTransition),
+      })),
+      listStatusHistory,
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.click(await screen.findByRole('button', { name: '标记阻塞' }))
+    const reason = screen.getByLabelText(/阻塞原因/u)
+    await user.type(reason, '   ')
+    expect(screen.getByRole('button', { name: '确认标记阻塞' })).toBeDisabled()
+    await user.clear(reason)
+    await user.type(reason, 'Fictional dependency')
+    await user.click(screen.getByRole('button', { name: '确认标记阻塞' }))
+
+    expect(tasks.block).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: TASK_ID,
+        blockerReason: 'Fictional dependency',
+        idempotencyKey: expect.any(String),
+      }),
+    )
+    expect(
+      await screen.findByRole('heading', { name: '当前阻塞' }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Fictional dependency')).toBeInTheDocument()
+    expect(
+      screen.getByText('阻塞原因：Fictional dependency'),
+    ).toBeInTheDocument()
+    expect(screen.getByText('虚构负责人 · 标记阻塞')).toBeInTheDocument()
+  })
+
+  it('取消必须确认，成功后 terminal 状态不再显示 Task 3.3 action', async () => {
+    const user = userEvent.setup()
+    const cancelledTask: Task = {
+      ...task,
+      status: 'cancelled',
+      updated_at: '2026-08-09T02:00:00+00:00',
+    }
+    const transition = {
+      transition_id: 'eeeeeeee-2222-4222-8222-222222222222',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'cancelled' as const,
+      action: 'cancel' as const,
+      created_at: '2026-08-09T02:00:00+00:00',
+    }
+    const tasks = taskValue({
+      get: vi
+        .fn<TaskContextValue['get']>()
+        .mockResolvedValueOnce({ ok: true as const, data: task })
+        .mockResolvedValueOnce({ ok: true as const, data: cancelledTask }),
+      cancel: vi.fn(async () => ({
+        ok: true as const,
+        data: transitionResult(cancelledTask, transition),
+      })),
+      listStatusHistory: vi
+        .fn<TaskContextValue['listStatusHistory']>()
+        .mockResolvedValueOnce({ ok: true, data: [] })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [historyItem(transition)],
+        }),
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.click(await screen.findByRole('button', { name: '取消任务' }))
+    expect(
+      screen.getByRole('heading', { name: '确认取消任务？' }),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '确认取消任务' }))
+    expect(await screen.findByText('当前状态：已取消')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: task.title }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '取消任务' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('网络失败重试复用同一状态 intent key', async () => {
+    const user = userEvent.setup()
+    const startedTask: Task = {
+      ...task,
+      status: 'in_progress',
+      updated_at: '2026-08-09T02:00:00+00:00',
+    }
+    const transition = {
+      transition_id: 'eeeeeeee-3333-4333-8333-333333333333',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-09T02:00:00+00:00',
+    }
+    const start = vi
+      .fn<TaskContextValue['start']>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { code: 'network_unavailable', message: '网络暂时不可用。' },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: transitionResult(startedTask, transition),
+      })
+    const tasks = taskValue({
+      get: vi
+        .fn<TaskContextValue['get']>()
+        .mockResolvedValueOnce({ ok: true as const, data: task })
+        .mockResolvedValueOnce({ ok: true as const, data: startedTask }),
+      start,
+      listStatusHistory: vi
+        .fn<TaskContextValue['listStatusHistory']>()
+        .mockResolvedValueOnce({ ok: true, data: [] })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [historyItem(transition)],
+        }),
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.click(await screen.findByRole('button', { name: '开始任务' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '网络暂时不可用。',
+    )
+    await user.click(screen.getByRole('button', { name: '开始任务' }))
+    await screen.findByText('当前状态：进行中')
+
+    expect(start).toHaveBeenCalledTimes(2)
+    expect(start.mock.calls[0][0].idempotencyKey).toBe(
+      start.mock.calls[1][0].idempotencyKey,
+    )
   })
 
   it('任务 A 的迟到 success 不会覆盖已切换到的任务 B', async () => {
@@ -384,6 +669,277 @@ describe('任务页面', () => {
     expect(
       screen.queryByRole('heading', { name: task.title }),
     ).not.toBeInTheDocument()
+  })
+
+  it('任务 A 的 start 迟到不会污染已切换到的任务 B', async () => {
+    const action = createDeferred<{ ok: true; data: TaskTransitionResult }>()
+    const secondTask: Task = {
+      ...task,
+      task_id: SECOND_TASK_ID,
+      title: '虚构状态任务乙',
+    }
+    const startedTask: Task = { ...task, status: 'in_progress' }
+    const transition = {
+      transition_id: 'eeeeeeee-4444-4444-8444-444444444444',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-09T02:00:00+00:00',
+    }
+    const tasks = taskValue({
+      get: vi.fn((requestedTaskId: string) =>
+        Promise.resolve({
+          ok: true as const,
+          data: requestedTaskId === TASK_ID ? task : secondTask,
+        }),
+      ),
+      start: vi.fn(() => action.promise),
+    })
+    const user = userEvent.setup()
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={
+          <>
+            <Link to={`/projects/${PROJECT_ID}/tasks/${SECOND_TASK_ID}`}>
+              切换状态任务
+            </Link>
+            <TaskDetailPage />
+          </>
+        }
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.click(await screen.findByRole('button', { name: '开始任务' }))
+    await user.click(screen.getByRole('link', { name: '切换状态任务' }))
+    expect(
+      await screen.findByRole('heading', { name: secondTask.title }),
+    ).toBeInTheDocument()
+
+    await act(async () =>
+      action.resolve({
+        ok: true,
+        data: transitionResult(startedTask, transition),
+      }),
+    )
+    expect(
+      screen.getByRole('heading', { name: secondTask.title }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('当前状态：待开始')).toBeInTheDocument()
+  })
+
+  it('Major：start 成功后另一 actor 推进到 cancelled，页面显示最新一致状态', async () => {
+    const user = userEvent.setup()
+    const startedTask: Task = {
+      ...task,
+      status: 'in_progress',
+      updated_at: '2026-08-09T02:00:00+00:00',
+    }
+    const cancelledTask: Task = {
+      ...task,
+      status: 'cancelled',
+      updated_at: '2026-08-09T03:00:00+00:00',
+    }
+    const startTransition = {
+      transition_id: 'ffffffff-1111-4111-8111-111111111101',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-09T02:00:00+00:00',
+    }
+    const cancelTransition = {
+      transition_id: 'ffffffff-2222-4222-8222-222222222202',
+      task_id: TASK_ID,
+      sequence: 2,
+      from_status: 'in_progress' as const,
+      to_status: 'cancelled' as const,
+      action: 'cancel' as const,
+      created_at: '2026-08-09T03:00:00+00:00',
+    }
+    const tasks = taskValue({
+      start: vi.fn(async () => ({
+        ok: true as const,
+        data: transitionResult(startedTask, startTransition),
+      })),
+      get: vi
+        .fn<TaskContextValue['get']>()
+        .mockResolvedValueOnce({ ok: true as const, data: task })
+        .mockResolvedValueOnce({ ok: true as const, data: cancelledTask }),
+      listStatusHistory: vi
+        .fn<TaskContextValue['listStatusHistory']>()
+        .mockResolvedValueOnce({ ok: true, data: [] })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [historyItem(startTransition), historyItem(cancelTransition)],
+        }),
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.click(await screen.findByRole('button', { name: '开始任务' }))
+
+    expect(await screen.findByText('当前状态：已取消')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '标记阻塞' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '恢复进行中' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '取消任务' }),
+    ).not.toBeInTheDocument()
+    expect(screen.getByText('#1')).toBeInTheDocument()
+    expect(screen.getByText('#2')).toBeInTheDocument()
+    expect(screen.queryByText('当前状态：进行中')).not.toBeInTheDocument()
+  })
+
+  it('Major：初始加载 task/history 不一致时重试并最终进入 ready', async () => {
+    const inProgressTask: Task = {
+      ...task,
+      status: 'in_progress',
+      updated_at: '2026-08-09T02:00:00+00:00',
+    }
+    const startTransition = {
+      transition_id: 'ffffffff-3333-4333-8333-333333333303',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-09T02:00:00+00:00',
+    }
+    const listStatusHistory = vi
+      .fn<TaskContextValue['listStatusHistory']>()
+      .mockResolvedValueOnce({ ok: true, data: [] })
+      .mockResolvedValueOnce({ ok: true, data: [historyItem(startTransition)] })
+    const get = vi
+      .fn<TaskContextValue['get']>()
+      .mockResolvedValueOnce({ ok: true as const, data: inProgressTask })
+      .mockResolvedValueOnce({ ok: true as const, data: inProgressTask })
+    const tasks = taskValue({ get, listStatusHistory })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    expect(await screen.findByText('当前状态：进行中')).toBeInTheDocument()
+    expect(listStatusHistory).toHaveBeenCalledTimes(2)
+    expect(
+      screen.queryByRole('heading', { name: '无法打开任务' }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('当前状态：待开始')).not.toBeInTheDocument()
+  })
+
+  it('Major：task/history 持续不一致时 fail closed，不提交不一致数据到 UI', async () => {
+    const inProgressTask: Task = {
+      ...task,
+      status: 'in_progress',
+      updated_at: '2026-08-09T02:00:00+00:00',
+    }
+    const listStatusHistory = vi
+      .fn<TaskContextValue['listStatusHistory']>()
+      .mockResolvedValue({ ok: true, data: [] })
+    const get = vi
+      .fn<TaskContextValue['get']>()
+      .mockResolvedValue({ ok: true, data: inProgressTask })
+    const tasks = taskValue({ get, listStatusHistory })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: '无法打开任务' }),
+    ).toBeInTheDocument()
+    expect(listStatusHistory).toHaveBeenCalledTimes(
+      TASK_STATE_CONSISTENCY_MAX_ATTEMPTS,
+    )
+    expect(screen.queryByText('当前状态')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '开始任务' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('P2：开始任务 in-flight 时其它状态操作入口 disabled 且不触发', async () => {
+    const user = userEvent.setup()
+    const deferred = createDeferred<{ ok: true; data: TaskTransitionResult }>()
+    const startedTask: Task = {
+      ...task,
+      status: 'in_progress',
+      updated_at: '2026-08-09T02:00:00+00:00',
+    }
+    const startTransition = {
+      transition_id: 'ffffffff-4444-4444-8444-444444444404',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-09T02:00:00+00:00',
+    }
+    const tasks = taskValue({
+      start: vi.fn(() => deferred.promise),
+      get: vi
+        .fn<TaskContextValue['get']>()
+        .mockResolvedValueOnce({ ok: true as const, data: task })
+        .mockResolvedValueOnce({ ok: true as const, data: startedTask }),
+      listStatusHistory: vi
+        .fn<TaskContextValue['listStatusHistory']>()
+        .mockResolvedValueOnce({ ok: true, data: [] })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [historyItem(startTransition)],
+        }),
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.click(await screen.findByRole('button', { name: '开始任务' }))
+
+    const cancelButton = screen.getByRole('button', { name: '取消任务' })
+    expect(cancelButton).toBeDisabled()
+    expect(screen.getByRole('button', { name: /开始任务/ })).toBeDisabled()
+    fireEvent.click(cancelButton)
+    expect(tasks.cancel).not.toHaveBeenCalled()
+
+    await act(async () => {
+      deferred.resolve({
+        ok: true,
+        data: transitionResult(startedTask, startTransition),
+      })
+    })
+    expect(await screen.findByText('当前状态：进行中')).toBeInTheDocument()
   })
 })
 

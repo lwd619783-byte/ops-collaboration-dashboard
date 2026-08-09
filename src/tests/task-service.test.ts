@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  blockTask,
+  cancelTask,
   createTask,
   getTask,
   listProjectTasks,
   listTaskAssignmentCandidates,
+  listTaskStatusHistory,
+  resumeTask,
+  startTask,
   updateTask,
 } from '@/features/tasks/taskService'
 import { mapTaskError } from '@/features/tasks/errors'
@@ -41,6 +46,10 @@ const taskRow = {
   visibility_users: [],
   status: 'todo' as const,
   progress: 0,
+  blocker_reason: null,
+  blocked_at: null,
+  blocked_by: null,
+  blocked_by_display_name: null,
   created_by: FICTIONAL_APP_USER_ID,
   created_at: '2026-08-09T01:00:00+00:00',
   updated_by: FICTIONAL_APP_USER_ID,
@@ -457,12 +466,205 @@ describe('任务 service', () => {
     expect(emptyName.ok).toBe(false)
   })
 
+  it('start 只发送 task 和幂等键并校验受控 transition payload', async () => {
+    const supabase = createSupabaseClientMock()
+    const transitionedTask = {
+      ...taskRow,
+      status: 'in_progress' as const,
+      updated_at: '2026-08-09T02:00:00+00:00',
+    }
+    supabase.rpc.mockResolvedValue({
+      data: {
+        task: transitionedTask,
+        transition: {
+          transition_id: 'eeeeeeee-1111-4111-8111-111111111111',
+          task_id: TASK_ID,
+          sequence: 1,
+          from_status: 'todo',
+          to_status: 'in_progress',
+          action: 'start',
+          created_at: '2026-08-09T02:00:00+00:00',
+        },
+        was_existing: false,
+      },
+      error: null,
+    })
+
+    const result = await startTask(supabase.client, {
+      taskId: TASK_ID,
+      projectId: PROJECT_ID,
+      workspaceId: FICTIONAL_WORKSPACE_ID,
+      idempotencyKey: createInput.idempotencyKey,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(supabase.rpc).toHaveBeenCalledWith('start_task', {
+      p_task_id: TASK_ID,
+      p_idempotency_key: createInput.idempotencyKey,
+    })
+    expect(supabase.rpc.mock.calls[0][1]).not.toHaveProperty('actor_id')
+    expect(supabase.rpc.mock.calls[0][1]).not.toHaveProperty('target_status')
+  })
+
+  it('block、resume、cancel 分别发送语义化 RPC 参数', async () => {
+    const input = {
+      taskId: TASK_ID,
+      projectId: PROJECT_ID,
+      workspaceId: FICTIONAL_WORKSPACE_ID,
+      idempotencyKey: createInput.idempotencyKey,
+    }
+    for (const [name, call, expectedArgs] of [
+      [
+        'block_task',
+        (client: ReturnType<typeof createSupabaseClientMock>['client']) =>
+          blockTask(client, {
+            ...input,
+            blockerReason: 'Fictional dependency',
+          }),
+        {
+          p_task_id: TASK_ID,
+          p_blocker_reason: 'Fictional dependency',
+          p_idempotency_key: createInput.idempotencyKey,
+        },
+      ],
+      [
+        'resume_task',
+        (client: ReturnType<typeof createSupabaseClientMock>['client']) =>
+          resumeTask(client, input),
+        {
+          p_task_id: TASK_ID,
+          p_idempotency_key: createInput.idempotencyKey,
+        },
+      ],
+      [
+        'cancel_task',
+        (client: ReturnType<typeof createSupabaseClientMock>['client']) =>
+          cancelTask(client, input),
+        {
+          p_task_id: TASK_ID,
+          p_idempotency_key: createInput.idempotencyKey,
+        },
+      ],
+    ] as const) {
+      const supabase = createSupabaseClientMock()
+      supabase.rpc.mockResolvedValue({ data: null, error: { code: '42501' } })
+      await call(supabase.client)
+      expect(supabase.rpc).toHaveBeenCalledWith(name, expectedArgs)
+    }
+  })
+
+  it.each([
+    [
+      'impossible action/from/to',
+      {
+        task: { ...taskRow, status: 'blocked' },
+        transition: {
+          transition_id: 'eeeeeeee-1111-4111-8111-111111111111',
+          task_id: TASK_ID,
+          sequence: 1,
+          from_status: 'todo',
+          to_status: 'blocked',
+          action: 'block',
+          created_at: '2026-08-09T02:00:00+00:00',
+        },
+        was_existing: false,
+      },
+    ],
+    [
+      'wrong task scope',
+      {
+        task: { ...taskRow, project_id: TASK_ID },
+        transition: {
+          transition_id: 'eeeeeeee-1111-4111-8111-111111111111',
+          task_id: TASK_ID,
+          sequence: 1,
+          from_status: 'todo',
+          to_status: 'in_progress',
+          action: 'start',
+          created_at: '2026-08-09T02:00:00+00:00',
+        },
+        was_existing: true,
+      },
+    ],
+    [
+      'malformed sequence',
+      {
+        task: { ...taskRow, status: 'in_progress' },
+        transition: {
+          transition_id: 'eeeeeeee-1111-4111-8111-111111111111',
+          task_id: TASK_ID,
+          sequence: 0,
+          from_status: 'todo',
+          to_status: 'in_progress',
+          action: 'start',
+          created_at: '2026-08-09T02:00:00+00:00',
+        },
+        was_existing: false,
+      },
+    ],
+  ])('transition success 的%s会 fail closed', async (_label, data) => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc.mockResolvedValue({ data, error: null })
+    const result = await startTask(supabase.client, {
+      taskId: TASK_ID,
+      projectId: PROJECT_ID,
+      workspaceId: FICTIONAL_WORKSPACE_ID,
+      idempotencyKey: createInput.idempotencyKey,
+    })
+    expect(result.ok).toBe(false)
+  })
+
+  it('history 按 sequence 校验完整状态链和阻塞原因', async () => {
+    const supabase = createSupabaseClientMock()
+    const history = [
+      {
+        transition_id: 'eeeeeeee-1111-4111-8111-111111111111',
+        task_id: TASK_ID,
+        sequence: 1,
+        from_status: 'todo',
+        to_status: 'in_progress',
+        action: 'start',
+        reason: null,
+        actor_id: FICTIONAL_APP_USER_ID,
+        actor_display_name: '虚构负责人',
+        created_at: '2026-08-09T02:00:00+00:00',
+      },
+      {
+        transition_id: 'eeeeeeee-2222-4222-8222-222222222222',
+        task_id: TASK_ID,
+        sequence: 2,
+        from_status: 'in_progress',
+        to_status: 'blocked',
+        action: 'block',
+        reason: 'Fictional dependency',
+        actor_id: FICTIONAL_APP_USER_ID,
+        actor_display_name: '虚构负责人',
+        created_at: '2026-08-09T03:00:00+00:00',
+      },
+    ]
+    supabase.rpc.mockResolvedValue({ data: history, error: null })
+
+    await expect(
+      listTaskStatusHistory(supabase.client, TASK_ID),
+    ).resolves.toEqual({ ok: true, data: history })
+    expect(supabase.rpc).toHaveBeenCalledWith('list_task_status_history', {
+      p_task_id: TASK_ID,
+    })
+
+    supabase.rpc.mockResolvedValue({
+      data: [{ ...history[0], sequence: 2 }],
+      error: null,
+    })
+    const malformed = await listTaskStatusHistory(supabase.client, TASK_ID)
+    expect(malformed.ok).toBe(false)
+  })
+
   it('数据库错误只映射稳定安全分类', () => {
     expect(
       mapTaskError({ code: '55000', message: 'task_project_archived' }),
     ).toEqual({
       code: 'project_archived',
-      message: '已归档项目不能创建或编辑任务。',
+      message: '已归档项目不能变更任务。',
     })
     expect(
       mapTaskError({ code: '40001', message: 'task_concurrent_update' }).code,
@@ -470,5 +672,11 @@ describe('任务 service', () => {
     expect(mapTaskError({ message: 'relation tasks leaked detail' }).code).toBe(
       'unknown_service_error',
     )
+    expect(
+      mapTaskError({
+        code: '23505',
+        message: 'task_transition_idempotency_conflict',
+      }).code,
+    ).toBe('transition_idempotency_conflict')
   })
 })

@@ -23,8 +23,9 @@ select columns_are('public', 'tasks', array[
   'id','project_id','module_id','title','description','acceptance_criteria',
   'assignee_id','reviewer_id','priority','start_date','due_date',
   'estimated_hours','workload_level','visibility','status','progress',
-  'created_by','updated_by','idempotency_key','created_at','updated_at'
-], 'tasks has the reviewed Task 3.1 columns');
+  'created_by','updated_by','idempotency_key','created_at','updated_at',
+  'blocker_reason','blocked_at','blocked_by'
+], 'tasks has the reviewed task detail and current-blocker columns');
 select columns_are('public', 'task_collaborators', array['task_id','user_id','created_at'], 'collaborator relation stays minimal');
 select columns_are('public', 'task_visibility_users', array['task_id','user_id','created_at'], 'visibility relation stays minimal');
 
@@ -144,8 +145,9 @@ select is(pg_temp.sqlstate_of($sql$
   where id='c5000000-0000-4000-8000-000000000001'
 $sql$), '55000', 'direct module soft deletion cannot bypass task references');
 select is(pg_temp.sqlstate_of($sql$ delete from public.tasks where id='c6000000-0000-4000-8000-000000000001' $sql$), '27000', 'physical task deletion is rejected');
-select is(pg_temp.sqlstate_of($sql$ update public.tasks set status='in_progress' where id='c6000000-0000-4000-8000-000000000001' $sql$), '27000', 'Task 3.1 cannot change status');
+select is(pg_temp.sqlstate_of($sql$ update public.tasks set status='in_progress' where id='c6000000-0000-4000-8000-000000000001' $sql$), '27000', 'direct SQL cannot change status');
 select is(pg_temp.sqlstate_of($sql$ update public.tasks set progress=10 where id='c6000000-0000-4000-8000-000000000001' $sql$), '27000', 'Task 3.1 cannot change progress');
+select is(pg_temp.sqlstate_of($sql$ update public.tasks set blocker_reason='Fictional direct blocker' where id='c6000000-0000-4000-8000-000000000001' $sql$), '27000', 'direct SQL cannot change current blocker fields');
 select is(pg_temp.sqlstate_of($sql$
   insert into public.tasks (project_id,module_id,title,assignee_id,reviewer_id,created_by,updated_by,idempotency_key)
   values ('c3000000-0000-4000-8000-000000000001','c5000000-0000-4000-8000-000000000001','   ','c1000000-0000-4000-8000-000000000002','c1000000-0000-4000-8000-000000000001','c1000000-0000-4000-8000-000000000001','c1000000-0000-4000-8000-000000000001','c7000000-0000-4000-8000-000000000002')

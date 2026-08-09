@@ -20,6 +20,9 @@ import {
   type Task,
   type TaskStatusAction,
   type TaskStatusHistoryItem,
+  loadConsistentTaskState,
+  refreshConsistentTaskState,
+  TASK_STATE_CONFLICT_MESSAGE,
 } from '@/features/tasks'
 import {
   canManageProjectTasks,
@@ -57,6 +60,7 @@ export function TaskDetailPage() {
   const [actionLoading, setActionLoading] = useState<TaskStatusAction | null>(
     null,
   )
+  const actionBusy = actionLoading !== null
   const [actionError, setActionError] = useState<string | null>(null)
   const [dialog, setDialog] = useState<'block' | 'cancel' | null>(null)
   const [blockerReason, setBlockerReason] = useState('')
@@ -98,23 +102,21 @@ export function TaskDetailPage() {
     setActionLoading(null)
     setDialog(null)
     intentRef.current = null
-    const [projectResult, taskResult, historyResult] = await Promise.all([
+    const [projectResult, stateResult] = await Promise.all([
       projects.get(projectId),
-      tasks.get(taskId),
-      tasks.listStatusHistory(taskId),
+      loadConsistentTaskState(tasks, taskId),
     ])
     if (!mountedRef.current || requestEpochRef.current !== epoch) return
     if (scopeKeyRef.current !== requestScopeKey) return
     if (
       !projectResult.ok ||
-      !taskResult.ok ||
-      !historyResult.ok ||
+      !stateResult.ok ||
       projectResult.data.project_id !== projectId ||
       projectResult.data.workspace_id !== currentWorkspace.workspace_id ||
-      taskResult.data.task_id !== taskId ||
-      taskResult.data.project_id !== projectId ||
-      taskResult.data.workspace_id !== currentWorkspace.workspace_id ||
-      historyResult.data.some((item) => item.task_id !== taskId)
+      stateResult.data.task.task_id !== taskId ||
+      stateResult.data.task.project_id !== projectId ||
+      stateResult.data.task.workspace_id !== currentWorkspace.workspace_id ||
+      stateResult.data.history.some((item) => item.task_id !== taskId)
     ) {
       setProject(null)
       setTask(null)
@@ -124,8 +126,8 @@ export function TaskDetailPage() {
       return
     }
     setProject(projectResult.data)
-    setTask(taskResult.data)
-    setHistory(historyResult.data)
+    setTask(stateResult.data.task)
+    setHistory(stateResult.data.history)
     setLoadedScopeKey(requestScopeKey)
     setLoadState('ready')
   }, [
@@ -204,7 +206,11 @@ export function TaskDetailPage() {
         return false
       }
 
-      const historyResult = await tasks.listStatusHistory(task.task_id)
+      const refreshResult = await refreshConsistentTaskState(
+        tasks,
+        task.task_id,
+        result.data.transition.transition_id,
+      )
       if (
         !mountedRef.current ||
         actionEpochRef.current !== epoch ||
@@ -212,30 +218,26 @@ export function TaskDetailPage() {
       ) {
         return false
       }
-      if (!historyResult.ok) {
-        if (
-          historyResult.error.code !== 'network_unavailable' &&
-          historyResult.error.code !== 'unknown_service_error'
-        ) {
-          intentRef.current = null
-        }
-        setActionError(historyResult.error.message)
+      if (!refreshResult.ok) {
+        intentRef.current = null
+        setActionError(TASK_STATE_CONFLICT_MESSAGE)
         setActionLoading(null)
         return false
       }
       if (
-        result.data.task.task_id !== task.task_id ||
-        result.data.task.project_id !== project.project_id ||
-        result.data.task.workspace_id !== currentWorkspace.workspace_id ||
-        historyResult.data.some((item) => item.task_id !== task.task_id)
+        refreshResult.data.task.task_id !== task.task_id ||
+        refreshResult.data.task.project_id !== project.project_id ||
+        refreshResult.data.task.workspace_id !==
+          currentWorkspace.workspace_id ||
+        refreshResult.data.history.some((item) => item.task_id !== task.task_id)
       ) {
         intentRef.current = null
-        setActionError('任务操作暂时无法完成，请刷新后重试。')
+        setActionError(TASK_STATE_CONFLICT_MESSAGE)
         setActionLoading(null)
         return false
       }
-      setTask(result.data.task)
-      setHistory(historyResult.data)
+      setTask(refreshResult.data.task)
+      setHistory(refreshResult.data.history)
       setActionLoading(null)
       setActionError(null)
       intentRef.current = null
@@ -358,6 +360,7 @@ export function TaskDetailPage() {
             {task.status === 'todo' && canExecute && (
               <Button
                 loading={actionLoading === 'start'}
+                disabled={actionBusy && actionLoading !== 'start'}
                 onClick={() => void runAction('start')}
               >
                 开始任务
@@ -366,7 +369,9 @@ export function TaskDetailPage() {
             {task.status === 'in_progress' && canExecute && (
               <Button
                 loading={actionLoading === 'block'}
+                disabled={actionBusy && actionLoading !== 'block'}
                 onClick={() => {
+                  if (actionBusy) return
                   setActionError(null)
                   setBlockerReasonError(null)
                   setDialog('block')
@@ -378,6 +383,7 @@ export function TaskDetailPage() {
             {task.status === 'blocked' && canExecute && (
               <Button
                 loading={actionLoading === 'resume'}
+                disabled={actionBusy && actionLoading !== 'resume'}
                 onClick={() => void runAction('resume')}
               >
                 恢复进行中
@@ -385,7 +391,9 @@ export function TaskDetailPage() {
             )}
             {canManage && (
               <Button
+                disabled={actionBusy}
                 onClick={() => {
+                  if (actionBusy) return
                   setActionError(null)
                   setDialog('cancel')
                 }}

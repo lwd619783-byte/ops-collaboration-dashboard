@@ -11,6 +11,10 @@ export type TaskErrorCode =
   | 'relationship_invalid'
   | 'concurrent_update'
   | 'duplicate_submission'
+  | 'invalid_transition'
+  | 'block_reason_required'
+  | 'block_reason_too_long'
+  | 'transition_idempotency_conflict'
   | 'unknown_service_error'
 
 export type SafeTaskError = { code: TaskErrorCode; message: string }
@@ -22,12 +26,17 @@ const messages: Record<TaskErrorCode, string> = {
   not_found_or_forbidden: '任务不存在或你无权访问。',
   permission_denied: '你没有执行此任务操作的权限。',
   validation_failed: '任务信息不完整或格式不正确。',
-  project_archived: '已归档项目不能创建或编辑任务。',
+  project_archived: '已归档项目不能变更任务。',
   module_invalid: '所选模块不存在、已删除或不属于当前项目。',
   member_invalid: '只能选择当前项目内已启用且角色合适的成员。',
   relationship_invalid: '任务人员关系重复或相互冲突。',
   concurrent_update: '任务已被其他人修改，请刷新后重试。',
   duplicate_submission: '本次创建与先前请求冲突，请检查后重新提交。',
+  invalid_transition: '当前任务状态已变化，此操作不能执行，请刷新后重试。',
+  block_reason_required: '请填写阻塞原因。',
+  block_reason_too_long: '阻塞原因不能超过 2000 个字符。',
+  transition_idempotency_conflict:
+    '本次操作请求已被用于其他状态变更，请重新操作。',
   unknown_service_error: '任务操作暂时无法完成，请稍后重试。',
 }
 
@@ -52,6 +61,8 @@ function knownCode(signal: string | null): TaskErrorCode | null {
       return 'authentication_required'
     case 'task_not_found_or_forbidden':
       return 'not_found_or_forbidden'
+    case 'task_permission_denied':
+      return 'permission_denied'
     case '42501':
       return 'permission_denied'
     case 'task_validation_failed':
@@ -74,6 +85,16 @@ function knownCode(signal: string | null): TaskErrorCode | null {
       return 'concurrent_update'
     case 'task_idempotency_conflict':
       return 'duplicate_submission'
+    case 'task_invalid_transition':
+      return 'invalid_transition'
+    case 'task_block_reason_required':
+      return 'block_reason_required'
+    case 'task_block_reason_too_long':
+      return 'block_reason_too_long'
+    case 'task_transition_idempotency_conflict':
+      return 'transition_idempotency_conflict'
+    case 'task_transition_payload_invalid':
+      return 'validation_failed'
     default:
       return null
   }

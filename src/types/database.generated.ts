@@ -368,6 +368,60 @@ export type Database = {
           },
         ]
       }
+      task_status_history: {
+        Row: {
+          action: Database["public"]["Enums"]["task_status_action"]
+          actor_id: string
+          created_at: string
+          from_status: Database["public"]["Enums"]["task_status"]
+          id: string
+          idempotency_key: string
+          reason: string | null
+          task_id: string
+          to_status: Database["public"]["Enums"]["task_status"]
+          transition_seq: number
+        }
+        Insert: {
+          action: Database["public"]["Enums"]["task_status_action"]
+          actor_id: string
+          created_at?: string
+          from_status: Database["public"]["Enums"]["task_status"]
+          id?: string
+          idempotency_key: string
+          reason?: string | null
+          task_id: string
+          to_status: Database["public"]["Enums"]["task_status"]
+          transition_seq: number
+        }
+        Update: {
+          action?: Database["public"]["Enums"]["task_status_action"]
+          actor_id?: string
+          created_at?: string
+          from_status?: Database["public"]["Enums"]["task_status"]
+          id?: string
+          idempotency_key?: string
+          reason?: string | null
+          task_id?: string
+          to_status?: Database["public"]["Enums"]["task_status"]
+          transition_seq?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_status_history_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_status_history_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       task_visibility_users: {
         Row: {
           created_at: string
@@ -405,6 +459,9 @@ export type Database = {
         Row: {
           acceptance_criteria: string | null
           assignee_id: string
+          blocked_at: string | null
+          blocked_by: string | null
+          blocker_reason: string | null
           created_at: string
           created_by: string
           description: string | null
@@ -428,6 +485,9 @@ export type Database = {
         Insert: {
           acceptance_criteria?: string | null
           assignee_id: string
+          blocked_at?: string | null
+          blocked_by?: string | null
+          blocker_reason?: string | null
           created_at?: string
           created_by: string
           description?: string | null
@@ -451,6 +511,9 @@ export type Database = {
         Update: {
           acceptance_criteria?: string | null
           assignee_id?: string
+          blocked_at?: string | null
+          blocked_by?: string | null
+          blocker_reason?: string | null
           created_at?: string
           created_by?: string
           description?: string | null
@@ -475,6 +538,13 @@ export type Database = {
           {
             foreignKeyName: "tasks_assignee_id_fkey"
             columns: ["assignee_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_blocked_by_fkey"
+            columns: ["blocked_by"]
             isOneToOne: false
             referencedRelation: "app_users"
             referencedColumns: ["id"]
@@ -847,6 +917,14 @@ export type Database = {
         }
         Returns: undefined
       }
+      block_task: {
+        Args: {
+          p_blocker_reason: string
+          p_idempotency_key: string
+          p_task_id: string
+        }
+        Returns: Json
+      }
       bootstrap_default_workspace: {
         Args: { p_idempotency_key: string; p_name: string; p_owner_id: string }
         Returns: string
@@ -873,6 +951,10 @@ export type Database = {
       }
       can_read_project: { Args: { p_project_id: string }; Returns: boolean }
       can_read_task: { Args: { p_task_id: string }; Returns: boolean }
+      cancel_task: {
+        Args: { p_idempotency_key: string; p_task_id: string }
+        Returns: Json
+      }
       clear_project_lead: {
         Args: { p_expected_updated_at: string; p_project_id: string }
         Returns: {
@@ -1031,6 +1113,15 @@ export type Database = {
           updated_by: string
         }[]
       }
+      execute_task_transition: {
+        Args: {
+          p_action: Database["public"]["Enums"]["task_status_action"]
+          p_idempotency_key: string
+          p_reason: string
+          p_task_id: string
+        }
+        Returns: Json
+      }
       get_project: {
         Args: { p_project_id: string }
         Returns: {
@@ -1058,6 +1149,10 @@ export type Database = {
           acceptance_criteria: string
           assignee_display_name: string
           assignee_id: string
+          blocked_at: string
+          blocked_by: string
+          blocked_by_display_name: string
+          blocker_reason: string
           collaborators: Json
           created_at: string
           created_by: string
@@ -1213,6 +1308,21 @@ export type Database = {
           project_id: string
           project_role: Database["public"]["Enums"]["project_role"]
           workspace_id: string
+        }[]
+      }
+      list_task_status_history: {
+        Args: { p_task_id: string }
+        Returns: {
+          action: Database["public"]["Enums"]["task_status_action"]
+          actor_display_name: string
+          actor_id: string
+          created_at: string
+          from_status: Database["public"]["Enums"]["task_status"]
+          reason: string
+          sequence: number
+          task_id: string
+          to_status: Database["public"]["Enums"]["task_status"]
+          transition_id: string
         }[]
       }
       list_workspace_members: {
@@ -1394,6 +1504,10 @@ export type Database = {
         }
         Returns: string
       }
+      resume_task: {
+        Args: { p_idempotency_key: string; p_task_id: string }
+        Returns: Json
+      }
       set_project_lead: {
         Args: {
           p_expected_updated_at: string
@@ -1471,12 +1585,51 @@ export type Database = {
           user_id: string
         }[]
       }
+      start_task: {
+        Args: { p_idempotency_key: string; p_task_id: string }
+        Returns: Json
+      }
       task_snapshot: {
         Args: { p_task_id: string }
         Returns: {
           acceptance_criteria: string
           assignee_display_name: string
           assignee_id: string
+          collaborators: Json
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          estimated_hours: number
+          module_id: string
+          module_name: string
+          priority: Database["public"]["Enums"]["task_priority"]
+          progress: number
+          project_id: string
+          reviewer_display_name: string
+          reviewer_id: string
+          start_date: string
+          status: Database["public"]["Enums"]["task_status"]
+          task_id: string
+          title: string
+          updated_at: string
+          updated_by: string
+          visibility: Database["public"]["Enums"]["task_visibility"]
+          visibility_users: Json
+          workload_level: Database["public"]["Enums"]["task_workload_level"]
+          workspace_id: string
+        }[]
+      }
+      task_status_snapshot: {
+        Args: { p_task_id: string }
+        Returns: {
+          acceptance_criteria: string
+          assignee_display_name: string
+          assignee_id: string
+          blocked_at: string
+          blocked_by: string
+          blocked_by_display_name: string
+          blocker_reason: string
           collaborators: Json
           created_at: string
           created_by: string
@@ -1645,6 +1798,7 @@ export type Database = {
         | "pending_review"
         | "completed"
         | "cancelled"
+      task_status_action: "start" | "block" | "resume" | "cancel"
       task_visibility: "project" | "restricted"
       task_workload_level: "xs" | "s" | "m" | "l" | "xl"
       workspace_invitation_status:
@@ -1801,6 +1955,7 @@ export const Constants = {
         "completed",
         "cancelled",
       ],
+      task_status_action: ["start", "block", "resume", "cancel"],
       task_visibility: ["project", "restricted"],
       task_workload_level: ["xs", "s", "m", "l", "xl"],
       workspace_invitation_status: [

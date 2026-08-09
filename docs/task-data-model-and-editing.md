@@ -1,6 +1,6 @@
 # 任务数据模型与创建编辑 V1
 
-Task 3.1 在统一 `app_users.id`、工作空间权限、项目成员和有序项目模块之上建立只属于项目的共享任务基础。它提供受控创建、详情 deep link 和核心元数据编辑；后续 Task 3.2 已通过独立安全 summary 投影增加只读任务列表 / 看板，详见 [任务看板和列表 V1](task-board-and-list.md)。正式状态流转、每日进展或验收闭环仍未实现。私人任务、个人待办和笔记需要未来独立模型，绝不通过 `tasks` 的模糊模式混入项目任务。
+Task 3.1 在统一 `app_users.id`、工作空间权限、项目成员和有序项目模块之上建立只属于项目的共享任务基础。它提供受控创建、详情 deep link 和核心元数据编辑；Task 3.2 通过独立安全 summary 投影增加只读任务列表 / 看板；Task 3.3 功能分支进一步增加受控状态流转、当前 blocker 与结构化历史，详见 [任务看板和列表 V1](task-board-and-list.md) 和 [任务状态流转与阻塞 V1](task-status-transitions.md)。每日进展或验收闭环仍未实现。私人任务、个人待办和笔记需要未来独立模型，绝不通过 `tasks` 的模糊模式混入项目任务。
 
 ## 数据模型
 
@@ -13,8 +13,9 @@ Task 3.1 在统一 `app_users.id`、工作空间权限、项目成员和有序�
 - `tasks.module_id` 非空，`(module_id, project_id)` 复合外键引用同一项目的 `project_modules`，同时使用 `ON DELETE RESTRICT`；
 - 标题非空且最长 200，说明和验收标准各最长 10000，日期满足 `start_date <= due_date`，预计工时为 `0..10000` 且最多两位小数，进度约束为 `0..100`；
 - 创建审计、更新审计、任务身份和幂等键不能由普通编辑改变；任务行不支持物理删除。
+- Task 3.3 migration `20260809220000_task_status_transitions_v1.sql` 增加 `blocker_reason / blocked_at / blocked_by`，并以 check constraint 强制它们只在 blocked 状态完整存在。
 
-`task_status` 为后续 Task 3.3～3.5 预留 `todo / in_progress / blocked / pending_review / completed / cancelled` 词汇，但 Task 3.1 只允许数据库创建 `todo / 0%`。`update_task()` 不接受 status 或 progress 参数，guard trigger 也拒绝绕过接口改写执行状态。
+`task_status` 预留 `todo / in_progress / blocked / pending_review / completed / cancelled` 词汇。Task 3.1 仍只允许数据库创建 `todo / 0%`；Task 3.3 只通过 `start_task / block_task / resume_task / cancel_task` 开放审阅后的转换，不存在通用 status setter。`update_task()` 不接受 status 或 progress 参数，guard trigger 也拒绝绕过受控接口改写执行状态或 current blocker。`pending_review / completed` mutation 与 progress 写入仍未开放。
 
 ## 人员资格
 
@@ -52,7 +53,7 @@ Task 3.1 在统一 `app_users.id`、工作空间权限、项目成员和有序�
 
 `update_task()` 使用 `expected_updated_at` 做乐观并发；版本不一致返回 `task_concurrent_update`，禁止 stale edit 覆盖新版本。协作人与显式可见人员采用 complete-set replacement，但删除旧集合、写入新集合和主任务更新处于同一事务，任一步失败都会整体回滚。
 
-`task_snapshot(task_id)` / `get_task(task_id)` 返回前端需要的稳定投影：任务基础信息、模块名、主要负责人、协作人、验收人、可见性、显式可见人员、状态 / 进度和 optimistic concurrency 时间戳；不返回幂等键或内部删除信息。前端对数组、枚举、数值、日期、时间戳、nullable 字段和作用域进行运行时校验，malformed success 会 fail closed，数据库原始错误不会直接显示。
+`task_snapshot(task_id)` 保持 Task 3.1 核心投影；Task 3.3 的内部 `task_status_snapshot(task_id)` 和公开 `get_task(task_id)` 额外返回 current blocker、阻塞人安全显示名和阻塞时间。投影仍不返回创建/状态幂等键或内部上下文。前端对数组、枚举、数值、日期、时间戳、nullable blocker 不变量和作用域进行运行时校验，malformed success 会 fail closed，数据库原始错误不会直接显示。
 
 ## 锁顺序与并发边界
 
@@ -69,7 +70,7 @@ Task 3.1 在统一 `app_users.id`、工作空间权限、项目成员和有序�
 
 模块删除 RPC 在项目锁内检查任务引用：未被任务引用的模块仍可按 Task 2.3 规则软删除；已被任何任务引用的模块返回 `project_module_not_empty`，不 cascade、不移动任务、不置空模块，也不写删除标记。`project_modules_guard()` 同时执行相同的不变量检查，特权 SQL 也不能绕过 RPC 直接留下“已删除模块 + 活动任务”的关系。
 
-`scripts/verify-task-concurrency.mjs` 使用真实独立 PostgreSQL connection、observer 的 `pg_blocking_pids()`、`lock_timeout` 和 `statement_timeout` 验证 actor 权限撤销、负责人移出项目、负责人停用、模块删除、项目归档、并发任务编辑与协作人集合替换。脚本只使用随机虚构本地夹具，不输出连接串、JWT 或密钥，并已纳入 `db:verify`。
+`scripts/verify-task-concurrency.mjs` 使用真实独立 PostgreSQL connection、observer 的 `pg_blocking_pids()`、`lock_timeout` 和 `statement_timeout` 验证 actor 权限撤销、负责人移出项目、负责人停用、模块删除、项目归档、并发任务编辑与协作人集合替换；Task 3.3 扩展后还覆盖同/不同 key start、block/cancel、resume/cancel、metadata/transition 与 archive/transition。当前共 43 项检查，只使用随机虚构本地夹具，不输出连接串、JWT 或密钥，并已纳入 `db:verify`。
 
 ## 前端边界
 
@@ -81,9 +82,15 @@ Task 3.1 在统一 `app_users.id`、工作空间权限、项目成员和有序�
 
 Task 3.2 已让项目详情对所有项目读者提供 `/projects/:projectId/tasks` 入口，管理者仍可进入创建页。Task 3.1 创建使用浏览器生成的重试 key；表单改动会生成新的业务意图 key。创建 / 编辑 mutation 捕获 workspace、project、task 与单调 action epoch，scope 变化或组件卸载会让迟到 success / error 失效，不能导航或污染新页面。窄屏回落为单列，fieldset / label / alert / loading 状态保持键盘和辅助技术可用。
 
+## Task 3.3 状态边界
+
+状态历史 `task_status_history` 是 append-only transition ledger，按 task 锁内生成 `transition_seq`，同时以 `(actor_id, idempotency_key)` 承载状态意图幂等。相同意图重试返回已有 transition；不同 task/action/reason 复用 key 会冲突。历史读取继续要求 `can_read_task`，但读取关系不会授予 mutation 权限。
+
+`cancelled` 与未来 `completed` 按 terminal 处理；人员 lifecycle guard 只让 non-terminal task 职责阻止成员移除/降级/停用。历史 actor 不属于当前职责。模块删除不因 task terminal 而放宽，任何任务引用仍阻止模块删除。
+
 ## 当前未实现
 
-当前明确不包含：Task 3.3 start / block / cancel / 状态历史，Task 3.4 `task_updates` / 每日进展，Task 3.5 `task_reviews` / 提交验收 / 通过 / 驳回，以及拖拽状态修改、通知、飞书、微信小程序、CloudBase、附件、私人任务、个人空间、周期任务、甘特图、完整操作日志和任务回收站。
+当前明确不包含：Task 3.4 `task_updates` / 每日进展 / progress 写入，Task 3.5 `task_reviews` / pending_review / completed / 提交验收 / 通过 / 驳回，以及拖拽状态修改、通知、飞书、微信小程序、CloudBase、附件、私人任务、个人空间、周期任务、甘特图、完整操作日志和任务回收站。
 
 ## 本地验证
 

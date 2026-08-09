@@ -241,6 +241,23 @@ function taskValue(
       ok: false as const,
       error: { code: 'permission_denied' as const, message: '不可用' },
     })),
+    start: vi.fn(async () => ({
+      ok: false as const,
+      error: { code: 'permission_denied' as const, message: '不可用' },
+    })),
+    block: vi.fn(async () => ({
+      ok: false as const,
+      error: { code: 'permission_denied' as const, message: '不可用' },
+    })),
+    resume: vi.fn(async () => ({
+      ok: false as const,
+      error: { code: 'permission_denied' as const, message: '不可用' },
+    })),
+    cancel: vi.fn(async () => ({
+      ok: false as const,
+      error: { code: 'permission_denied' as const, message: '不可用' },
+    })),
+    listStatusHistory: vi.fn(async () => ({ ok: true as const, data: [] })),
     ...overrides,
   }
 }

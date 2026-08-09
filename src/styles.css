@@ -1016,6 +1016,64 @@ a {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+.task-status-actions,
+.task-current-blocker,
+.task-status-history {
+  display: grid;
+  gap: 0.85rem;
+}
+.task-status-actions > *,
+.task-current-blocker > *,
+.task-status-history > * {
+  margin-block: 0;
+}
+.task-status-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.task-current-blocker {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+.task-current-blocker-label {
+  color: #92400e !important;
+  font-weight: 800;
+}
+.task-status-history-list {
+  display: grid;
+  gap: 0.85rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.task-status-history-list li {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.65rem;
+  background: #f8fafc;
+}
+.task-status-history-list li > * {
+  margin: 0;
+}
+.task-status-history-list li > * + * {
+  margin-top: 0.45rem;
+}
+.task-status-history-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.task-status-history-heading strong {
+  overflow-wrap: anywhere;
+}
+.task-status-history-heading span {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 0.8rem;
+}
 .task-center-heading h2 {
   margin: 0;
   overflow-wrap: anywhere;

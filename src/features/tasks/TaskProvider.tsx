@@ -2,10 +2,15 @@ import { useCallback, useMemo, type PropsWithChildren } from 'react'
 import { createSafeTaskError } from '@/features/tasks/errors'
 import { TaskContext } from '@/features/tasks/TaskContext'
 import {
+  blockTask,
+  cancelTask,
   createTask,
   getTask,
   listProjectTasks,
+  listTaskStatusHistory,
   listTaskAssignmentCandidates,
+  resumeTask,
+  startTask,
   updateTask,
   type TaskServiceResult,
 } from '@/features/tasks/taskService'
@@ -54,6 +59,16 @@ export function TaskProvider({
         withClient((client) => createTask(client, input)),
       update: (input: Parameters<typeof updateTask>[1]) =>
         withClient((client) => updateTask(client, input)),
+      start: (input: Parameters<typeof startTask>[1]) =>
+        withClient((client) => startTask(client, input)),
+      block: (input: Parameters<typeof blockTask>[1]) =>
+        withClient((client) => blockTask(client, input)),
+      resume: (input: Parameters<typeof resumeTask>[1]) =>
+        withClient((client) => resumeTask(client, input)),
+      cancel: (input: Parameters<typeof cancelTask>[1]) =>
+        withClient((client) => cancelTask(client, input)),
+      listStatusHistory: (taskId: string) =>
+        withClient((client) => listTaskStatusHistory(client, taskId)),
     }),
     [withClient],
   )

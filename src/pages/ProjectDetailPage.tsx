@@ -334,21 +334,24 @@ export function ProjectDetailPage() {
         <article className="card">
           <h3>项目任务</h3>
           <p>
-            Task 3.1
-            提供任务创建、详情深链和核心元数据编辑；任务列表与看板将在后续任务中实现。
+            通过只读看板或列表浏览你有权查看的项目任务，并使用筛选快速定位。
           </p>
-          {canManageMembers ? (
+          <div className="project-task-actions">
             <Link
-              className="button button-primary button-md"
-              to={`/projects/${project.project_id}/tasks/new`}
+              className="button button-secondary button-md"
+              to={`/projects/${project.project_id}/tasks`}
             >
-              创建任务
+              查看项目任务
             </Link>
-          ) : (
-            <p className="muted-text">
-              已知任务链接可按任务可见性直接打开；当前版本不提供任务列表。
-            </p>
-          )}
+            {canManageMembers && (
+              <Link
+                className="button button-primary button-md"
+                to={`/projects/${project.project_id}/tasks/new`}
+              >
+                创建任务
+              </Link>
+            )}
+          </div>
         </article>
       </section>
 

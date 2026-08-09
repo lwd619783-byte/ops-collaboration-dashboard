@@ -1,6 +1,6 @@
 # 任务数据模型与创建编辑 V1
 
-Task 3.1 在统一 `app_users.id`、工作空间权限、项目成员和有序项目模块之上建立只属于项目的共享任务基础。它提供受控创建、详情 deep link 和核心元数据编辑，不提供任务列表 / 看板、正式状态流转、每日进展或验收闭环。私人任务、个人待办和笔记需要未来独立模型，绝不通过 `tasks` 的模糊模式混入项目任务。
+Task 3.1 在统一 `app_users.id`、工作空间权限、项目成员和有序项目模块之上建立只属于项目的共享任务基础。它提供受控创建、详情 deep link 和核心元数据编辑；后续 Task 3.2 已通过独立安全 summary 投影增加只读任务列表 / 看板，详见 [任务看板和列表 V1](task-board-and-list.md)。正式状态流转、每日进展或验收闭环仍未实现。私人任务、个人待办和笔记需要未来独立模型，绝不通过 `tasks` 的模糊模式混入项目任务。
 
 ## 数据模型
 
@@ -79,11 +79,11 @@ Task 3.1 在统一 `app_users.id`、工作空间权限、项目成员和有序�
 - `/projects/:projectId/tasks/:taskId`；
 - `/projects/:projectId/tasks/:taskId/edit`。
 
-项目详情只提供创建入口，不提供 Task 3.2 的任务列表。创建使用浏览器生成的重试 key；表单改动会生成新的业务意图 key。创建 / 编辑 mutation 捕获 workspace、project、task 与单调 action epoch，scope 变化或组件卸载会让迟到 success / error 失效，不能导航或污染新页面。窄屏回落为单列，fieldset / label / alert / loading 状态保持键盘和辅助技术可用。
+Task 3.2 已让项目详情对所有项目读者提供 `/projects/:projectId/tasks` 入口，管理者仍可进入创建页。Task 3.1 创建使用浏览器生成的重试 key；表单改动会生成新的业务意图 key。创建 / 编辑 mutation 捕获 workspace、project、task 与单调 action epoch，scope 变化或组件卸载会让迟到 success / error 失效，不能导航或污染新页面。窄屏回落为单列，fieldset / label / alert / loading 状态保持键盘和辅助技术可用。
 
 ## 当前未实现
 
-当前明确不包含：Task 3.2 正式列表 / 表格 / Kanban / 筛选 / 拖拽，Task 3.3 start / block / cancel / 状态历史，Task 3.4 `task_updates` / 每日进展，Task 3.5 `task_reviews` / 提交验收 / 通过 / 驳回，以及通知、飞书、微信小程序、CloudBase、附件、私人任务、个人空间、周期任务、甘特图、完整操作日志和任务回收站。
+当前明确不包含：Task 3.3 start / block / cancel / 状态历史，Task 3.4 `task_updates` / 每日进展，Task 3.5 `task_reviews` / 提交验收 / 通过 / 驳回，以及拖拽状态修改、通知、飞书、微信小程序、CloudBase、附件、私人任务、个人空间、周期任务、甘特图、完整操作日志和任务回收站。
 
 ## 本地验证
 

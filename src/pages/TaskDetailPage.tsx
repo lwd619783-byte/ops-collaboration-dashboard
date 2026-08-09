@@ -156,6 +156,12 @@ export function TaskDetailPage() {
         <div className="project-detail-actions">
           <Link
             className="button button-secondary button-md"
+            to={`/projects/${project.project_id}/tasks`}
+          >
+            返回任务中心
+          </Link>
+          <Link
+            className="button button-secondary button-md"
             to={`/projects/${project.project_id}`}
           >
             返回项目

@@ -4,6 +4,7 @@ import { TaskContext } from '@/features/tasks/TaskContext'
 import {
   createTask,
   getTask,
+  listProjectTasks,
   listTaskAssignmentCandidates,
   updateTask,
   type TaskServiceResult,
@@ -45,6 +46,8 @@ export function TaskProvider({
   const value = useMemo(
     () => ({
       get: (taskId: string) => withClient((client) => getTask(client, taskId)),
+      list: (input: Parameters<typeof listProjectTasks>[1]) =>
+        withClient((client) => listProjectTasks(client, input)),
       listCandidates: (projectId: string) =>
         withClient((client) => listTaskAssignmentCandidates(client, projectId)),
       create: (input: Parameters<typeof createTask>[1]) =>

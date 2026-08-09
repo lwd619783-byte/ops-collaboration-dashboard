@@ -23,6 +23,7 @@ import { PlaceholderPage } from '@/pages/PlaceholderPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { ProjectDetailPage } from '@/pages/ProjectDetailPage'
 import { ProjectMembersPage } from '@/pages/ProjectMembersPage'
+import { ProjectTasksPage } from '@/pages/ProjectTasksPage'
 import { ProjectsPage } from '@/pages/ProjectsPage'
 import { SystemHealthPage } from '@/pages/SystemHealthPage'
 import { TaskDetailPage } from '@/pages/TaskDetailPage'
@@ -110,6 +111,10 @@ export function AppRouter({ resolveClient }: AppRouterProps) {
                     <Route
                       path="/projects/:projectId/members"
                       element={<ProjectMembersPage />}
+                    />
+                    <Route
+                      path="/projects/:projectId/tasks"
+                      element={<ProjectTasksPage />}
                     />
                     <Route
                       path="/projects/:projectId/tasks/new"

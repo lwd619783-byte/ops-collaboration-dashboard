@@ -4,11 +4,14 @@ import type {
   Task,
   TaskAssignmentCandidate,
   TaskCreateInput,
+  TaskListInput,
+  TaskSummary,
   TaskUpdateInput,
 } from '@/features/tasks/types'
 
 export type TaskContextValue = {
   get: (taskId: string) => Promise<TaskServiceResult<Task>>
+  list: (input: TaskListInput) => Promise<TaskServiceResult<TaskSummary[]>>
   listCandidates: (
     projectId: string,
   ) => Promise<TaskServiceResult<TaskAssignmentCandidate[]>>

@@ -52,6 +52,7 @@ select policies_are('public', 'task_collaborators', array['task_collaborators_se
 select policies_are('public', 'task_visibility_users', array['task_visibility_users_select_authorized'], 'visibility users have one reviewed read policy');
 
 select ok(to_regprocedure('public.get_task(uuid)') is not null, 'get_task exists');
+select ok(to_regprocedure('public.list_project_tasks(uuid)') is not null, 'Task 3.2 list projection exists');
 select ok(to_regprocedure('public.list_task_assignment_candidates(uuid)') is not null, 'candidate RPC exists');
 select ok(to_regprocedure('public.create_task(uuid,uuid,text,text,text,uuid,uuid[],uuid,public.task_priority,date,date,numeric,public.task_workload_level,public.task_visibility,uuid[],uuid)') is not null, 'create_task exists');
 select ok(to_regprocedure('public.update_task(uuid,uuid,uuid,text,text,text,uuid,uuid[],uuid,public.task_priority,date,date,numeric,public.task_workload_level,public.task_visibility,uuid[],timestamptz)') is not null, 'update_task exists');
@@ -60,28 +61,34 @@ select ok(to_regprocedure('public.create_task(uuid,uuid,text,text,text,uuid,uuid
 select is((
   select count(*) from pg_proc where oid = any(array[
     'public.get_task(uuid)'::regprocedure,
+    'public.list_project_tasks(uuid)'::regprocedure,
     'public.list_task_assignment_candidates(uuid)'::regprocedure,
     'public.create_task(uuid,uuid,text,text,text,uuid,uuid[],uuid,public.task_priority,date,date,numeric,public.task_workload_level,public.task_visibility,uuid[],uuid)'::regprocedure,
     'public.update_task(uuid,uuid,uuid,text,text,text,uuid,uuid[],uuid,public.task_priority,date,date,numeric,public.task_workload_level,public.task_visibility,uuid[],timestamptz)'::regprocedure
   ]) and prosecdef
-), 4::bigint, 'all browser task RPCs are SECURITY DEFINER');
+), 5::bigint, 'all browser task RPCs are SECURITY DEFINER');
 select is((
   select count(*) from pg_proc where oid = any(array[
     'public.get_task(uuid)'::regprocedure,
+    'public.list_project_tasks(uuid)'::regprocedure,
     'public.list_task_assignment_candidates(uuid)'::regprocedure,
     'public.create_task(uuid,uuid,text,text,text,uuid,uuid[],uuid,public.task_priority,date,date,numeric,public.task_workload_level,public.task_visibility,uuid[],uuid)'::regprocedure,
     'public.update_task(uuid,uuid,uuid,text,text,text,uuid,uuid[],uuid,public.task_priority,date,date,numeric,public.task_workload_level,public.task_visibility,uuid[],timestamptz)'::regprocedure
   ]) and array_to_string(proconfig, ',') = 'search_path=""'
-), 4::bigint, 'all browser task RPCs pin an empty search_path');
+), 5::bigint, 'all browser task RPCs pin an empty search_path');
 select is((
   select count(*) from pg_proc where oid = any(array[
     'public.get_task(uuid)'::regprocedure,
+    'public.list_project_tasks(uuid)'::regprocedure,
     'public.list_task_assignment_candidates(uuid)'::regprocedure,
     'public.create_task(uuid,uuid,text,text,text,uuid,uuid[],uuid,public.task_priority,date,date,numeric,public.task_workload_level,public.task_visibility,uuid[],uuid)'::regprocedure,
     'public.update_task(uuid,uuid,uuid,text,text,text,uuid,uuid[],uuid,public.task_priority,date,date,numeric,public.task_workload_level,public.task_visibility,uuid[],timestamptz)'::regprocedure
   ]) and pg_get_userbyid(proowner) = 'postgres'
-), 4::bigint, 'all browser task RPCs belong to postgres');
+), 5::bigint, 'all browser task RPCs belong to postgres');
 select ok(has_function_privilege('authenticated', 'public.get_task(uuid)', 'execute'), 'authenticated can get an authorized task');
+select ok(has_function_privilege('authenticated', 'public.list_project_tasks(uuid)', 'execute'), 'authenticated can list authorized task summaries');
+select ok(not has_function_privilege('anon', 'public.list_project_tasks(uuid)', 'execute'), 'anon cannot list task summaries');
+select ok(not has_function_privilege('service_role', 'public.list_project_tasks(uuid)', 'execute'), 'service_role gets no task list RPC grant');
 select ok(not has_function_privilege('anon', 'public.get_task(uuid)', 'execute'), 'anon cannot get a task');
 select ok(not has_function_privilege('authenticated', 'public.task_snapshot(uuid)', 'execute'), 'task snapshot is internal');
 select ok(not has_function_privilege('authenticated', 'public.lock_task_write_participants(uuid,uuid[])', 'execute'), 'task lock helper is internal');

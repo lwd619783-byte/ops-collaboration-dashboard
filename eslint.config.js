@@ -10,6 +10,7 @@ export default tseslint.config(
       'dist',
       'coverage',
       'node_modules',
+      'node_modules_*',
       '*.tmp',
       'supabase/.temp',
       'supabase/.branches',

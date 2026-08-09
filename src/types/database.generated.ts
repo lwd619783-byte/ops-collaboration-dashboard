@@ -335,6 +335,187 @@ export type Database = {
           },
         ]
       }
+      task_collaborators: {
+        Row: {
+          created_at: string
+          task_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          task_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          task_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_collaborators_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_collaborators_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      task_visibility_users: {
+        Row: {
+          created_at: string
+          task_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          task_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          task_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_visibility_users_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_visibility_users_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tasks: {
+        Row: {
+          acceptance_criteria: string | null
+          assignee_id: string
+          created_at: string
+          created_by: string
+          description: string | null
+          due_date: string | null
+          estimated_hours: number | null
+          id: string
+          idempotency_key: string
+          module_id: string
+          priority: Database["public"]["Enums"]["task_priority"]
+          progress: number
+          project_id: string
+          reviewer_id: string
+          start_date: string | null
+          status: Database["public"]["Enums"]["task_status"]
+          title: string
+          updated_at: string
+          updated_by: string
+          visibility: Database["public"]["Enums"]["task_visibility"]
+          workload_level: Database["public"]["Enums"]["task_workload_level"]
+        }
+        Insert: {
+          acceptance_criteria?: string | null
+          assignee_id: string
+          created_at?: string
+          created_by: string
+          description?: string | null
+          due_date?: string | null
+          estimated_hours?: number | null
+          id?: string
+          idempotency_key: string
+          module_id: string
+          priority?: Database["public"]["Enums"]["task_priority"]
+          progress?: number
+          project_id: string
+          reviewer_id: string
+          start_date?: string | null
+          status?: Database["public"]["Enums"]["task_status"]
+          title: string
+          updated_at?: string
+          updated_by: string
+          visibility?: Database["public"]["Enums"]["task_visibility"]
+          workload_level?: Database["public"]["Enums"]["task_workload_level"]
+        }
+        Update: {
+          acceptance_criteria?: string | null
+          assignee_id?: string
+          created_at?: string
+          created_by?: string
+          description?: string | null
+          due_date?: string | null
+          estimated_hours?: number | null
+          id?: string
+          idempotency_key?: string
+          module_id?: string
+          priority?: Database["public"]["Enums"]["task_priority"]
+          progress?: number
+          project_id?: string
+          reviewer_id?: string
+          start_date?: string | null
+          status?: Database["public"]["Enums"]["task_status"]
+          title?: string
+          updated_at?: string
+          updated_by?: string
+          visibility?: Database["public"]["Enums"]["task_visibility"]
+          workload_level?: Database["public"]["Enums"]["task_workload_level"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tasks_assignee_id_fkey"
+            columns: ["assignee_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_module_project_fkey"
+            columns: ["module_id", "project_id"]
+            isOneToOne: false
+            referencedRelation: "project_modules"
+            referencedColumns: ["id", "project_id"]
+          },
+          {
+            foreignKeyName: "tasks_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_reviewer_id_fkey"
+            columns: ["reviewer_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_identities: {
         Row: {
           created_at: string
@@ -658,6 +839,14 @@ export type Database = {
         Args: { p_project_id: string; p_user_id: string }
         Returns: undefined
       }
+      assert_task_candidate: {
+        Args: {
+          p_project_id: string
+          p_responsibility: boolean
+          p_user_id: string
+        }
+        Returns: undefined
+      }
       bootstrap_default_workspace: {
         Args: { p_idempotency_key: string; p_name: string; p_owner_id: string }
         Returns: string
@@ -670,6 +859,10 @@ export type Database = {
         Args: { p_project_id: string }
         Returns: boolean
       }
+      can_manage_project_tasks: {
+        Args: { p_project_id: string }
+        Returns: boolean
+      }
       can_manage_workspace_members: {
         Args: { p_workspace_id: string }
         Returns: boolean
@@ -679,6 +872,7 @@ export type Database = {
         Returns: boolean
       }
       can_read_project: { Args: { p_project_id: string }; Returns: boolean }
+      can_read_task: { Args: { p_task_id: string }; Returns: boolean }
       clear_project_lead: {
         Args: { p_expected_updated_at: string; p_project_id: string }
         Returns: {
@@ -774,6 +968,55 @@ export type Database = {
               workspace_id: string
             }[]
           }
+      create_task: {
+        Args: {
+          p_acceptance_criteria: string
+          p_assignee_id: string
+          p_collaborator_ids: string[]
+          p_description: string
+          p_due_date: string
+          p_estimated_hours: number
+          p_idempotency_key: string
+          p_module_id: string
+          p_priority: Database["public"]["Enums"]["task_priority"]
+          p_project_id: string
+          p_reviewer_id: string
+          p_start_date: string
+          p_title: string
+          p_visibility: Database["public"]["Enums"]["task_visibility"]
+          p_visibility_user_ids: string[]
+          p_workload_level: Database["public"]["Enums"]["task_workload_level"]
+        }
+        Returns: {
+          acceptance_criteria: string
+          assignee_display_name: string
+          assignee_id: string
+          collaborators: Json
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          estimated_hours: number
+          module_id: string
+          module_name: string
+          priority: Database["public"]["Enums"]["task_priority"]
+          progress: number
+          project_id: string
+          reviewer_display_name: string
+          reviewer_id: string
+          start_date: string
+          status: Database["public"]["Enums"]["task_status"]
+          task_id: string
+          title: string
+          updated_at: string
+          updated_by: string
+          visibility: Database["public"]["Enums"]["task_visibility"]
+          visibility_users: Json
+          was_existing: boolean
+          workload_level: Database["public"]["Enums"]["task_workload_level"]
+          workspace_id: string
+        }[]
+      }
       current_app_user_id: { Args: never; Returns: string }
       delete_project_module: {
         Args: { p_module_id: string; p_project_id: string }
@@ -806,6 +1049,37 @@ export type Database = {
           start_date: string
           status: Database["public"]["Enums"]["project_status"]
           updated_at: string
+          workspace_id: string
+        }[]
+      }
+      get_task: {
+        Args: { p_task_id: string }
+        Returns: {
+          acceptance_criteria: string
+          assignee_display_name: string
+          assignee_id: string
+          collaborators: Json
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          estimated_hours: number
+          module_id: string
+          module_name: string
+          priority: Database["public"]["Enums"]["task_priority"]
+          progress: number
+          project_id: string
+          reviewer_display_name: string
+          reviewer_id: string
+          start_date: string
+          status: Database["public"]["Enums"]["task_status"]
+          task_id: string
+          title: string
+          updated_at: string
+          updated_by: string
+          visibility: Database["public"]["Enums"]["task_visibility"]
+          visibility_users: Json
+          workload_level: Database["public"]["Enums"]["task_workload_level"]
           workspace_id: string
         }[]
       }
@@ -907,6 +1181,17 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      list_task_assignment_candidates: {
+        Args: { p_project_id: string }
+        Returns: {
+          app_user_id: string
+          can_hold_responsibility: boolean
+          display_name: string
+          project_id: string
+          project_role: Database["public"]["Enums"]["project_role"]
+          workspace_id: string
+        }[]
+      }
       list_workspace_members: {
         Args: { p_workspace_id: string }
         Returns: {
@@ -952,6 +1237,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      lock_task_write_participants: {
+        Args: { p_participant_ids: string[]; p_project_id: string }
+        Returns: undefined
       }
       lock_workspace_project_creator: {
         Args: { p_workspace_id: string }
@@ -1159,6 +1448,37 @@ export type Database = {
           user_id: string
         }[]
       }
+      task_snapshot: {
+        Args: { p_task_id: string }
+        Returns: {
+          acceptance_criteria: string
+          assignee_display_name: string
+          assignee_id: string
+          collaborators: Json
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          estimated_hours: number
+          module_id: string
+          module_name: string
+          priority: Database["public"]["Enums"]["task_priority"]
+          progress: number
+          project_id: string
+          reviewer_display_name: string
+          reviewer_id: string
+          start_date: string
+          status: Database["public"]["Enums"]["task_status"]
+          task_id: string
+          title: string
+          updated_at: string
+          updated_by: string
+          visibility: Database["public"]["Enums"]["task_visibility"]
+          visibility_users: Json
+          workload_level: Database["public"]["Enums"]["task_workload_level"]
+          workspace_id: string
+        }[]
+      }
       transfer_project_owner: {
         Args: {
           p_expected_updated_at: string
@@ -1214,6 +1534,66 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      update_task: {
+        Args: {
+          p_acceptance_criteria: string
+          p_assignee_id: string
+          p_collaborator_ids: string[]
+          p_description: string
+          p_due_date: string
+          p_estimated_hours: number
+          p_expected_updated_at: string
+          p_module_id: string
+          p_priority: Database["public"]["Enums"]["task_priority"]
+          p_project_id: string
+          p_reviewer_id: string
+          p_start_date: string
+          p_task_id: string
+          p_title: string
+          p_visibility: Database["public"]["Enums"]["task_visibility"]
+          p_visibility_user_ids: string[]
+          p_workload_level: Database["public"]["Enums"]["task_workload_level"]
+        }
+        Returns: {
+          acceptance_criteria: string
+          assignee_display_name: string
+          assignee_id: string
+          collaborators: Json
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          estimated_hours: number
+          module_id: string
+          module_name: string
+          priority: Database["public"]["Enums"]["task_priority"]
+          progress: number
+          project_id: string
+          reviewer_display_name: string
+          reviewer_id: string
+          start_date: string
+          status: Database["public"]["Enums"]["task_status"]
+          task_id: string
+          title: string
+          updated_at: string
+          updated_by: string
+          visibility: Database["public"]["Enums"]["task_visibility"]
+          visibility_users: Json
+          workload_level: Database["public"]["Enums"]["task_workload_level"]
+          workspace_id: string
+        }[]
+      }
+      validate_task_write_input: {
+        Args: {
+          p_assignee_id: string
+          p_collaborator_ids: string[]
+          p_project_id: string
+          p_reviewer_id: string
+          p_visibility: Database["public"]["Enums"]["task_visibility"]
+          p_visibility_user_ids: string[]
+        }
+        Returns: undefined
+      }
       workspace_invitation_ttl_seconds: { Args: never; Returns: number }
       workspace_role_for_current_user: {
         Args: { p_workspace_id: string }
@@ -1234,6 +1614,16 @@ export type Database = {
         | "completed"
         | "archived"
       project_type: "operations"
+      task_priority: "low" | "medium" | "high" | "urgent"
+      task_status:
+        | "todo"
+        | "in_progress"
+        | "blocked"
+        | "pending_review"
+        | "completed"
+        | "cancelled"
+      task_visibility: "project" | "restricted"
+      task_workload_level: "xs" | "s" | "m" | "l" | "xl"
       workspace_invitation_status:
         | "prepared"
         | "reissue_prepared"
@@ -1379,6 +1769,17 @@ export const Constants = {
       project_role: ["owner", "lead", "member", "viewer"],
       project_status: ["planning", "active", "paused", "completed", "archived"],
       project_type: ["operations"],
+      task_priority: ["low", "medium", "high", "urgent"],
+      task_status: [
+        "todo",
+        "in_progress",
+        "blocked",
+        "pending_review",
+        "completed",
+        "cancelled",
+      ],
+      task_visibility: ["project", "restricted"],
+      task_workload_level: ["xs", "s", "m", "l", "xl"],
       workspace_invitation_status: [
         "prepared",
         "reissue_prepared",

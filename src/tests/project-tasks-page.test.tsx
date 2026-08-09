@@ -352,6 +352,28 @@ describe('项目任务中心', () => {
     expect(screen.getByLabelText('当前地址')).toHaveTextContent('view=list')
   })
 
+  it('移动端列表卡片显示任务状态文字（防止 Task 3.2 验收缺口回归）', async () => {
+    const user = userEvent.setup()
+    renderTaskCenter()
+    await screen.findByText(taskA.title)
+
+    await user.click(screen.getByRole('button', { name: '列表视图' }))
+
+    const mobileList = document.querySelector('.task-list-mobile')
+    expect(mobileList).not.toBeNull()
+
+    const container = within(mobileList as HTMLElement)
+    // taskA.status = todo -> 待开始
+    expect(container.getByText('状态：待开始')).toBeInTheDocument()
+    // taskB.status = completed -> 已完成
+    expect(container.getByText('状态：已完成')).toBeInTheDocument()
+    // 桌面表格依旧存在且无状态 mutation（只读呈现）
+    expect(
+      screen.getByRole('table', { name: '项目任务列表，共 3 项' }),
+    ).toBeInTheDocument()
+    expect(container.getAllByText(/^状态：/u)).toHaveLength(3)
+  })
+
   it('模块、负责人、协作人、状态、优先级和逾期筛选共享语义且可清空', async () => {
     const user = userEvent.setup()
     renderTaskCenter()

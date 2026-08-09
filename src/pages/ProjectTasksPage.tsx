@@ -98,6 +98,9 @@ function TaskCard({
           负责人：{task.assignee_display_name}
         </span>
         <span className="task-summary-meta">
+          状态：{taskStatusLabels[task.status]}
+        </span>
+        <span className="task-summary-meta">
           优先级：{taskPriorityLabels[task.priority]}
         </span>
         <span className="task-summary-meta">

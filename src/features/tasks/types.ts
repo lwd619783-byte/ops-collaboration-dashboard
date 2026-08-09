@@ -33,6 +33,24 @@ export type Task = Omit<
   visibility_users: TaskPerson[]
 }
 
+type GeneratedTaskSummary =
+  Database['public']['Functions']['list_project_tasks']['Returns'][number]
+
+export type TaskSummary = Omit<
+  GeneratedTaskSummary,
+  'collaborators' | 'due_date' | 'estimated_hours' | 'start_date'
+> & {
+  collaborators: TaskPerson[]
+  due_date: string | null
+  estimated_hours: number | null
+  start_date: string | null
+}
+
+export type TaskListInput = {
+  projectId: string
+  workspaceId: string
+}
+
 export type TaskAssignmentCandidate =
   Database['public']['Functions']['list_task_assignment_candidates']['Returns'][number]
 

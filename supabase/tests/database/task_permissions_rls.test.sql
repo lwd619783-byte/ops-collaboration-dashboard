@@ -27,8 +27,10 @@ insert into public.app_users (id,status,disabled_at) values
   ('d1000000-0000-4000-8000-000000000007','active',null),
   ('d1000000-0000-4000-8000-000000000008','active',null),
   ('d1000000-0000-4000-8000-000000000009','active',null),
-  ('d1000000-0000-4000-8000-000000000010','suspended',now()),
-  ('d1000000-0000-4000-8000-000000000011','active',null);
+  ('d1000000-0000-4000-8000-000000000010','active',null),
+  ('d1000000-0000-4000-8000-000000000011','active',null),
+  ('d1000000-0000-4000-8000-000000000012','active',null),
+  ('d1000000-0000-4000-8000-000000000013','active',null);
 insert into public.profiles (user_id,display_name) values
   ('d1000000-0000-4000-8000-000000000001','Fictional task owner'),
   ('d1000000-0000-4000-8000-000000000002','Fictional task lead'),
@@ -40,7 +42,9 @@ insert into public.profiles (user_id,display_name) values
   ('d1000000-0000-4000-8000-000000000008','Fictional task removable member'),
   ('d1000000-0000-4000-8000-000000000009','Fictional other project owner'),
   ('d1000000-0000-4000-8000-000000000010','Fictional suspended user'),
-  ('d1000000-0000-4000-8000-000000000011','Fictional workspace admin');
+  ('d1000000-0000-4000-8000-000000000011','Fictional workspace admin'),
+  ('d1000000-0000-4000-8000-000000000012','Fictional inactive workspace member'),
+  ('d1000000-0000-4000-8000-000000000013','Fictional restricted reviewer');
 insert into public.user_identities (user_id,provider,provider_tenant,provider_subject,verified_at) values
   ('d1000000-0000-4000-8000-000000000001','supabase_auth','https://task-fixture.invalid','task-owner',now()),
   ('d1000000-0000-4000-8000-000000000002','supabase_auth','https://task-fixture.invalid','task-lead',now()),
@@ -52,7 +56,9 @@ insert into public.user_identities (user_id,provider,provider_tenant,provider_su
   ('d1000000-0000-4000-8000-000000000008','supabase_auth','https://task-fixture.invalid','task-removable',now()),
   ('d1000000-0000-4000-8000-000000000009','supabase_auth','https://task-fixture.invalid','task-other-owner',now()),
   ('d1000000-0000-4000-8000-000000000010','supabase_auth','https://task-fixture.invalid','task-suspended',now()),
-  ('d1000000-0000-4000-8000-000000000011','supabase_auth','https://task-fixture.invalid','task-admin',now());
+  ('d1000000-0000-4000-8000-000000000011','supabase_auth','https://task-fixture.invalid','task-admin',now()),
+  ('d1000000-0000-4000-8000-000000000012','supabase_auth','https://task-fixture.invalid','task-inactive-workspace',now()),
+  ('d1000000-0000-4000-8000-000000000013','supabase_auth','https://task-fixture.invalid','task-reviewer',now());
 
 insert into public.workspaces (id,name,owner_id,created_by) values
   ('d2000000-0000-4000-8000-000000000001','Fictional task workspace','d1000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000001'),
@@ -67,6 +73,9 @@ insert into public.workspace_members (workspace_id,user_id,role,status,invited_b
   ('d2000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000007','member','active','d1000000-0000-4000-8000-000000000001',now()),
   ('d2000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000008','member','active','d1000000-0000-4000-8000-000000000001',now()),
   ('d2000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000011','admin','active','d1000000-0000-4000-8000-000000000001',now()),
+  ('d2000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000010','member','active','d1000000-0000-4000-8000-000000000001',now()),
+  ('d2000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000012','member','active','d1000000-0000-4000-8000-000000000001',now()),
+  ('d2000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000013','member','active','d1000000-0000-4000-8000-000000000001',now()),
   ('d2000000-0000-4000-8000-000000000002','d1000000-0000-4000-8000-000000000009','owner','active','d1000000-0000-4000-8000-000000000009',now());
 
 insert into public.projects (id,workspace_id,name,status,owner_id,lead_id,created_by,idempotency_key,archived_at) values
@@ -82,8 +91,18 @@ insert into public.project_members (project_id,user_id,role) values
   ('d3000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000006','member'),
   ('d3000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000007','member'),
   ('d3000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000008','member'),
+  ('d3000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000010','member'),
+  ('d3000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000012','member'),
+  ('d3000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000013','member'),
   ('d3000000-0000-4000-8000-000000000002','d1000000-0000-4000-8000-000000000009','owner'),
   ('d3000000-0000-4000-8000-000000000003','d1000000-0000-4000-8000-000000000001','owner');
+update public.workspace_members
+set status='suspended', disabled_at=now()
+where workspace_id='d2000000-0000-4000-8000-000000000001'
+  and user_id='d1000000-0000-4000-8000-000000000012';
+update public.app_users
+set status='suspended', disabled_at=now()
+where id='d1000000-0000-4000-8000-000000000010';
 insert into public.project_modules (id,project_id,name,sort_position,created_by,updated_by,deleted_at,deleted_by) values
   ('d5000000-0000-4000-8000-000000000001','d3000000-0000-4000-8000-000000000001','Task module',0,'d1000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000001',null,null),
   ('d5000000-0000-4000-8000-000000000002','d3000000-0000-4000-8000-000000000001','Empty module',1,'d1000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000001',null,null),
@@ -91,8 +110,17 @@ insert into public.project_modules (id,project_id,name,sort_position,created_by,
   ('d5000000-0000-4000-8000-000000000004','d3000000-0000-4000-8000-000000000002','Other module',0,'d1000000-0000-4000-8000-000000000009','d1000000-0000-4000-8000-000000000009',null,null),
   ('d5000000-0000-4000-8000-000000000005','d3000000-0000-4000-8000-000000000003','Archived module',0,'d1000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000001',null,null);
 
+insert into public.tasks (
+  id,project_id,module_id,title,assignee_id,reviewer_id,created_by,updated_by,idempotency_key
+) values (
+  'd6000000-0000-4000-8000-000000000099','d3000000-0000-4000-8000-000000000002','d5000000-0000-4000-8000-000000000004','Fictional cross-project task',
+  'd1000000-0000-4000-8000-000000000009','d1000000-0000-4000-8000-000000000009',
+  'd1000000-0000-4000-8000-000000000009','d1000000-0000-4000-8000-000000000009','d6000000-0000-4000-8000-000000000099'
+);
+
 set local role anon;
 select is(pg_temp.sqlstate_of($sql$ select * from public.get_task(gen_random_uuid()) $sql$), '42501', 'anon cannot execute task reads');
+select is(pg_temp.sqlstate_of($sql$ select * from public.list_project_tasks(gen_random_uuid()) $sql$), '42501', 'anon cannot execute task list projection');
 select is(pg_temp.sqlstate_of($sql$ select title from public.tasks $sql$), '42501', 'anon cannot read task tables');
 select is(pg_temp.sqlstate_of($sql$ select * from public.create_task(null,null,null,null,null,null,array[]::uuid[],null,'medium',null,null,null,'m','project',array[]::uuid[],gen_random_uuid()) $sql$), '42501', 'anon cannot execute task writes');
 reset role;
@@ -171,18 +199,31 @@ select pg_catalog.set_config('test.restricted_task_id', (
     array['d1000000-0000-4000-8000-000000000005'::uuid],'d6000000-0000-4000-8000-000000000002'
   )
 ), true);
+select pg_catalog.set_config('test.reviewer_task_id', (
+  select task_id::text from public.create_task(
+    'd3000000-0000-4000-8000-000000000001','d5000000-0000-4000-8000-000000000001','Restricted reviewer task',null,null,
+    'd1000000-0000-4000-8000-000000000003',array[]::uuid[],
+    'd1000000-0000-4000-8000-000000000013','medium',null,null,null,'s','restricted',
+    array[]::uuid[],'d6000000-0000-4000-8000-000000000003'
+  )
+), true);
 select is((select jsonb_array_length(visibility_users) from public.get_task(current_setting('test.restricted_task_id')::uuid)), 1, 'restricted create stores explicit visibility set');
+select is((select count(*) from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') where task_id=current_setting('test.restricted_task_id')::uuid), 1::bigint, 'project owner list includes authorized restricted task');
+select is((select count(*) from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') where project_id <> 'd3000000-0000-4000-8000-000000000001' or workspace_id <> 'd2000000-0000-4000-8000-000000000001'), 0::bigint, 'list projection stays inside project and workspace scope');
+select is((select count(*) from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') where task_id='d6000000-0000-4000-8000-000000000099'), 0::bigint, 'cross-project task never appears');
+select ok((select not (to_jsonb(summary) ? 'description') and not (to_jsonb(summary) ? 'acceptance_criteria') and not (to_jsonb(summary) ? 'idempotency_key') and not (to_jsonb(summary) ? 'visibility_users') and not (to_jsonb(summary) ? 'created_by') from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') as summary limit 1), 'list projection excludes task detail and internal metadata');
 select is(pg_temp.sqlstate_of($sql$ select * from public.delete_project_module('d3000000-0000-4000-8000-000000000001','d5000000-0000-4000-8000-000000000001') $sql$), '55000', 'module containing tasks cannot be deleted');
 select is((select count(*) from public.delete_project_module('d3000000-0000-4000-8000-000000000001','d5000000-0000-4000-8000-000000000002')), 1::bigint, 'empty module still deletes and compacts normally');
 select is(pg_temp.sqlstate_of($sql$ select * from public.remove_project_member('d3000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000004') $sql$), '55000', 'assigned collaborator cannot be removed from active project');
 select is(pg_temp.sqlstate_of($sql$ select * from public.set_workspace_member_status('d2000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000003','suspended') $sql$), '55000', 'active assignee cannot be suspended');
-select is((select count(*) from public.list_task_assignment_candidates('d3000000-0000-4000-8000-000000000001') where can_hold_responsibility), 7::bigint, 'candidate projection marks non-viewer active members as responsibility-capable');
+select is((select count(*) from public.list_task_assignment_candidates('d3000000-0000-4000-8000-000000000001') where can_hold_responsibility), 8::bigint, 'candidate projection marks non-viewer active members as responsibility-capable');
 select is((select can_hold_responsibility from public.list_task_assignment_candidates('d3000000-0000-4000-8000-000000000001') where app_user_id='d1000000-0000-4000-8000-000000000005'), false, 'viewer candidate is visibility-only');
 reset role;
 
 set local "request.jwt.claims" = '{"sub":"task-lead","iss":"https://task-fixture.invalid","role":"authenticated"}';
 set local role authenticated;
 select is((select count(*) from public.get_task(current_setting('test.restricted_task_id')::uuid)), 1::bigint, 'project lead can read restricted task');
+select is((select count(*) from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') where task_id=current_setting('test.restricted_task_id')::uuid), 1::bigint, 'project lead list includes restricted task');
 select lives_ok($sql$
   select * from public.create_task('d3000000-0000-4000-8000-000000000001','d5000000-0000-4000-8000-000000000001','Lead task',null,null,'d1000000-0000-4000-8000-000000000003',array[]::uuid[],'d1000000-0000-4000-8000-000000000002','low',null,null,null,'xs','project',array[]::uuid[],gen_random_uuid())
 $sql$, 'project lead can create tasks');
@@ -193,11 +234,13 @@ set local role authenticated;
 select lives_ok($sql$
   select * from public.create_task('d3000000-0000-4000-8000-000000000001','d5000000-0000-4000-8000-000000000001','Admin task',null,null,'d1000000-0000-4000-8000-000000000003',array[]::uuid[],'d1000000-0000-4000-8000-000000000002','low',null,null,null,'xs','project',array[]::uuid[],gen_random_uuid())
 $sql$, 'workspace admin can create tasks without a project-member relation');
+select is((select count(*) from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') where task_id=current_setting('test.restricted_task_id')::uuid), 1::bigint, 'workspace admin list includes restricted task');
 reset role;
 
 set local "request.jwt.claims" = '{"sub":"task-assignee","iss":"https://task-fixture.invalid","role":"authenticated"}';
 set local role authenticated;
 select is((select count(*) from public.get_task(current_setting('test.restricted_task_id')::uuid)), 1::bigint, 'restricted assignee can read');
+select is((select count(*) from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') where task_id=current_setting('test.restricted_task_id')::uuid), 1::bigint, 'restricted assignee list includes task');
 select is(pg_temp.sqlstate_of(format($sql$
   select * from public.update_task('d3000000-0000-4000-8000-000000000001',%L::uuid,'d5000000-0000-4000-8000-000000000001','Member rewrite',null,null,'d1000000-0000-4000-8000-000000000003',array[]::uuid[],'d1000000-0000-4000-8000-000000000002','medium',null,null,null,'m','project',array[]::uuid[],(select updated_at from public.get_task(%L::uuid)))
 $sql$, current_setting('test.task_id'), current_setting('test.task_id'))), '42501', 'ordinary member cannot edit or reassign task');
@@ -206,11 +249,13 @@ reset role;
 set local "request.jwt.claims" = '{"sub":"task-collaborator","iss":"https://task-fixture.invalid","role":"authenticated"}';
 set local role authenticated;
 select is((select count(*) from public.get_task(current_setting('test.restricted_task_id')::uuid)), 1::bigint, 'restricted collaborator can read');
+select is((select count(*) from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') where task_id=current_setting('test.restricted_task_id')::uuid), 1::bigint, 'restricted collaborator list includes task');
 reset role;
 
 set local "request.jwt.claims" = '{"sub":"task-viewer","iss":"https://task-fixture.invalid","role":"authenticated"}';
 set local role authenticated;
 select is((select count(*) from public.get_task(current_setting('test.restricted_task_id')::uuid)), 1::bigint, 'explicit viewer can read restricted task');
+select is((select count(*) from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') where task_id=current_setting('test.restricted_task_id')::uuid), 1::bigint, 'explicit visibility viewer list includes task');
 select is(pg_temp.sqlstate_of($sql$
   select * from public.create_task('d3000000-0000-4000-8000-000000000001','d5000000-0000-4000-8000-000000000001','Viewer write',null,null,'d1000000-0000-4000-8000-000000000003',array[]::uuid[],'d1000000-0000-4000-8000-000000000002','low',null,null,null,'xs','project',array[]::uuid[],gen_random_uuid())
 $sql$), '42501', 'viewer cannot create tasks');
@@ -219,10 +264,18 @@ reset role;
 set local "request.jwt.claims" = '{"sub":"task-ordinary","iss":"https://task-fixture.invalid","role":"authenticated"}';
 set local role authenticated;
 select is((select count(*) from public.get_task(current_setting('test.restricted_task_id')::uuid)), 0::bigint, 'ordinary member cannot discover restricted task');
+select is((select count(*) from public.list_project_tasks('d3000000-0000-4000-8000-000000000001')), 3::bigint, 'ordinary member list count contains only three project-visible tasks');
+select is((select count(*) from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') where status='todo'), 3::bigint, 'ordinary member status count is based only on authorized rows');
+select is((select count(*) from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') where visibility='restricted'), 0::bigint, 'ordinary member list reveals no unrelated restricted task');
 select is((select count(title) from public.tasks where id=current_setting('test.restricted_task_id')::uuid), 0::bigint, 'task RLS hides restricted task row');
 select is((select count(user_id) from public.task_collaborators where task_id=current_setting('test.restricted_task_id')::uuid), 0::bigint, 'relation RLS hides restricted collaborators');
 select is((select count(user_id) from public.task_visibility_users where task_id=current_setting('test.restricted_task_id')::uuid), 0::bigint, 'relation RLS hides restricted visibility list');
 select is((select count(*) from public.get_task(current_setting('test.task_id')::uuid)), 1::bigint, 'ordinary member reads project-visible task');
+reset role;
+
+set local "request.jwt.claims" = '{"sub":"task-reviewer","iss":"https://task-fixture.invalid","role":"authenticated"}';
+set local role authenticated;
+select is((select count(*) from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') where task_id=current_setting('test.reviewer_task_id')::uuid), 1::bigint, 'restricted reviewer list includes task');
 reset role;
 
 set local "request.jwt.claims" = '{"sub":"task-owner","iss":"https://task-fixture.invalid","role":"authenticated"}';
@@ -236,11 +289,13 @@ reset role;
 set local "request.jwt.claims" = '{"sub":"task-removable","iss":"https://task-fixture.invalid","role":"authenticated"}';
 set local role authenticated;
 select is((select count(*) from public.get_task(current_setting('test.task_id')::uuid)), 0::bigint, 'removed project member immediately loses task reads');
+select is(pg_temp.sqlstate_of($sql$ select * from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') $sql$), '42501', 'non-project user receives unified list denial');
 reset role;
 
 set local "request.jwt.claims" = '{"sub":"task-other-owner","iss":"https://task-fixture.invalid","role":"authenticated"}';
 set local role authenticated;
 select is((select count(*) from public.get_task(current_setting('test.task_id')::uuid)), 0::bigint, 'cross-project user cannot discover task');
+select is(pg_temp.sqlstate_of($sql$ select * from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') $sql$), '42501', 'cross-project user cannot probe project task counts');
 select is(pg_temp.sqlstate_of($sql$
   select * from public.create_task('d3000000-0000-4000-8000-000000000001','d5000000-0000-4000-8000-000000000001','Cross project write',null,null,'d1000000-0000-4000-8000-000000000003',array[]::uuid[],'d1000000-0000-4000-8000-000000000002','low',null,null,null,'xs','project',array[]::uuid[],gen_random_uuid())
 $sql$), '42501', 'cross-project user cannot create task');
@@ -249,6 +304,12 @@ reset role;
 set local "request.jwt.claims" = '{"sub":"task-suspended","iss":"https://task-fixture.invalid","role":"authenticated"}';
 set local role authenticated;
 select is((select count(*) from public.get_task(current_setting('test.task_id')::uuid)), 0::bigint, 'suspended app user receives no task row');
+select is(pg_temp.sqlstate_of($sql$ select * from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') $sql$), '42501', 'suspended app user cannot list project tasks');
+reset role;
+
+set local "request.jwt.claims" = '{"sub":"task-inactive-workspace","iss":"https://task-fixture.invalid","role":"authenticated"}';
+set local role authenticated;
+select is(pg_temp.sqlstate_of($sql$ select * from public.list_project_tasks('d3000000-0000-4000-8000-000000000001') $sql$), '42501', 'inactive workspace member cannot list project tasks');
 reset role;
 
 select * from finish();

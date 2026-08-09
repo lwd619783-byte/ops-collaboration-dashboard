@@ -1155,6 +1155,29 @@ export type Database = {
           updated_by: string
         }[]
       }
+      list_project_tasks: {
+        Args: { p_project_id: string }
+        Returns: {
+          assignee_display_name: string
+          assignee_id: string
+          collaborators: Json
+          due_date: string
+          estimated_hours: number
+          module_id: string
+          module_name: string
+          priority: Database["public"]["Enums"]["task_priority"]
+          progress: number
+          project_id: string
+          start_date: string
+          status: Database["public"]["Enums"]["task_status"]
+          task_id: string
+          title: string
+          updated_at: string
+          visibility: Database["public"]["Enums"]["task_visibility"]
+          workload_level: Database["public"]["Enums"]["task_workload_level"]
+          workspace_id: string
+        }[]
+      }
       list_projects: {
         Args: {
           p_archived_only?: boolean

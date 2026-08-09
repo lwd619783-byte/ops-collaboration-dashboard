@@ -1,16 +1,16 @@
 # 运维协同看板
 
-> Task 0.2 设计系统和响应式页面骨架已经封板。Task 1.1 建立可复现的本地 Supabase migration、类型生成、数据库测试与系统健康页。Task 1.2 落地统一系统用户与多身份解析边界。Task 1.3 落地网页登录、密码恢复、个人资料与受保护路由。Task 1.4 新增工作空间、成员角色和状态、默认工作空间受控初始化、服务端邀请、首次激活及成员管理页。Task 2.1 新增项目 CRUD、受控可见性和不可逆归档；Task 2.2 新增 owner/lead/member/viewer 强约束、可信成员 RPC、跨表 TOCTOU 锁边界、归档项目不阻塞人员停用的职责区分、当前/历史成员计数与真实并发验证；Task 2.3 功能分支新增有序项目模块、可选运维预设、受控改名 / 排序 / 删除、项目创建锁后重新鉴权及真实锁竞争验证。业务身份仍只通过 `current_app_user_id()` 解析，浏览器不持有高权限凭据。任务 / 进展 / 验收 / 提醒仍未实现。正式完成仍以独立远端审计、PR CI 和 Squash 合并为准。
+> Task 0.2 设计系统和响应式页面骨架已经封板。Task 1.1 建立可复现的本地 Supabase migration、类型生成、数据库测试与系统健康页。Task 1.2 落地统一系统用户与多身份解析边界。Task 1.3 落地网页登录、密码恢复、个人资料与受保护路由。Task 1.4 新增工作空间、成员角色和状态、默认工作空间受控初始化、服务端邀请、首次激活及成员管理页。Task 2.1 新增项目 CRUD、受控可见性和不可逆归档；Task 2.2 新增 owner/lead/member/viewer 强约束、可信成员 RPC、跨表 TOCTOU 锁边界、归档项目不阻塞人员停用的职责区分、当前/历史成员计数与真实并发验证；Task 2.3 新增有序项目模块、可选运维预设、受控改名 / 排序 / 删除、项目创建锁后重新鉴权及真实锁竞争验证。Task 3.1 功能分支新增项目任务数据模型、创建 / 详情 / 编辑 V1、任务可见性、幂等创建、乐观并发和真实任务锁竞争验证。业务身份仍只通过 `current_app_user_id()` 解析，浏览器不持有高权限凭据。任务看板、状态流转、每日进展、验收和提醒仍未实现。正式完成仍以独立远端审计、PR CI 和 Squash 合并为准。
 
 一个面向互联网部署的轻量化运维协同看板前端工程。
 
 ## 当前状态
 
-Task 0.1 至 Task 1.4 已建立前端、数据库、统一身份、网页登录与工作空间权限基线。Task 2.1 增加项目 CRUD、关系可见性、乐观并发和不可逆归档；Task 2.2 演进为唯一 owner、可选唯一 lead、普通 member/viewer、延迟一致性约束、默认拒绝 RLS 与锁内可信 RPC；Task 2.3 功能分支增加平级有序模块、原子预设初始化与移动端可访问管理界面。详见 [工作空间与成员权限](docs/workspace-permissions.md)、[项目 CRUD、可见性与归档 V1](docs/project-crud-and-visibility.md)、[项目成员与牵头人 V1](docs/project-membership-and-lead.md) 和 [项目工作模块 V1](docs/project-modules.md)。正式完成仍以远端独立审计和 PR 合并为准。
+Task 0.1 至 Task 1.4 已建立前端、数据库、统一身份、网页登录与工作空间权限基线。Task 2.1 增加项目 CRUD、关系可见性、乐观并发和不可逆归档；Task 2.2 演进为唯一 owner、可选唯一 lead、普通 member/viewer、延迟一致性约束、默认拒绝 RLS 与锁内可信 RPC；Task 2.3 增加平级有序模块、原子预设初始化与移动端可访问管理界面；Task 3.1 功能分支增加只属于项目的共享任务、受控创建 / 编辑与安全 deep link。详见 [工作空间与成员权限](docs/workspace-permissions.md)、[项目 CRUD、可见性与归档 V1](docs/project-crud-and-visibility.md)、[项目成员与牵头人 V1](docs/project-membership-and-lead.md)、[项目工作模块 V1](docs/project-modules.md) 和 [任务数据模型与创建编辑 V1](docs/task-data-model-and-editing.md)。正式完成仍以远端独立审计和 PR 合并为准。
 
 ## 第一阶段边界
 
-当前数据库包含健康检查、统一身份、工作空间权限以及项目、成员和有序模块模型。前端已提供邮箱密码登录、密码恢复、个人资料、工作空间门禁、成员目录、邀请激活，以及项目列表 / 创建 / 详情 / 编辑 / 归档 / 成员管理 / 工作模块闭环。当前仍不含任务 / 进展 / 验收 / 提醒、归档恢复或物理删除，也不扩大工作空间所有权、邀请、账号绑定、外部平台、生产 SMTP 或远端部署边界。
+当前数据库包含健康检查、统一身份、工作空间权限以及项目、成员、有序模块和项目任务模型。前端已提供邮箱密码登录、密码恢复、个人资料、工作空间门禁、成员目录、邀请激活，项目列表 / 创建 / 详情 / 编辑 / 归档 / 成员管理 / 工作模块闭环，以及 Task 3.1 的任务创建 / 详情 / 核心元数据编辑。当前仍不含任务列表 / 看板、正式状态机、每日进展、验收闭环、提醒、归档恢复或物理删除，也不扩大工作空间所有权、邀请、账号绑定、外部平台、生产 SMTP 或远端部署边界。
 
 ## 技术栈
 
@@ -47,6 +47,7 @@ npm run db:start
 npm run db:verify
 npm run db:membership:verify
 npm run db:modules:verify
+npm run db:tasks:verify
 ```
 
 完整流程、环境变量边界与 migration 规范见 [Supabase 本地开发](docs/supabase-development.md)。
@@ -65,7 +66,7 @@ npm run build
 npm run check
 ```
 
-`npm run check` 按格式、Lint、类型、测试、生产构建的顺序执行。`npm run security:audit` 单独阻断高危和严重依赖漏洞，CI 会在项目检查前运行该命令。Edge Function 另有明确的两个测试文件（`npm run test:edge` 运行 `handler.test.ts` 与 `entry.test.ts`）与真实入口类型检查（`deno check supabase/functions/invite-workspace-member/index.ts`，CI 使用固定版本 Deno 2.2.12）。真实本地 Auth 重发集成验证由 `npm run db:reissue:verify` 执行；真实项目成员并发验证由 `npm run db:membership:verify` 执行；项目模块并发验证由 `npm run db:modules:verify` 执行。两类项目并发脚本都已纳入 `db:verify`，且只使用本地 Supabase 与随机虚构夹具。
+`npm run check` 按格式、Lint、类型、测试、生产构建的顺序执行。`npm run security:audit` 单独阻断高危和严重依赖漏洞，CI 会在项目检查前运行该命令。Edge Function 另有明确的两个测试文件（`npm run test:edge` 运行 `handler.test.ts` 与 `entry.test.ts`）与真实入口类型检查（`deno check supabase/functions/invite-workspace-member/index.ts`，CI 使用固定版本 Deno 2.2.12）。真实本地 Auth 重发集成验证由 `npm run db:reissue:verify` 执行；真实项目成员、项目模块和项目任务并发验证分别由 `npm run db:membership:verify`、`npm run db:modules:verify` 和 `npm run db:tasks:verify` 执行。三类项目并发脚本都已纳入 `db:verify`，且只使用本地 Supabase 与随机虚构夹具。
 
 ## 环境变量
 
@@ -100,4 +101,4 @@ src/
 
 ## 当前未实现功能
 
-本仓库已实现身份、认证、工作空间成员权限 V1、项目 CRUD / 可见性 / 归档 V1、项目成员 / 牵头人 V1，以及 Task 2.3 功能分支中的项目工作模块 V1；但**尚未实现**公开注册、项目邀请 / 审批、任务 / 进展 / 验收 / 提醒、归档恢复或物理删除、工作空间所有权转移 / 删除、成员永久删除、批量项目成员操作、完整邀请撤销 / 重发界面、确认 Auth 用户跨工作空间自动加入、微信 / 小程序 / CloudBase、飞书、通用审计日志、生产 SMTP、Vercel 生产配置或远端 Supabase 部署。这些能力只能在新的、明确授权的任务中增加。
+本仓库已实现身份、认证、工作空间成员权限 V1、项目 CRUD / 可见性 / 归档 V1、项目成员 / 牵头人 V1、项目工作模块 V1，以及 Task 3.1 功能分支中的项目任务数据模型和创建 / 详情 / 编辑 V1；但**尚未实现**公开注册、项目邀请 / 审批、Task 3.2 任务列表 / 看板、Task 3.3 状态机与阻塞、Task 3.4 每日进展、Task 3.5 验收闭环、通知 / 提醒、私人任务 / 个人空间、归档恢复或物理删除、工作空间所有权转移 / 删除、成员永久删除、批量项目成员操作、完整邀请撤销 / 重发界面、确认 Auth 用户跨工作空间自动加入、微信 / 小程序 / CloudBase、飞书、通用审计日志、生产 SMTP、Vercel 生产配置或远端 Supabase 部署。这些能力只能在新的、明确授权的任务中增加。

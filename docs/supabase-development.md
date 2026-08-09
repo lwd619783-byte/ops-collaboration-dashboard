@@ -4,7 +4,7 @@
 
 本项目采用 local-first migration：数据库结构先以版本化 SQL migration 在本地从空库重建、测试和生成类型，再进入远端审计与后续部署流程。这样可以让结构变更可复现、可审阅，并让前端使用与 migration 同源的 TypeScript 类型。
 
-Task 2.1 在既有统一身份与工作空间权限边界上增加项目 CRUD、关系可见性、乐观并发与不可逆归档。Task 2.2 增加项目 owner/lead 一致性、成员可信 RPC、完整权限矩阵和真实多连接并发验证。Task 2.3 功能分支增加平级有序模块、可选运维预设、受控软删除和模块锁竞争验证。数据模型、最小授权和页面边界见 [项目 CRUD、可见性与归档 V1](project-crud-and-visibility.md)、[项目成员与牵头人 V1](project-membership-and-lead.md) 与 [项目工作模块 V1](project-modules.md)。
+Task 2.1 在既有统一身份与工作空间权限边界上增加项目 CRUD、关系可见性、乐观并发与不可逆归档。Task 2.2 增加项目 owner/lead 一致性、成员可信 RPC、完整权限矩阵和真实多连接并发验证。Task 2.3 增加平级有序模块、可选运维预设、受控软删除和模块锁竞争验证。Task 3.1 功能分支增加项目任务主表、人员关系、指定可见关系、受控创建 / 编辑 RPC 和任务锁竞争验证。数据模型、最小授权和页面边界见 [项目 CRUD、可见性与归档 V1](project-crud-and-visibility.md)、[项目成员与牵头人 V1](project-membership-and-lead.md)、[项目工作模块 V1](project-modules.md) 与 [任务数据模型与创建编辑 V1](task-data-model-and-editing.md)。
 
 Task 1.1 建立基础设施与健康检查，Task 1.2 建立统一内部身份，Task 1.3 启用本地 Auth 与网页登录，Task 1.4 增加工作空间成员权限和邀请激活闭环。本地配置启用数据库、Data API、Auth、Edge Runtime 与 Inbucket 邮件捕获；Studio、Realtime、Storage 和 Analytics 仍保持关闭。所有工作空间授权仍以 `current_app_user_id()` 解析出的 `app_users.id` 为边界。Task 1.4 审计修复新增 `20260802110000_workspace_audit_hardening.sql`：数据库强制唯一 owner（部分唯一索引 + 语句级约束触发器）、服务端邀请 TTL（`workspace_invitation_ttl_seconds()`，与 Auth OTP 对齐）、`prepare_workspace_invitation()` 移除浏览器可传入的过期参数并原子关闭过期开放邀请，以及成员目录对缺失 profile 的安全 LEFT JOIN 回退。第二轮修复新增 `20260803120000_workspace_invitation_reissue_status.sql` 与 `20260803120100_workspace_invitation_reissue.sql`：`reissue_prepared` 邀请状态与 `reissue_of_invitation_id` 关联、`prepare_workspace_invitation()` 返回 `operation_kind`（`new_auth_user_invite` / `existing_invitee_reissue`）、服务专用 `finalize_workspace_invitation_reissue()`（已在第四轮移除）、锁后 `clock_timestamp()` 时间语义，以及成员目录 `pending_invitation` 标记。第三轮修复新增 `20260803130000_workspace_invitation_reissue_lineage.sql`：failed reissue 的 lineage 保持（`existing_invitee_reissue` 永不退回普通 `prepared`，`temporary_failure` / `auth_invite_failed` 可恢复，`auth_user_conflict` 稳定冲突）。第四轮修复新增 `20260803140000_workspace_auth_invitation_confirmation.sql`：移除旧 `finalize_workspace_invitation_reissue()`，统一由 `confirm_workspace_auth_invitation_result(invitation_id, operation_kind, provider_tenant, provider_subject)` 作为 **Auth Admin 成功后的唯一数据库确认边界**——所有 operation kind 都必须经它确认后才算业务成功。第五轮修复新增 `20260803150000_stable_invitation_conflict_confirmation.sql`：`auth_user_conflict` 对同一幂等键与全新幂等键都是持久稳定冲突（空 invitee 的行同样被守卫，绝不重新创建邀请、不调用 Auth Admin、不发信），且 confirmation 的 operation kind 与持久化行结构严格绑定（NULL / 空白 / 未知 kind → `22023`，new-auth 行必须 `reissue_of_invitation_id IS NULL`，reissue 行必须带 `reissue_of_invitation_id` 与 `invitee_user_id`）。
 
@@ -32,16 +32,19 @@ npm run db:types
 npm run db:types:check
 npm run db:membership:verify
 npm run db:modules:verify
+npm run db:tasks:verify
 npm run db:verify
 ```
 
-`db:verify` 会依次重建本地数据库、执行 pgTAP、运行 Task 2.2 成员并发验证与 Task 2.3 模块并发验证、以 warning 为失败门槛运行数据库 lint，并检查已提交类型是否与本地 migration 漂移。并发脚本只创建随机虚构本地夹具，不连接远端，输出不含 DB URL、JWT 或密钥。
+`db:verify` 会依次重建本地数据库、执行 pgTAP、运行 Task 2.2 成员并发验证、Task 2.3 模块并发验证与 Task 3.1 任务并发验证、以 warning 为失败门槛运行数据库 lint，并检查已提交类型是否与本地 migration 漂移。并发脚本只创建随机虚构本地夹具，不连接远端，输出不含 DB URL、JWT 或密钥。
 
 Task 2.2 的成员写 RPC 通过内部 `public.lock_membership_participants(p_project_id, p_participant_ids)`（`SECURITY DEFINER`、固定空 `search_path`、不授予 API 角色执行权）统一消除跨表 TOCTOU：每个 RPC 先锁定 `projects` 行，再按「`app_users` 按 id → `workspace_members` 按 user_id（项目所在工作空间）」的稳定顺序锁定 actor 与参与方，最后在锁内重新校验 actor 仍为 active 工作空间成员与 active app user（否则 `42501`）。持锁至事务结束，使并发撤销 / 停用 / 转让在单一锁边界上线性化。`list_project_members` 同时返回 `active_member_count` 与 `inactive_historical_member_count` 两个窗口计数，区分当前在用与停用历史成员。
 
 具体 RPC 锁边界、锁顺序、当前 vs 归档历史职责、并发撤销线性化与计数语义见 [项目成员与牵头人 V1](project-membership-and-lead.md)。当前并发验证共 38 项：3 项 stale 读后写竞争（均显式校验第二事务被第一事务持有的项目行锁阻塞），以及 35 项真实行锁竞争（lead 任命 vs 工作空间停用、owner 转让 vs app user 停用、admin 降级 vs 普通成员写，均验证两种顺序，并用独立 observer 连接通过 `pg_blocking_pids()` 显式证明第二事务被第一事务锁阻塞，校验赛后每个项目仍恰好一个 owner、至多一个 lead）。
 
 Task 2.3 的模块写 RPC 统一调用内部 `lock_project_for_module_write(project_id)`：先锁 `projects`，再复用 Task 2.2 的 actor 身份锁，最后按模块 id 锁行并在锁内重查权限与归档状态。项目创建另由内部 `lock_workspace_project_creator(workspace_id)` 按 `workspaces → actor app_users → actor workspace_members` 加锁，再复用 `can_manage_workspace_projects()` 重新鉴权；因此 admin 在等待期间被降为 member 后以 `42501` 失败，且不会留下任何项目、成员或预设模块。模块并发脚本共 28 项断言，覆盖该项目创建撤权竞态、并发新增、并发完整重排、删除 vs 排序、等待期间 lead 降级、等待期间项目归档及跨项目 ID 隔离；每个竞争都由 observer 通过 `pg_blocking_pids()` 证明真实阻塞。完整设计与 Task 3.1 外键契约见 [项目工作模块 V1](project-modules.md)。
+
+Task 3.1 的创建 / 编辑 RPC 使用 `projects → app_users（按 id）→ workspace_members（按 user_id）→ project_members（按 user_id）→ project_modules → tasks` 的稳定锁顺序。锁建立后重新校验 actor、所有任务人员、模块、项目归档状态和任务版本；关系集合替换与主任务更新在同一事务中完成。`scripts/verify-task-concurrency.mjs` 用真实独立连接和 observer 验证 actor 撤权、负责人移出 / 停用、模块删除、项目归档、并发编辑及协作人完整集合替换。详细可见性、RLS、幂等与乐观并发契约见 [任务数据模型与创建编辑 V1](task-data-model-and-editing.md)。
 
 ## 创建和验证 migration
 

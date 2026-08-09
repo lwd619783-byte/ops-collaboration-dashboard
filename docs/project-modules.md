@@ -1,6 +1,6 @@
 # 项目工作模块 V1
 
-Task 2.3 在现有项目 CRUD、项目成员和统一 `app_user_id` 权限边界上增加平级、有序的工作模块。实现仍是 local-first migration；本轮不连接远端 Supabase，不创建任务表，也不引入拖拽、子模块或模板管理后台。功能分支实现仍须经过远端独立审计、CI、PR 和合并流程后才能视为正式封板。
+Task 2.3 在现有项目 CRUD、项目成员和统一 `app_user_id` 权限边界上增加平级、有序的工作模块。实现仍是 local-first migration；Task 3.1 功能分支已按本文件原有外键契约接入项目任务，但仍不引入拖拽、子模块或模板管理后台。功能分支实现仍须经过远端独立审计、CI、PR 和合并流程后才能视为正式封板。
 
 ## 数据模型
 
@@ -72,11 +72,11 @@ Task 2.3 在现有项目 CRUD、项目成员和统一 `app_user_id` 权限边界
 
 `scripts/verify-project-module-concurrency.mjs` 使用独立随机夹具、多个真实 PostgreSQL 连接、`lock_timeout`、`statement_timeout` 和 observer 连接。observer 通过 `pg_blocking_pids()` 证明发生实际锁等待后才释放首事务，共执行 28 项检查，覆盖：workspace admin 在项目创建等待期间被 owner 降为 member（创建以 `42501` 失败且 project / project_members / project_modules 均为 0）、并发新增、并发完整重排、删除与排序、等待期间 lead 被降级、等待期间项目归档、跨项目模块混入。脚本在 `finally` 中只清理本轮随机工作空间夹具，不输出连接串、JWT 或密钥。
 
-## 删除策略与 Task 3.1 契约
+## 删除策略与 Task 3.1 落地
 
-V1 采用受控软删除：浏览器不能直接 `DELETE`，只能调用 `delete_project_module()`；RPC 写入 `deleted_at` / `deleted_by`，随后在同一事务中压紧剩余有效位置。已删除模块不可恢复、不可更新、不可读取、不可排序，也不会长期占用有效名称或位置。本轮尚无任务表，因此所有当前模块都属于“没有任务”的模块。
+V1 采用受控软删除：浏览器不能直接 `DELETE`，只能调用 `delete_project_module()`；RPC 写入 `deleted_at` / `deleted_by`，随后在同一事务中压紧剩余有效位置。已删除模块不可恢复、不可更新、不可读取、不可排序，也不会长期占用有效名称或位置。Task 3.1 起，已被任一任务引用的有效模块会稳定返回 `project_module_not_empty`，不会写入删除标记或移动任务。
 
-Task 3.1 必须同时继承以下契约：
+Task 3.1 已实现以下契约：
 
 1. `tasks.module_id` 必须是非空、引用 `project_modules.id` 的 `ON DELETE RESTRICT` 外键；
 2. 任务创建只能选择同项目且 `deleted_at IS NULL` 的模块，并在并发边界内重新验证；
@@ -84,7 +84,7 @@ Task 3.1 必须同时继承以下契约：
 4. 任务写入与模块删除必须采用兼容锁顺序，避免“检查为空后又插入任务”的竞态；
 5. 物理清理即使未来引入，也必须继续受 `ON DELETE RESTRICT` 保护。
 
-本轮不提前创建 `tasks` 表，也不模拟任务数据。
+`tasks` 通过 `(module_id, project_id)` 复合外键证明模块与项目一致；任务创建 / 编辑和模块删除都先锁项目，再按兼容顺序锁定参与方与模块，因此并发 create task / delete module 不能产生指向软删除模块的任务。完整实现见 [任务数据模型与创建编辑 V1](task-data-model-and-editing.md)。
 
 ## 前端与服务边界
 
@@ -94,7 +94,7 @@ Task 3.1 必须同时继承以下契约：
 
 ## 本轮不包含
 
-任务表、任务创建或分派、看板、状态机、每日进展、阻塞、验收、通知、完整操作日志、任务回收站、拖拽排序、嵌套或子模块、自定义模板库、模板版本、模块复制、批量导入和批量编辑均不在本轮范围。
+Task 3.1 已提供任务数据模型和创建 / 编辑；任务列表 / 看板、正式状态机、每日进展、阻塞流程、验收闭环、通知、完整操作日志、任务回收站、拖拽排序、嵌套或子模块、自定义模板库、模板版本、模块复制、批量导入和批量编辑仍不在当前范围。
 
 ## 本地验证
 
@@ -104,6 +104,7 @@ npm run db:reset
 npm run db:test
 npm run db:modules:verify
 npm run db:membership:verify
+npm run db:tasks:verify
 npm run db:lint
 npm run db:types
 npm run db:types:check

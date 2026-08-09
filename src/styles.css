@@ -887,6 +887,130 @@ a {
   padding-top: 0.9rem;
   border-top: 1px solid #e2e8f0;
 }
+.task-editor-page h2,
+.task-detail-heading h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+}
+.task-editor-page .intro p:last-child {
+  max-width: 48rem;
+  margin-bottom: 0;
+}
+.task-form,
+.task-detail-card {
+  min-width: 0;
+  padding: 1.25rem;
+  border: 1px solid #dce3ed;
+  border-radius: 0.75rem;
+  background: #fff;
+}
+.task-form {
+  display: grid;
+  max-width: 58rem;
+  gap: 1.1rem;
+}
+.task-form-grid,
+.task-detail-grid,
+.task-detail-copy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+.task-people-field {
+  display: grid;
+  min-width: 0;
+  gap: 0.55rem;
+  margin: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.65rem;
+  padding: 1rem;
+}
+.task-people-field legend {
+  padding-inline: 0.35rem;
+  color: #334155;
+  font-weight: 700;
+}
+.task-people-field > small {
+  color: #64748b;
+}
+.task-people-field .field-error {
+  color: #b91c1c;
+}
+.task-people-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+.task-people-options label {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 0.65rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.55rem;
+  padding: 0.75rem;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.task-people-options input {
+  width: 1.1rem;
+  height: 1.1rem;
+  flex: 0 0 auto;
+  margin-top: 0.1rem;
+}
+.task-people-options span {
+  display: grid;
+  gap: 0.2rem;
+  font-weight: 700;
+}
+.task-people-options span small {
+  color: #64748b;
+  font-weight: 400;
+}
+.task-people-empty {
+  margin: 0;
+  color: #64748b;
+}
+.task-form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.task-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.task-detail-card h3 {
+  margin-top: 0;
+}
+.task-detail-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+.task-detail-grid > div {
+  min-width: 0;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+}
+.task-detail-grid dt {
+  color: #64748b;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.task-detail-grid dd {
+  margin: 0.2rem 0 0;
+  overflow-wrap: anywhere;
+}
+.task-detail-card p {
+  margin-bottom: 0;
+  color: #526075;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -997,6 +1121,15 @@ a {
   .project-future-grid,
   .project-member-list {
     grid-template-columns: 1fr;
+  }
+  .task-form-grid,
+  .task-people-options,
+  .task-detail-grid,
+  .task-detail-copy-grid {
+    grid-template-columns: 1fr;
+  }
+  .task-form-actions .button {
+    width: 100%;
   }
   .project-leadership-panel,
   .project-member-card-heading {

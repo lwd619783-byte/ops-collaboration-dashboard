@@ -1187,7 +1187,12 @@ export function TaskDetailPage() {
                   {taskStatusLabels[item.from_status]} →{' '}
                   {taskStatusLabels[item.to_status]}
                 </p>
-                {item.reason && <p>阻塞原因：{item.reason}</p>}
+                {item.action === 'block' && item.reason && (
+                  <p>阻塞原因：{item.reason}</p>
+                )}
+                {item.action === 'return_review' && item.reason && (
+                  <p>退回原因：{item.reason}</p>
+                )}
                 <DateDisplay kind="date-time" value={item.created_at} />
               </li>
             ))}
@@ -1235,7 +1240,7 @@ export function TaskDetailPage() {
         }
         confirmLabel="确认退回修改"
         confirmLoading={reviewLoading === 'return'}
-        description="退回后任务恢复为进行中并保留当前进度，负责人可继续更新进展和修改任务。"
+        description="退回后任务恢复为进行中并保留当前进度。负责人可继续更新进展；如需调整任务核心信息，由有管理权限的人员进行修改。"
         onClose={closeDialog}
         onConfirm={() => void submitReturnReview()}
         open={dialog === 'returnReview'}

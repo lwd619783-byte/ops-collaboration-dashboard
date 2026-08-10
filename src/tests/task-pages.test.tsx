@@ -2446,6 +2446,132 @@ describe('任务页面', () => {
     ).toBeInTheDocument()
     expect(screen.getByText('当前状态：待开始')).toBeInTheDocument()
   })
+
+  it('P2：状态历史对 block 与 return_review 的 reason 分别标注阻塞原因与退回原因', async () => {
+    const startTransition = {
+      transition_id: 'abababab-aaaa-4111-8111-1111111111a1',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const submitTransition = {
+      transition_id: 'abababab-aaaa-4222-8222-2222222222a2',
+      task_id: TASK_ID,
+      sequence: 2,
+      from_status: 'in_progress' as const,
+      to_status: 'pending_review' as const,
+      action: 'submit_review' as const,
+      created_at: '2026-08-10T03:00:00+00:00',
+    }
+    const returnTransition = {
+      transition_id: 'abababab-aaaa-4333-8333-3333333333a3',
+      task_id: TASK_ID,
+      sequence: 3,
+      from_status: 'pending_review' as const,
+      to_status: 'in_progress' as const,
+      action: 'return_review' as const,
+      created_at: '2026-08-10T04:00:00+00:00',
+    }
+    const blockTransition = {
+      transition_id: 'abababab-aaaa-4444-8444-4444444444a4',
+      task_id: TASK_ID,
+      sequence: 4,
+      from_status: 'in_progress' as const,
+      to_status: 'blocked' as const,
+      action: 'block' as const,
+      created_at: '2026-08-10T05:00:00+00:00',
+    }
+    const resumeTransition = {
+      transition_id: 'abababab-aaaa-4555-8555-5555555555a5',
+      task_id: TASK_ID,
+      sequence: 5,
+      from_status: 'blocked' as const,
+      to_status: 'in_progress' as const,
+      action: 'resume' as const,
+      created_at: '2026-08-10T06:00:00+00:00',
+    }
+    const update = progressItem({ progress: 40 })
+    const inProgressTask: Task = {
+      ...task,
+      status: 'in_progress',
+      progress: 40,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+      updated_at: resumeTransition.created_at,
+    }
+    const submitReview = reviewItem({
+      review_id: SUBMIT_REVIEW_ID,
+      sequence: 1,
+      status_transition_id: submitTransition.transition_id,
+      from_status: 'in_progress',
+      to_status: 'pending_review',
+      return_reason: null,
+      created_at: submitTransition.created_at,
+    })
+    const returnReview = reviewItem({
+      review_id: APPROVE_REVIEW_ID,
+      sequence: 2,
+      action: 'return',
+      status_transition_id: returnTransition.transition_id,
+      from_status: 'pending_review',
+      to_status: 'in_progress',
+      return_reason: 'Fictional return reason',
+      created_at: returnTransition.created_at,
+    })
+    const taskHistory: TaskStatusHistoryItem[] = [
+      historyItem(startTransition),
+      historyItem(submitTransition),
+      { ...historyItem(returnTransition), reason: 'Fictional return reason' },
+      historyItem(blockTransition, 'Fictional blocker'),
+      historyItem(resumeTransition),
+    ]
+    const tasks = taskValue({
+      get: vi.fn(async () => ({ ok: true as const, data: inProgressTask })),
+      listStatusHistory: vi.fn(async () => ({
+        ok: true as const,
+        data: taskHistory,
+      })),
+      listUpdates: vi.fn(async () => ({ ok: true as const, data: [update] })),
+      listReviews: vi.fn(async () => ({
+        ok: true as const,
+        data: [submitReview, returnReview],
+      })),
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    const statusSection = (
+      await screen.findByRole('heading', { name: '状态历史' })
+    ).closest('section')
+    expect(statusSection).not.toBeNull()
+
+    expect(
+      await within(statusSection as HTMLElement).findByText(
+        '阻塞原因：Fictional blocker',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      await within(statusSection as HTMLElement).findByText(
+        '退回原因：Fictional return reason',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      within(statusSection as HTMLElement).queryByText(
+        '阻塞原因：Fictional return reason',
+      ),
+    ).not.toBeInTheDocument()
+  })
 })
 
 type Deferred<T> = {

@@ -20,6 +20,8 @@ const SUBMIT_TRANSITION_ID = 'eeeeeeee-3333-4333-8333-333333333333'
 const APPROVE_TRANSITION_ID = 'eeeeeeee-4444-4444-8444-444444444444'
 const SUBMIT_REVIEW_ID = 'ffffffff-1111-4111-8111-111111111111'
 const APPROVE_REVIEW_ID = 'ffffffff-2222-4222-8222-222222222222'
+const RETURN_TRANSITION_ID = 'eeeeeeee-5555-4555-8555-555555555555'
+const RETURN_REVIEW_ID = 'ffffffff-3333-4333-8333-333333333333'
 
 const task: Task = {
   task_id: TASK_ID,
@@ -149,6 +151,46 @@ const approveReview: TaskReview = {
   return_reason: null,
   status_transition_id: APPROVE_TRANSITION_ID,
   created_at: approveHistory.created_at,
+}
+
+const returnHistory: TaskStatusHistoryItem = {
+  transition_id: RETURN_TRANSITION_ID,
+  task_id: TASK_ID,
+  sequence: 3,
+  from_status: 'pending_review',
+  to_status: 'in_progress',
+  action: 'return_review',
+  reason: 'Fictional return reason',
+  actor_id: USER_ID,
+  actor_display_name: 'Fictional user',
+  created_at: '2026-08-10T04:30:00+00:00',
+}
+
+const returnReview: TaskReview = {
+  review_id: RETURN_REVIEW_ID,
+  task_id: TASK_ID,
+  sequence: 2,
+  action: 'return',
+  actor_id: USER_ID,
+  actor_display_name: 'Fictional user',
+  from_status: 'pending_review',
+  to_status: 'in_progress',
+  return_reason: 'Fictional return reason',
+  status_transition_id: RETURN_TRANSITION_ID,
+  created_at: returnHistory.created_at,
+}
+
+const cancelHistory: TaskStatusHistoryItem = {
+  transition_id: 'eeeeeeee-6666-4666-8666-666666666666',
+  task_id: TASK_ID,
+  sequence: 4,
+  from_status: 'in_progress',
+  to_status: 'cancelled',
+  action: 'cancel',
+  reason: null,
+  actor_id: USER_ID,
+  actor_display_name: 'Fictional user',
+  created_at: '2026-08-10T05:00:00+00:00',
 }
 
 describe('task progress state consistency', () => {
@@ -361,5 +403,42 @@ describe('task progress state consistency', () => {
         [{ ...submitReview, actor_id: task.project_id }],
       ),
     ).toBe(false)
+  })
+})
+
+describe('task review consistency bidirectional closure', () => {
+  it('rejects a returned snapshot whose return review ledger is missing', () => {
+    const inProgressTask: Task = { ...task, status: 'in_progress' }
+    const reviewHistory = [...history, submitHistory, returnHistory]
+    const reviews = [submitReview]
+
+    expect(isTaskReviewConsistent(inProgressTask, reviewHistory, reviews)).toBe(
+      false,
+    )
+  })
+
+  it('does not let a later cancel hide an earlier missing return review', () => {
+    const cancelledTask: Task = { ...task, status: 'cancelled' }
+    const reviewHistory = [
+      ...history,
+      submitHistory,
+      returnHistory,
+      cancelHistory,
+    ]
+    const reviews = [submitReview]
+
+    expect(isTaskReviewConsistent(cancelledTask, reviewHistory, reviews)).toBe(
+      false,
+    )
+  })
+
+  it('accepts a complete submit and return review chain', () => {
+    const inProgressTask: Task = { ...task, status: 'in_progress' }
+    const reviewHistory = [...history, submitHistory, returnHistory]
+    const reviews = [submitReview, returnReview]
+
+    expect(isTaskReviewConsistent(inProgressTask, reviewHistory, reviews)).toBe(
+      true,
+    )
   })
 })

@@ -2,6 +2,7 @@ import type {
   Task,
   TaskProgressUpdate,
   TaskReview,
+  TaskReviewAction,
   TaskStatusHistoryItem,
 } from '@/features/tasks/types'
 import { createSafeTaskError } from '@/features/tasks/errors'
@@ -35,6 +36,21 @@ const reviewStatusActions = {
   return: 'return_review',
 } as const
 
+const reviewDomainHistoryActions = new Set<string>([
+  'submit_review',
+  'approve_review',
+  'return_review',
+])
+
+const historyActionToReviewAction: Record<
+  string,
+  TaskReviewAction | undefined
+> = {
+  submit_review: 'submit',
+  approve_review: 'approve',
+  return_review: 'return',
+}
+
 export function isTaskReviewConsistent(
   task: Task,
   history: readonly TaskStatusHistoryItem[],
@@ -58,6 +74,26 @@ export function isTaskReviewConsistent(
     })
   ) {
     return false
+  }
+
+  for (const item of history) {
+    if (!reviewDomainHistoryActions.has(item.action)) continue
+    const expectedReviewAction = historyActionToReviewAction[item.action]
+    if (!expectedReviewAction) continue
+    const matchingReviews = reviews.filter(
+      (review) =>
+        review.status_transition_id === item.transition_id &&
+        review.task_id === item.task_id &&
+        review.actor_id === item.actor_id &&
+        review.action === expectedReviewAction &&
+        review.from_status === item.from_status &&
+        review.to_status === item.to_status &&
+        review.return_reason === item.reason &&
+        review.created_at === item.created_at,
+    )
+    if (matchingReviews.length !== 1) {
+      return false
+    }
   }
 
   const validCompletion =

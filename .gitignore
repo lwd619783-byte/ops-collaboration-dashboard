@@ -12,6 +12,8 @@ coverage/
 # Supabase local state
 supabase/.temp/
 supabase/.branches/
+# Supabase next/alpha checkout state (not used by locked stable CLI 2.110.0)
+.supabase/
 
 # Vercel local state
 .vercel/

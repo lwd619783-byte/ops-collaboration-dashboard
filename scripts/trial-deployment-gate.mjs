@@ -6,7 +6,14 @@ import { pathToFileURL } from 'node:url'
 export const safeTrialTargetError =
   'Trial deployment target check failed. Review the non-secret target inputs.'
 
-const projectRefPattern = /^[a-z0-9]{20}$/u
+export const stableSupabaseCliVersion = '2.110.0'
+export const stableLinkedProjectRefRelativePath = Object.freeze([
+  'supabase',
+  '.temp',
+  'project-ref',
+])
+
+const projectRefPattern = /^[a-z]{20}$/u
 const valueFlags = new Set(['--target', '--confirm', '--project-ref'])
 
 function failTargetCheck() {
@@ -48,10 +55,23 @@ export function validateTrialTarget({
   confirmation,
   projectRef,
   linkedProjectRef,
+  supabaseProjectId,
   allowUnlinked = false,
 }) {
   if (target !== 'trial' || confirmation !== 'TRIAL') failTargetCheck()
   if (!projectRefPattern.test(projectRef ?? '')) failTargetCheck()
+
+  // Stable Supabase CLI 2.110.0 resolves linked commands in this order:
+  // SUPABASE_PROJECT_ID, then supabase/.temp/project-ref. An environment
+  // override must therefore agree with the separately confirmed Trial ref.
+  if (
+    supabaseProjectId !== undefined &&
+    supabaseProjectId !== '' &&
+    (!projectRefPattern.test(supabaseProjectId) ||
+      supabaseProjectId !== projectRef)
+  ) {
+    failTargetCheck()
+  }
 
   const normalizedLinkedProjectRef = linkedProjectRef?.trim()
   if (!normalizedLinkedProjectRef) {
@@ -76,7 +96,7 @@ export function validateTrialTarget({
 export function readLinkedProjectRef(repositoryRoot) {
   try {
     return readFileSync(
-      resolve(repositoryRoot, 'supabase', '.temp', 'project-ref'),
+      resolve(repositoryRoot, ...stableLinkedProjectRefRelativePath),
       'utf8',
     )
   } catch (error) {
@@ -92,11 +112,16 @@ export function readLinkedProjectRef(repositoryRoot) {
   }
 }
 
-export function runTrialTargetCheck(argv, repositoryRoot = process.cwd()) {
+export function runTrialTargetCheck(
+  argv,
+  repositoryRoot = process.cwd(),
+  environment = process.env,
+) {
   const parsed = parseTrialTargetArguments(argv)
   return validateTrialTarget({
     ...parsed,
     linkedProjectRef: readLinkedProjectRef(repositoryRoot),
+    supabaseProjectId: environment.SUPABASE_PROJECT_ID,
   })
 }
 

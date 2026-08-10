@@ -4,6 +4,8 @@ import { resolve } from 'node:path'
 import process from 'node:process'
 import {
   safeTrialTargetError,
+  stableLinkedProjectRefRelativePath,
+  stableSupabaseCliVersion,
   validateTrialTarget,
 } from './trial-deployment-gate.mjs'
 
@@ -56,6 +58,20 @@ check(
   runbook.includes('Remote Trial deployment has not been executed'),
   'the remote-deployment deferral is not explicit',
 )
+check(
+  runbook.includes('Supabase CLI 2.110.0 stable channel'),
+  'the audited stable CLI channel is not documented',
+)
+check(
+  runbook.includes('`supabase/.temp/project-ref`') &&
+    runbook.includes('`.supabase/project.json`') &&
+    runbook.includes('next/alpha'),
+  'the stable and next/alpha linked-state contracts are not distinguished',
+)
+check(
+  runbook.includes('`SUPABASE_PROJECT_ID`'),
+  'the stable CLI environment override is not documented',
+)
 
 const environmentExample = read('.env.example')
 const environmentNames = environmentExample
@@ -86,6 +102,17 @@ check(
 )
 
 const packageJson = JSON.parse(read('package.json'))
+const packageLock = JSON.parse(read('package-lock.json'))
+check(
+  packageJson.devDependencies.supabase === stableSupabaseCliVersion &&
+    packageLock.packages['node_modules/supabase'].version ===
+      stableSupabaseCliVersion,
+  'the audited Supabase CLI version is not locked consistently',
+)
+check(
+  stableLinkedProjectRefRelativePath.join('/') === 'supabase/.temp/project-ref',
+  'the target gate is not pinned to the stable CLI linked-state path',
+)
 check(
   packageJson.scripts['trial:target:check'] ===
     'node scripts/trial-deployment-gate.mjs',
@@ -116,6 +143,7 @@ for (const ignoredPath of [
   '.env.*',
   '!.env.example',
   'supabase/.temp/',
+  '.supabase/',
   '.vercel/',
 ]) {
   check(
@@ -160,6 +188,24 @@ try {
     error instanceof Error && error.message === safeTrialTargetError
 }
 check(productionRejected, 'the target gate did not reject production')
+
+let environmentOverrideRejected = false
+try {
+  validateTrialTarget({
+    target: 'trial',
+    confirmation: 'TRIAL',
+    projectRef: 'abcdefghijklmnopqrst',
+    linkedProjectRef: 'abcdefghijklmnopqrst',
+    supabaseProjectId: 'zyxwvutsrqponmlkjihg',
+  })
+} catch (error) {
+  environmentOverrideRejected =
+    error instanceof Error && error.message === safeTrialTargetError
+}
+check(
+  environmentOverrideRejected,
+  'the target gate did not reject a conflicting CLI environment override',
+)
 
 process.stdout.write(
   'Trial deployment baseline checks passed (' + checkCount + ' checks).\n',

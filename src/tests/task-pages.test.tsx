@@ -868,6 +868,179 @@ describe('任务页面', () => {
     expect(screen.getAllByText('虚构负责人 · 标记阻塞')).toHaveLength(1)
   })
 
+  it('独立标记阻塞后归一化隐藏字段并保留普通进展草稿', async () => {
+    const user = userEvent.setup()
+    const inProgressTask: Task = { ...task, status: 'in_progress' }
+    const startTransition = {
+      transition_id: 'acacacac-7777-4777-8777-777777777777',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const blockTransition = {
+      transition_id: 'acacacac-8888-4888-8888-888888888888',
+      task_id: TASK_ID,
+      sequence: 2,
+      from_status: 'in_progress' as const,
+      to_status: 'blocked' as const,
+      action: 'block' as const,
+      created_at: '2026-08-10T02:00:00+00:00',
+    }
+    const blockedTask: Task = {
+      ...inProgressTask,
+      status: 'blocked',
+      blocker_reason: 'Fictional independent blocker',
+      blocked_at: blockTransition.created_at,
+      blocked_by: FICTIONAL_APP_USER_ID,
+      blocked_by_display_name: '虚构负责人',
+      updated_at: blockTransition.created_at,
+    }
+    const update = progressItem({
+      record_date: '2026-08-09',
+      completed_content: 'Fictional preserved draft',
+      progress: 67,
+      issues: 'Fictional preserved issue',
+      next_steps: 'Fictional preserved next step',
+      needs_assistance: true,
+      is_blocked: true,
+      block_transition_id: null,
+      created_at: '2026-08-10T03:00:00+00:00',
+    })
+    const progressedBlockedTask: Task = {
+      ...blockedTask,
+      progress: update.progress,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+      updated_at: update.created_at,
+    }
+    const initialHistory = [historyItem(startTransition)]
+    const blockedHistory = [
+      historyItem(startTransition),
+      historyItem(blockTransition, 'Fictional independent blocker'),
+    ]
+    const createProgressUpdate = vi.fn(async () => ({
+      ok: true as const,
+      data: { task: progressedBlockedTask, update, was_existing: false },
+    }))
+    const tasks = taskValue({
+      get: vi
+        .fn<TaskContextValue['get']>()
+        .mockResolvedValueOnce({ ok: true, data: inProgressTask })
+        .mockResolvedValueOnce({ ok: true, data: blockedTask })
+        .mockResolvedValueOnce({ ok: true, data: progressedBlockedTask }),
+      block: vi.fn(async () => ({
+        ok: true as const,
+        data: transitionResult(blockedTask, blockTransition),
+      })),
+      listStatusHistory: vi
+        .fn<TaskContextValue['listStatusHistory']>()
+        .mockResolvedValueOnce({ ok: true, data: initialHistory })
+        .mockResolvedValueOnce({ ok: true, data: blockedHistory })
+        .mockResolvedValueOnce({ ok: true, data: blockedHistory }),
+      listUpdates: vi
+        .fn<TaskContextValue['listUpdates']>()
+        .mockResolvedValueOnce({ ok: true, data: [] })
+        .mockResolvedValueOnce({ ok: true, data: [] })
+        .mockResolvedValueOnce({ ok: true, data: [update] }),
+      createProgressUpdate,
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    const recordDate = await screen.findByLabelText(/进展日期/)
+    fireEvent.change(recordDate, { target: { value: '2026-08-09' } })
+    await user.type(
+      screen.getByLabelText(/今日完成内容/),
+      'Fictional preserved draft',
+    )
+    const progressInput = screen.getByLabelText(/当前完成比例/)
+    await user.clear(progressInput)
+    await user.type(progressInput, '67')
+    await user.type(
+      screen.getByLabelText('遇到的问题'),
+      'Fictional preserved issue',
+    )
+    await user.type(
+      screen.getByLabelText('下一步计划'),
+      'Fictional preserved next step',
+    )
+    await user.click(screen.getByLabelText('需要协助'))
+    await user.click(screen.getByLabelText('提交进展时同时将任务标记为阻塞'))
+    const progressForm = screen
+      .getByRole('heading', { name: '更新进展' })
+      .closest('form')
+    expect(progressForm).not.toBeNull()
+    await user.type(
+      within(progressForm as HTMLFormElement).getByLabelText(/阻塞原因/),
+      'Fictional stale progress blocker',
+    )
+
+    await user.click(screen.getByRole('button', { name: '标记阻塞' }))
+    const statusDialog = screen.getByRole('dialog')
+    await user.type(
+      within(statusDialog).getByLabelText(/阻塞原因/),
+      'Fictional independent blocker',
+    )
+    await user.click(
+      within(statusDialog).getByRole('button', { name: '确认标记阻塞' }),
+    )
+
+    expect(await screen.findByText('当前状态：已阻塞')).toBeInTheDocument()
+    expect(screen.getByLabelText(/进展日期/)).toHaveValue('2026-08-09')
+    expect(screen.getByLabelText(/今日完成内容/)).toHaveValue(
+      'Fictional preserved draft',
+    )
+    expect(screen.getByLabelText(/当前完成比例/)).toHaveValue(67)
+    expect(screen.getByLabelText('遇到的问题')).toHaveValue(
+      'Fictional preserved issue',
+    )
+    expect(screen.getByLabelText('下一步计划')).toHaveValue(
+      'Fictional preserved next step',
+    )
+    expect(screen.getByLabelText('需要协助')).toBeChecked()
+    expect(
+      screen.queryByLabelText('提交进展时同时将任务标记为阻塞'),
+    ).not.toBeInTheDocument()
+    const blockedProgressForm = screen
+      .getByRole('heading', { name: '更新进展' })
+      .closest('form')
+    expect(blockedProgressForm).not.toBeNull()
+    expect(
+      within(blockedProgressForm as HTMLFormElement).queryByLabelText(
+        /阻塞原因/,
+      ),
+    ).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '提交进展' }))
+
+    expect(createProgressUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recordDate: '2026-08-09',
+        completedContent: 'Fictional preserved draft',
+        progress: 67,
+        issues: 'Fictional preserved issue',
+        nextSteps: 'Fictional preserved next step',
+        needsAssistance: true,
+        markBlocked: false,
+        blockerReason: '',
+      }),
+    )
+    expect(
+      screen.queryByText('已阻塞任务不能重复标记阻塞。'),
+    ).not.toBeInTheDocument()
+  })
+
   it('阻塞 Dialog 拒绝空白原因，成功后同步 current blocker 与历史', async () => {
     const user = userEvent.setup()
     const inProgressTask: Task = { ...task, status: 'in_progress' }

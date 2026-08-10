@@ -283,6 +283,20 @@ export function TaskDetailPage() {
         setActionLoading(null)
         return false
       }
+      if (refreshResult.data.task.status !== 'in_progress') {
+        setProgressForm((current) => ({
+          ...current,
+          markBlocked: false,
+          blockerReason: '',
+        }))
+        setProgressErrors((current) => {
+          const next = { ...current }
+          delete next.markBlocked
+          delete next.blockerReason
+          return next
+        })
+        setProgressConfirmOpen(false)
+      }
       setTask(refreshResult.data.task)
       setHistory(refreshResult.data.history)
       setUpdates(refreshResult.data.updates)

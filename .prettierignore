@@ -4,6 +4,8 @@ node_modules/
 node_modules_ok/
 package-lock.json
 src/types/database.generated.ts
+# Authoritative user-supplied plan; preserve byte-for-byte.
+docs/project-construction-plan-v1.3.md
 # Supabase CLI local runtime state (git-ignored; never formatted)
 supabase/.temp/
 supabase/.branches/

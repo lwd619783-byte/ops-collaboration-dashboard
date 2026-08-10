@@ -31,7 +31,9 @@
     "test:watch": "vitest",
     "security:build": "node scripts/check-supabase-build-gate.mjs",
     "security:audit": "npm audit --audit-level=high",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run security:build && npm run build",
+    "trial:target:check": "node scripts/trial-deployment-gate.mjs",
+    "trial:baseline:check": "node scripts/check-trial-deployment-baseline.mjs",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run trial:baseline:check && npm run security:build && npm run build",
     "db:reissue:verify": "node scripts/verify-invitation-reissue.mjs"
   },
   "dependencies": {

@@ -4,7 +4,7 @@
 
 本项目采用 local-first migration：数据库结构先以版本化 SQL migration 在本地从空库重建、测试和生成类型，再进入远端审计与后续部署流程。这样可以让结构变更可复现、可审阅，并让前端使用与 migration 同源的 TypeScript 类型。
 
-Task 2.1 在既有统一身份与工作空间权限边界上增加项目 CRUD、关系可见性、乐观并发与不可逆归档。Task 2.2 增加项目 owner/lead 一致性、成员可信 RPC、完整权限矩阵和真实多连接并发验证。Task 2.3 增加平级有序模块、可选运维预设、受控软删除和模块锁竞争验证。Task 3.1 增加项目任务主表、人员关系、指定可见关系、受控创建 / 编辑 RPC 和任务锁竞争验证。Task 3.2 增加只读 `list_project_tasks(project_id)` summary 投影：先统一校验 `can_read_project`，再对每条返回任务执行 `can_read_task`，不返回说明、验收标准、幂等键或显式可见名单，也不单独计算未授权任务总数。Task 3.3 功能分支增加 `start_task / block_task / resume_task / cancel_task`、current blocker、append-only `task_status_history` 和安全 history 读取。数据模型、最小授权和页面边界见 [项目 CRUD、可见性与归档 V1](project-crud-and-visibility.md)、[项目成员与牵头人 V1](project-membership-and-lead.md)、[项目工作模块 V1](project-modules.md)、[任务数据模型与创建编辑 V1](task-data-model-and-editing.md)、[任务看板和列表 V1](task-board-and-list.md) 与 [任务状态流转与阻塞 V1](task-status-transitions.md)。
+Task 2.1 在既有统一身份与工作空间权限边界上增加项目 CRUD、关系可见性、乐观并发与不可逆归档。Task 2.2 增加项目 owner/lead 一致性、成员可信 RPC、完整权限矩阵和真实多连接并发验证。Task 2.3 增加平级有序模块、可选运维预设、受控软删除和模块锁竞争验证。Task 3.1–3.5 已完成项目任务主表、安全列表、受控状态机、每日进展和验收闭环并正式封板。数据模型、最小授权和页面边界见 [项目 CRUD、可见性与归档 V1](project-crud-and-visibility.md)、[项目成员与牵头人 V1](project-membership-and-lead.md)、[项目工作模块 V1](project-modules.md)、[任务数据模型与创建编辑 V1](task-data-model-and-editing.md)、[任务看板和列表 V1](task-board-and-list.md)、[任务状态流转与阻塞 V1](task-status-transitions.md)、[每日任务进展与进度同步 V1](task-daily-progress.md) 与 [任务提交验收、通过与退回 V1](task-review-closure.md)。
 
 Task 1.1 建立基础设施与健康检查，Task 1.2 建立统一内部身份，Task 1.3 启用本地 Auth 与网页登录，Task 1.4 增加工作空间成员权限和邀请激活闭环。本地配置启用数据库、Data API、Auth、Edge Runtime 与 Inbucket 邮件捕获；Studio、Realtime、Storage 和 Analytics 仍保持关闭。所有工作空间授权仍以 `current_app_user_id()` 解析出的 `app_users.id` 为边界。Task 1.4 审计修复新增 `20260802110000_workspace_audit_hardening.sql`：数据库强制唯一 owner（部分唯一索引 + 语句级约束触发器）、服务端邀请 TTL（`workspace_invitation_ttl_seconds()`，与 Auth OTP 对齐）、`prepare_workspace_invitation()` 移除浏览器可传入的过期参数并原子关闭过期开放邀请，以及成员目录对缺失 profile 的安全 LEFT JOIN 回退。第二轮修复新增 `20260803120000_workspace_invitation_reissue_status.sql` 与 `20260803120100_workspace_invitation_reissue.sql`：`reissue_prepared` 邀请状态与 `reissue_of_invitation_id` 关联、`prepare_workspace_invitation()` 返回 `operation_kind`（`new_auth_user_invite` / `existing_invitee_reissue`）、服务专用 `finalize_workspace_invitation_reissue()`（已在第四轮移除）、锁后 `clock_timestamp()` 时间语义，以及成员目录 `pending_invitation` 标记。第三轮修复新增 `20260803130000_workspace_invitation_reissue_lineage.sql`：failed reissue 的 lineage 保持（`existing_invitee_reissue` 永不退回普通 `prepared`，`temporary_failure` / `auth_invite_failed` 可恢复，`auth_user_conflict` 稳定冲突）。第四轮修复新增 `20260803140000_workspace_auth_invitation_confirmation.sql`：移除旧 `finalize_workspace_invitation_reissue()`，统一由 `confirm_workspace_auth_invitation_result(invitation_id, operation_kind, provider_tenant, provider_subject)` 作为 **Auth Admin 成功后的唯一数据库确认边界**——所有 operation kind 都必须经它确认后才算业务成功。第五轮修复新增 `20260803150000_stable_invitation_conflict_confirmation.sql`：`auth_user_conflict` 对同一幂等键与全新幂等键都是持久稳定冲突（空 invitee 的行同样被守卫，绝不重新创建邀请、不调用 Auth Admin、不发信），且 confirmation 的 operation kind 与持久化行结构严格绑定（NULL / 空白 / 未知 kind → `22023`，new-auth 行必须 `reissue_of_invitation_id IS NULL`，reissue 行必须带 `reissue_of_invitation_id` 与 `invitee_user_id`）。
 
@@ -172,8 +172,10 @@ select public.bootstrap_default_workspace(
 
 调用前 owner 必须已是有效的内部 `app_users` 用户。相同 owner、名称和幂等键重复调用返回已有工作空间；同一幂等键携带冲突目标会拒绝。示例 UUID 需由本地测试夹具替换，绝不能用于远端项目。完整模型和权限矩阵见 [工作空间与成员权限](workspace-permissions.md)。
 
-## 将来的远端连接
+## Trial 远端连接与部署边界
 
-后续独立任务在完成安全审计后，可以由获授权人员执行 `supabase login` 与 `supabase link`，再按受控流程应用 migration。本任务不登录、不链接任何远端项目，不配置生产 Vercel 环境变量，也不部署 Edge Function 或远端 Auth 配置。
+Task 3.9.1 只建立可重复的部署基线，不登录、不链接或修改任何远端项目。完整环境模型、显式 Trial target gate、CLI 2.110.0 的 `link` / `migration list --linked` / `db push --dry-run --linked` 流程、Edge Function 部署、版本追溯、回滚与备份边界见 [试运行部署基线与环境门禁 V1](trial-deployment.md)。
 
-不得对生产数据库运行 `db reset` 或其他破坏性重建命令。远端 migration、Auth 邮件模板、SMTP、RLS 和 Edge Function 部署都需要在后续任务重新进行权限与数据边界审计。
+真实 Trial 创建和部署属于 Task 3.9.2，必须由获授权人员在独立 Supabase/Vercel Trial 中执行；真实账号 Smoke/E2E 属于 Task 3.9.3。`db:reset`、pgTAP seed、真实并发夹具和 `db:verify` 只用于本地环境，绝不能指向 Trial 或 Production。任何远端 mutation 前必须重新核对 target gate、备份状态、dry-run 和准确 Git SHA。
+
+Production 只在本轮定义边界，不创建、不链接、不部署。不得对任何远端数据库运行 `db reset`、drop、自动 restore 或其他破坏性重建命令。

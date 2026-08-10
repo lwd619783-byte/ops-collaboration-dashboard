@@ -422,6 +422,79 @@ export type Database = {
           },
         ]
       }
+      task_updates: {
+        Row: {
+          block_transition_id: string | null
+          completed_content: string
+          created_at: string
+          created_by: string
+          id: string
+          idempotency_key: string
+          is_blocked: boolean
+          issues: string | null
+          needs_assistance: boolean
+          next_steps: string | null
+          progress: number
+          record_date: string
+          task_id: string
+          update_seq: number
+        }
+        Insert: {
+          block_transition_id?: string | null
+          completed_content: string
+          created_at?: string
+          created_by: string
+          id?: string
+          idempotency_key: string
+          is_blocked: boolean
+          issues?: string | null
+          needs_assistance?: boolean
+          next_steps?: string | null
+          progress: number
+          record_date: string
+          task_id: string
+          update_seq: number
+        }
+        Update: {
+          block_transition_id?: string | null
+          completed_content?: string
+          created_at?: string
+          created_by?: string
+          id?: string
+          idempotency_key?: string
+          is_blocked?: boolean
+          issues?: string | null
+          needs_assistance?: boolean
+          next_steps?: string | null
+          progress?: number
+          record_date?: string
+          task_id?: string
+          update_seq?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_updates_block_transition_id_fkey"
+            columns: ["block_transition_id"]
+            isOneToOne: true
+            referencedRelation: "task_status_history"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_updates_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_updates_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       task_visibility_users: {
         Row: {
           created_at: string
@@ -469,6 +542,8 @@ export type Database = {
           estimated_hours: number | null
           id: string
           idempotency_key: string
+          last_progress_at: string | null
+          last_progress_by: string | null
           module_id: string
           priority: Database["public"]["Enums"]["task_priority"]
           progress: number
@@ -495,6 +570,8 @@ export type Database = {
           estimated_hours?: number | null
           id?: string
           idempotency_key: string
+          last_progress_at?: string | null
+          last_progress_by?: string | null
           module_id: string
           priority?: Database["public"]["Enums"]["task_priority"]
           progress?: number
@@ -521,6 +598,8 @@ export type Database = {
           estimated_hours?: number | null
           id?: string
           idempotency_key?: string
+          last_progress_at?: string | null
+          last_progress_by?: string | null
           module_id?: string
           priority?: Database["public"]["Enums"]["task_priority"]
           progress?: number
@@ -552,6 +631,13 @@ export type Database = {
           {
             foreignKeyName: "tasks_created_by_fkey"
             columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_last_progress_by_fkey"
+            columns: ["last_progress_by"]
             isOneToOne: false
             referencedRelation: "app_users"
             referencedColumns: ["id"]
@@ -1099,6 +1185,21 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      create_task_update: {
+        Args: {
+          p_blocker_reason: string
+          p_completed_content: string
+          p_idempotency_key: string
+          p_issues: string
+          p_mark_blocked: boolean
+          p_needs_assistance: boolean
+          p_next_steps: string
+          p_progress: number
+          p_record_date: string
+          p_task_id: string
+        }
+        Returns: Json
+      }
       current_app_user_id: { Args: never; Returns: string }
       delete_project_module: {
         Args: { p_module_id: string; p_project_id: string }
@@ -1159,6 +1260,9 @@ export type Database = {
           description: string
           due_date: string
           estimated_hours: number
+          last_progress_at: string
+          last_progress_by: string
+          last_progress_by_display_name: string
           module_id: string
           module_name: string
           priority: Database["public"]["Enums"]["task_priority"]
@@ -1323,6 +1427,25 @@ export type Database = {
           task_id: string
           to_status: Database["public"]["Enums"]["task_status"]
           transition_id: string
+        }[]
+      }
+      list_task_updates: {
+        Args: { p_task_id: string }
+        Returns: {
+          block_transition_id: string
+          completed_content: string
+          created_at: string
+          created_by: string
+          created_by_display_name: string
+          is_blocked: boolean
+          issues: string
+          needs_assistance: boolean
+          next_steps: string
+          progress: number
+          record_date: string
+          sequence: number
+          task_id: string
+          update_id: string
         }[]
       }
       list_workspace_members: {
@@ -1589,6 +1712,44 @@ export type Database = {
         Args: { p_idempotency_key: string; p_task_id: string }
         Returns: Json
       }
+      task_progress_snapshot: {
+        Args: { p_task_id: string }
+        Returns: {
+          acceptance_criteria: string
+          assignee_display_name: string
+          assignee_id: string
+          blocked_at: string
+          blocked_by: string
+          blocked_by_display_name: string
+          blocker_reason: string
+          collaborators: Json
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          estimated_hours: number
+          last_progress_at: string
+          last_progress_by: string
+          last_progress_by_display_name: string
+          module_id: string
+          module_name: string
+          priority: Database["public"]["Enums"]["task_priority"]
+          progress: number
+          project_id: string
+          reviewer_display_name: string
+          reviewer_id: string
+          start_date: string
+          status: Database["public"]["Enums"]["task_status"]
+          task_id: string
+          title: string
+          updated_at: string
+          updated_by: string
+          visibility: Database["public"]["Enums"]["task_visibility"]
+          visibility_users: Json
+          workload_level: Database["public"]["Enums"]["task_workload_level"]
+          workspace_id: string
+        }[]
+      }
       task_snapshot: {
         Args: { p_task_id: string }
         Returns: {
@@ -1653,6 +1814,25 @@ export type Database = {
           visibility_users: Json
           workload_level: Database["public"]["Enums"]["task_workload_level"]
           workspace_id: string
+        }[]
+      }
+      task_update_snapshot: {
+        Args: { p_task_id: string }
+        Returns: {
+          block_transition_id: string
+          completed_content: string
+          created_at: string
+          created_by: string
+          created_by_display_name: string
+          is_blocked: boolean
+          issues: string
+          needs_assistance: boolean
+          next_steps: string
+          progress: number
+          record_date: string
+          sequence: number
+          task_id: string
+          update_id: string
         }[]
       }
       transfer_project_owner: {

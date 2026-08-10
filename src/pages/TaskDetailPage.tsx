@@ -9,6 +9,7 @@ import { Link, useParams } from 'react-router'
 import { ErrorState } from '@/components/feedback/ErrorState'
 import { LoadingState } from '@/components/feedback/LoadingState'
 import { TextareaField } from '@/components/forms/TextareaField'
+import { InputField } from '@/components/forms/InputField'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { DateDisplay } from '@/components/ui/DateDisplay'
@@ -20,10 +21,18 @@ import {
   type Task,
   type TaskStatusAction,
   type TaskStatusHistoryItem,
+  type TaskProgressFormValues,
+  type TaskProgressUpdate,
   loadConsistentTaskState,
   refreshConsistentTaskState,
   TASK_STATE_CONFLICT_MESSAGE,
 } from '@/features/tasks'
+import {
+  currentLocalCalendarDate,
+  TASK_PROGRESS_LIMITS,
+  validateTaskProgressForm,
+  type TaskProgressFormErrors,
+} from '@/features/tasks/validation'
 import {
   canManageProjectTasks,
   taskPriorityLabels,
@@ -42,6 +51,24 @@ type StatusIntent = {
   blockerReason: string | null
 }
 
+type ProgressIntent = {
+  fingerprint: string
+  idempotencyKey: string
+}
+
+function initialProgressForm(progress: number): TaskProgressFormValues {
+  return {
+    recordDate: currentLocalCalendarDate(),
+    completedContent: '',
+    progress: String(progress),
+    issues: '',
+    nextSteps: '',
+    needsAssistance: false,
+    markBlocked: false,
+    blockerReason: '',
+  }
+}
+
 export function TaskDetailPage() {
   const { projectId = '', taskId = '' } = useParams()
   const auth = useAuth()
@@ -53,6 +80,7 @@ export function TaskDetailPage() {
   const [project, setProject] = useState<Project | null>(null)
   const [task, setTask] = useState<Task | null>(null)
   const [history, setHistory] = useState<TaskStatusHistoryItem[]>([])
+  const [updates, setUpdates] = useState<TaskProgressUpdate[]>([])
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>(
     'loading',
   )
@@ -60,16 +88,26 @@ export function TaskDetailPage() {
   const [actionLoading, setActionLoading] = useState<TaskStatusAction | null>(
     null,
   )
-  const actionBusy = actionLoading !== null
+  const [progressLoading, setProgressLoading] = useState(false)
+  const actionBusy = actionLoading !== null || progressLoading
   const [actionError, setActionError] = useState<string | null>(null)
   const [dialog, setDialog] = useState<'block' | 'cancel' | null>(null)
   const [blockerReason, setBlockerReason] = useState('')
   const [blockerReasonError, setBlockerReasonError] = useState<string | null>(
     null,
   )
+  const [progressForm, setProgressForm] = useState<TaskProgressFormValues>(() =>
+    initialProgressForm(0),
+  )
+  const [progressErrors, setProgressErrors] = useState<TaskProgressFormErrors>(
+    {},
+  )
+  const [progressError, setProgressError] = useState<string | null>(null)
+  const [progressConfirmOpen, setProgressConfirmOpen] = useState(false)
   const requestEpochRef = useRef(0)
   const actionEpochRef = useRef(0)
   const intentRef = useRef<StatusIntent | null>(null)
+  const progressIntentRef = useRef<ProgressIntent | null>(null)
   const mountedRef = useRef(true)
   const scopeKey =
     currentWorkspace && appUserId
@@ -81,6 +119,7 @@ export function TaskDetailPage() {
     scopeKeyRef.current = scopeKey
     actionEpochRef.current += 1
     intentRef.current = null
+    progressIntentRef.current = null
   }, [scopeKey])
 
   useEffect(() => {
@@ -100,8 +139,13 @@ export function TaskDetailPage() {
     setLoadedScopeKey(null)
     setActionError(null)
     setActionLoading(null)
+    setProgressLoading(false)
+    setProgressError(null)
+    setProgressErrors({})
+    setProgressConfirmOpen(false)
     setDialog(null)
     intentRef.current = null
+    progressIntentRef.current = null
     const [projectResult, stateResult] = await Promise.all([
       projects.get(projectId),
       loadConsistentTaskState(tasks, taskId),
@@ -121,6 +165,7 @@ export function TaskDetailPage() {
       setProject(null)
       setTask(null)
       setHistory([])
+      setUpdates([])
       setLoadedScopeKey(requestScopeKey)
       setLoadState('error')
       return
@@ -128,6 +173,8 @@ export function TaskDetailPage() {
     setProject(projectResult.data)
     setTask(stateResult.data.task)
     setHistory(stateResult.data.history)
+    setUpdates(stateResult.data.updates)
+    setProgressForm(initialProgressForm(stateResult.data.task.progress))
     setLoadedScopeKey(requestScopeKey)
     setLoadState('ready')
   }, [
@@ -236,8 +283,23 @@ export function TaskDetailPage() {
         setActionLoading(null)
         return false
       }
+      if (refreshResult.data.task.status !== 'in_progress') {
+        setProgressForm((current) => ({
+          ...current,
+          markBlocked: false,
+          blockerReason: '',
+        }))
+        setProgressErrors((current) => {
+          const next = { ...current }
+          delete next.markBlocked
+          delete next.blockerReason
+          return next
+        })
+        setProgressConfirmOpen(false)
+      }
       setTask(refreshResult.data.task)
       setHistory(refreshResult.data.history)
+      setUpdates(refreshResult.data.updates)
       setActionLoading(null)
       setActionError(null)
       intentRef.current = null
@@ -276,6 +338,118 @@ export function TaskDetailPage() {
     if (await runAction('cancel')) setDialog(null)
   }
 
+  const updateProgressField = <K extends keyof TaskProgressFormValues>(
+    field: K,
+    value: TaskProgressFormValues[K],
+  ) => {
+    setProgressForm((current) => ({ ...current, [field]: value }))
+    setProgressErrors((current) => ({ ...current, [field]: undefined }))
+    setProgressError(null)
+    progressIntentRef.current = null
+  }
+
+  const runProgressUpdate = useCallback(async () => {
+    if (!project || !task || !scopeKey || !currentWorkspace) return false
+    const normalized = {
+      recordDate: progressForm.recordDate,
+      completedContent: progressForm.completedContent.trim(),
+      progress: Number(progressForm.progress),
+      issues: progressForm.issues.trim(),
+      nextSteps: progressForm.nextSteps.trim(),
+      needsAssistance: progressForm.needsAssistance,
+      markBlocked: progressForm.markBlocked,
+      blockerReason: progressForm.markBlocked
+        ? progressForm.blockerReason.trim()
+        : '',
+    }
+    const fingerprint = JSON.stringify(normalized)
+    const idempotencyKey =
+      progressIntentRef.current?.fingerprint === fingerprint
+        ? progressIntentRef.current.idempotencyKey
+        : crypto.randomUUID()
+    progressIntentRef.current = { fingerprint, idempotencyKey }
+    const epoch = ++actionEpochRef.current
+    const requestScopeKey = scopeKey
+    setProgressLoading(true)
+    setProgressError(null)
+    const result = await tasks.createProgressUpdate({
+      taskId: task.task_id,
+      projectId: project.project_id,
+      workspaceId: currentWorkspace.workspace_id,
+      ...normalized,
+      idempotencyKey,
+    })
+    if (
+      !mountedRef.current ||
+      actionEpochRef.current !== epoch ||
+      scopeKeyRef.current !== requestScopeKey
+    ) {
+      return false
+    }
+    if (!result.ok) {
+      if (
+        result.error.code !== 'network_unavailable' &&
+        result.error.code !== 'unknown_service_error'
+      ) {
+        progressIntentRef.current = null
+      }
+      setProgressError(result.error.message)
+      setProgressLoading(false)
+      return false
+    }
+    const refreshResult = await refreshConsistentTaskState(
+      tasks,
+      task.task_id,
+      result.data.update.block_transition_id,
+      result.data.update.update_id,
+    )
+    if (
+      !mountedRef.current ||
+      actionEpochRef.current !== epoch ||
+      scopeKeyRef.current !== requestScopeKey
+    ) {
+      return false
+    }
+    if (
+      !refreshResult.ok ||
+      refreshResult.data.task.task_id !== task.task_id ||
+      refreshResult.data.task.project_id !== project.project_id ||
+      refreshResult.data.task.workspace_id !== currentWorkspace.workspace_id ||
+      refreshResult.data.history.some(
+        (item) => item.task_id !== task.task_id,
+      ) ||
+      refreshResult.data.updates.some((item) => item.task_id !== task.task_id)
+    ) {
+      setProgressError(TASK_STATE_CONFLICT_MESSAGE)
+      setProgressLoading(false)
+      return false
+    }
+    setTask(refreshResult.data.task)
+    setHistory(refreshResult.data.history)
+    setUpdates(refreshResult.data.updates)
+    setProgressForm(initialProgressForm(refreshResult.data.task.progress))
+    setProgressErrors({})
+    setProgressError(null)
+    setProgressLoading(false)
+    setProgressConfirmOpen(false)
+    progressIntentRef.current = null
+    return true
+  }, [currentWorkspace, progressForm, project, scopeKey, task, tasks])
+
+  const beginProgressSubmit = () => {
+    if (!task) return
+    if (task.status !== 'in_progress' && task.status !== 'blocked') return
+    const errors = validateTaskProgressForm(progressForm, task.status)
+    setProgressErrors(errors)
+    setProgressError(null)
+    if (Object.keys(errors).length > 0) return
+    if (progressForm.markBlocked) {
+      setProgressConfirmOpen(true)
+      return
+    }
+    void runProgressUpdate()
+  }
+
   if (!currentWorkspace || !auth.appUser) return null
   if (loadState === 'loading' || loadedScopeKey !== scopeKey) {
     return <LoadingState title="正在加载任务详情" />
@@ -306,6 +480,13 @@ export function TaskDetailPage() {
     project.status !== 'archived' &&
     ['todo', 'in_progress', 'blocked'].includes(task.status) &&
     (canExecute || canManage)
+  const canWriteProgress =
+    project.status !== 'archived' &&
+    task.assignee_id === auth.appUser.id &&
+    (task.status === 'in_progress' || task.status === 'blocked')
+  const latestFirstUpdates = [...updates].sort(
+    (left, right) => right.sequence - left.sequence,
+  )
   const peopleText = (people: Task['collaborators']) =>
     people.length === 0
       ? '未指定'
@@ -429,6 +610,183 @@ export function TaskDetailPage() {
         </section>
       )}
 
+      <section className="task-detail-card task-progress-section">
+        <div className="task-progress-heading">
+          <div>
+            <h3>每日进展</h3>
+            <p className="task-current-progress">当前进度 {task.progress}%</p>
+          </div>
+          <progress
+            aria-label={`当前任务进度 ${task.progress}%`}
+            max="100"
+            value={task.progress}
+          >
+            {task.progress}%
+          </progress>
+        </div>
+        <dl className="task-detail-grid task-progress-meta">
+          <div>
+            <dt>最后更新进展</dt>
+            <dd>
+              {task.last_progress_at ? (
+                <DateDisplay kind="date-time" value={task.last_progress_at} />
+              ) : (
+                '尚无进展'
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt>最后更新人</dt>
+            <dd>{task.last_progress_by_display_name ?? '—'}</dd>
+          </div>
+        </dl>
+
+        {canWriteProgress ? (
+          <form
+            className="task-progress-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              beginProgressSubmit()
+            }}
+          >
+            <h4>更新进展</h4>
+            {task.status === 'blocked' && (
+              <p className="muted">
+                任务当前仍处于阻塞状态；填写进展不会自动恢复，请使用上方“恢复进行中”。
+              </p>
+            )}
+            <div className="task-progress-form-grid">
+              <InputField
+                error={progressErrors.recordDate}
+                label="进展日期"
+                onChange={(event) =>
+                  updateProgressField('recordDate', event.target.value)
+                }
+                required
+                type="date"
+                value={progressForm.recordDate}
+              />
+              <InputField
+                error={progressErrors.progress}
+                inputMode="numeric"
+                label="当前完成比例"
+                max="100"
+                min="0"
+                onChange={(event) =>
+                  updateProgressField('progress', event.target.value)
+                }
+                required
+                step="1"
+                type="number"
+                value={progressForm.progress}
+              />
+            </div>
+            <TextareaField
+              description={`${progressForm.completedContent.length}/${TASK_PROGRESS_LIMITS.completedContent}`}
+              error={progressErrors.completedContent}
+              label="今日完成内容"
+              maxLength={TASK_PROGRESS_LIMITS.completedContent}
+              onChange={(event) =>
+                updateProgressField('completedContent', event.target.value)
+              }
+              required
+              rows={5}
+              value={progressForm.completedContent}
+            />
+            <div className="task-progress-form-grid">
+              <TextareaField
+                description={`${progressForm.issues.length}/${TASK_PROGRESS_LIMITS.issues}`}
+                error={progressErrors.issues}
+                label="遇到的问题"
+                maxLength={TASK_PROGRESS_LIMITS.issues}
+                onChange={(event) =>
+                  updateProgressField('issues', event.target.value)
+                }
+                rows={4}
+                value={progressForm.issues}
+              />
+              <TextareaField
+                description={`${progressForm.nextSteps.length}/${TASK_PROGRESS_LIMITS.nextSteps}`}
+                error={progressErrors.nextSteps}
+                label="下一步计划"
+                maxLength={TASK_PROGRESS_LIMITS.nextSteps}
+                onChange={(event) =>
+                  updateProgressField('nextSteps', event.target.value)
+                }
+                rows={4}
+                value={progressForm.nextSteps}
+              />
+            </div>
+            <label className="task-progress-check">
+              <input
+                checked={progressForm.needsAssistance}
+                onChange={(event) =>
+                  updateProgressField('needsAssistance', event.target.checked)
+                }
+                type="checkbox"
+              />
+              <span>需要协助</span>
+            </label>
+            {task.status === 'in_progress' && (
+              <div className="task-progress-block-option">
+                <label className="task-progress-check">
+                  <input
+                    checked={progressForm.markBlocked}
+                    onChange={(event) =>
+                      updateProgressField('markBlocked', event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  <span>提交进展时同时将任务标记为阻塞</span>
+                </label>
+                {progressErrors.markBlocked && (
+                  <small className="field-error">
+                    {progressErrors.markBlocked}
+                  </small>
+                )}
+                {progressForm.markBlocked && (
+                  <TextareaField
+                    description={`${progressForm.blockerReason.length}/${TASK_PROGRESS_LIMITS.blockerReason}；提交前还会再次确认状态变化。`}
+                    error={progressErrors.blockerReason}
+                    label="阻塞原因"
+                    maxLength={TASK_PROGRESS_LIMITS.blockerReason}
+                    onChange={(event) =>
+                      updateProgressField('blockerReason', event.target.value)
+                    }
+                    required
+                    rows={4}
+                    value={progressForm.blockerReason}
+                  />
+                )}
+              </div>
+            )}
+            {progressError && !progressConfirmOpen && (
+              <p role="alert">{progressError}</p>
+            )}
+            <div className="task-progress-form-actions">
+              <Button
+                disabled={actionBusy}
+                loading={progressLoading}
+                type="submit"
+              >
+                提交进展
+              </Button>
+            </div>
+          </form>
+        ) : task.status === 'todo' ? (
+          <p className="muted">请先开始任务，进入进行中后再记录执行进展。</p>
+        ) : task.status === 'blocked' &&
+          task.assignee_id !== auth.appUser.id ? (
+          <p className="muted">只有当前任务负责人可以新增进展。</p>
+        ) : ['pending_review', 'completed', 'cancelled'].includes(
+            task.status,
+          ) ? (
+          <p className="muted">当前任务状态不允许新增执行进展。</p>
+        ) : (
+          <p className="muted">只有当前任务负责人可以新增进展。</p>
+        )}
+      </section>
+
       <section className="task-detail-card">
         <h3>任务职责与计划</h3>
         <dl className="task-detail-grid">
@@ -507,6 +865,41 @@ export function TaskDetailPage() {
         </section>
       )}
 
+      <section className="task-detail-card task-progress-timeline">
+        <h3>进展时间线</h3>
+        {latestFirstUpdates.length === 0 ? (
+          <p className="muted">还没有进展记录。</p>
+        ) : (
+          <ol className="task-progress-list">
+            {latestFirstUpdates.map((item) => (
+              <li key={item.update_id}>
+                <div className="task-progress-item-heading">
+                  <div>
+                    <strong>
+                      {item.created_by_display_name} · {item.record_date}
+                    </strong>
+                    <span>当前进度 {item.progress}%</span>
+                  </div>
+                  <span>#{item.sequence}</span>
+                </div>
+                <p>{item.completed_content}</p>
+                {item.issues && <p>遇到的问题：{item.issues}</p>}
+                {item.next_steps && <p>下一步计划：{item.next_steps}</p>}
+                <div className="task-progress-flags">
+                  {item.needs_assistance && (
+                    <Badge className="badge-info">需要协助</Badge>
+                  )}
+                  {item.is_blocked && (
+                    <Badge className="badge-warning">当时处于阻塞</Badge>
+                  )}
+                </div>
+                <DateDisplay kind="date-time" value={item.created_at} />
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+
       <section className="task-detail-card task-status-history">
         <h3>状态历史</h3>
         {history.length === 0 ? (
@@ -533,6 +926,23 @@ export function TaskDetailPage() {
           </ol>
         )}
       </section>
+
+      <Dialog
+        confirmLabel="确认提交并标记阻塞"
+        confirmLoading={progressLoading}
+        description="本次提交会同时写入进展、更新完成比例，并把任务从进行中变为阻塞。所有变化将在同一个数据库事务中完成。"
+        onClose={() => {
+          if (progressLoading) return
+          setProgressConfirmOpen(false)
+          setProgressError(null)
+        }}
+        onConfirm={() => void runProgressUpdate()}
+        open={progressConfirmOpen}
+        title="确认同时标记阻塞？"
+      >
+        <p>阻塞原因：{progressForm.blockerReason.trim()}</p>
+        {progressError && <p role="alert">{progressError}</p>}
+      </Dialog>
 
       <Dialog
         confirmDisabled={

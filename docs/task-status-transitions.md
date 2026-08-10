@@ -13,7 +13,7 @@ Task 3.3 在 Task 3.1 的项目任务和 Task 3.2 的只读任务中心之上增
 | `resume` | `blocked → in_progress`                    | 无   |
 | `cancel` | `todo / in_progress / blocked → cancelled` | 无   |
 
-数据库不提供可传入目标状态的通用 setter。`pending_review` 和 `completed` 仍只是 schema 预留词汇；Task 3.3 没有进入、离开或修改它们的 RPC/UI。`progress` 继续只读且不会随状态流转改变，Task 3.4 才负责进展比例。
+数据库不提供可传入目标状态的通用 setter。`pending_review` 和 `completed` 仍只是 schema 预留词汇；Task 3.3 没有进入、离开或修改它们的 RPC/UI。Task 3.3 状态 RPC 不修改 `progress`；Task 3.4 只在追加每日进展的同一事务中写入进展比例，并可复用本状态机原子执行一次 block。
 
 ## 数据模型与 blocker 不变量
 
@@ -95,7 +95,7 @@ Migration `supabase/migrations/20260809220000_task_status_transitions_v1.sql` �
 
 ## 非目标
 
-本任务不实现 Task 3.4 `task_updates`、进展百分比写入、Task 3.5 验收/完成、pending_review/completed mutation、拖拽、board inline action、批量操作、通知、外部平台、私人任务、全局工作台或 bundle code splitting，也未增加第三方依赖。
+Task 3.3 本身不提供进展写入；Task 3.4 的独立边界见 [每日任务进展与进度同步 V1](task-daily-progress.md)。当前仍不实现 Task 3.5 验收/完成、pending_review/completed mutation、拖拽、board inline action、批量操作、通知、外部平台、私人任务、全局工作台或 bundle code splitting，也未增加第三方依赖。
 
 ## 本地验证
 

@@ -5,9 +5,11 @@ import {
   blockTask,
   cancelTask,
   createTask,
+  createTaskProgressUpdate,
   getTask,
   listProjectTasks,
   listTaskStatusHistory,
+  listTaskUpdates,
   listTaskAssignmentCandidates,
   resumeTask,
   startTask,
@@ -69,6 +71,11 @@ export function TaskProvider({
         withClient((client) => cancelTask(client, input)),
       listStatusHistory: (taskId: string) =>
         withClient((client) => listTaskStatusHistory(client, taskId)),
+      listUpdates: (taskId: string) =>
+        withClient((client) => listTaskUpdates(client, taskId)),
+      createProgressUpdate: (
+        input: Parameters<typeof createTaskProgressUpdate>[1],
+      ) => withClient((client) => createTaskProgressUpdate(client, input)),
     }),
     [withClient],
   )

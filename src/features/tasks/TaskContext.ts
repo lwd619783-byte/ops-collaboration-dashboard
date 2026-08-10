@@ -6,6 +6,9 @@ import type {
   TaskBlockInput,
   TaskCreateInput,
   TaskListInput,
+  TaskProgressInput,
+  TaskProgressResult,
+  TaskProgressUpdate,
   TaskStatusHistoryItem,
   TaskSummary,
   TaskTransitionInput,
@@ -36,6 +39,12 @@ export type TaskContextValue = {
   listStatusHistory: (
     taskId: string,
   ) => Promise<TaskServiceResult<TaskStatusHistoryItem[]>>
+  listUpdates: (
+    taskId: string,
+  ) => Promise<TaskServiceResult<TaskProgressUpdate[]>>
+  createProgressUpdate: (
+    input: TaskProgressInput,
+  ) => Promise<TaskServiceResult<TaskProgressResult>>
 }
 
 export const TaskContext = createContext<TaskContextValue | null>(null)

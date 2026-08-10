@@ -15,6 +15,11 @@ export type TaskErrorCode =
   | 'block_reason_required'
   | 'block_reason_too_long'
   | 'transition_idempotency_conflict'
+  | 'progress_invalid_status'
+  | 'progress_idempotency_conflict'
+  | 'progress_block_reason_required'
+  | 'progress_block_reason_too_long'
+  | 'progress_concurrent_state_changed'
   | 'unknown_service_error'
 
 export type SafeTaskError = { code: TaskErrorCode; message: string }
@@ -37,6 +42,11 @@ const messages: Record<TaskErrorCode, string> = {
   block_reason_too_long: '阻塞原因不能超过 2000 个字符。',
   transition_idempotency_conflict:
     '本次操作请求已被用于其他状态变更，请重新操作。',
+  progress_invalid_status: '当前任务状态不能新增进展，请刷新后重试。',
+  progress_idempotency_conflict: '本次进展请求已被用于其他内容，请重新提交。',
+  progress_block_reason_required: '同时标记阻塞时必须填写阻塞原因。',
+  progress_block_reason_too_long: '阻塞原因不能超过 2000 个字符。',
+  progress_concurrent_state_changed: '任务状态正在变化，请刷新后重试。',
   unknown_service_error: '任务操作暂时无法完成，请稍后重试。',
 }
 
@@ -95,6 +105,21 @@ function knownCode(signal: string | null): TaskErrorCode | null {
       return 'transition_idempotency_conflict'
     case 'task_transition_payload_invalid':
       return 'validation_failed'
+    case 'task_update_validation_failed':
+      return 'validation_failed'
+    case 'task_update_permission_denied':
+      return 'permission_denied'
+    case 'task_update_invalid_status':
+    case 'task_update_block_state_invalid':
+      return 'progress_invalid_status'
+    case 'task_update_idempotency_conflict':
+      return 'progress_idempotency_conflict'
+    case 'task_update_block_reason_required':
+      return 'progress_block_reason_required'
+    case 'task_update_block_reason_too_long':
+      return 'progress_block_reason_too_long'
+    case 'task_update_concurrent_state_changed':
+      return 'progress_concurrent_state_changed'
     default:
       return null
   }

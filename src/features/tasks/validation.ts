@@ -1,4 +1,7 @@
-import type { TaskFormValues } from '@/features/tasks/types'
+import type {
+  TaskFormValues,
+  TaskProgressFormValues,
+} from '@/features/tasks/types'
 import {
   isTaskPriority,
   isTaskVisibility,
@@ -20,7 +23,7 @@ export function parseEstimatedHours(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function isDateOnly(value: string): boolean {
+export function isTaskDateOnly(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) return false
   const parsed = new Date(`${value}T00:00:00Z`)
   return (
@@ -68,10 +71,10 @@ export function validateTaskForm(values: TaskFormValues): TaskFormErrors {
   if (values.visibility === 'project' && values.visibilityUserIds.length > 0) {
     errors.visibilityUserIds = '项目可见任务不需要指定可见人员。'
   }
-  if (values.startDate && !isDateOnly(values.startDate)) {
+  if (values.startDate && !isTaskDateOnly(values.startDate)) {
     errors.startDate = '请输入有效开始日期。'
   }
-  if (values.dueDate && !isDateOnly(values.dueDate)) {
+  if (values.dueDate && !isTaskDateOnly(values.dueDate)) {
     errors.dueDate = '请输入有效截止日期。'
   } else if (
     values.startDate &&
@@ -90,6 +93,68 @@ export function validateTaskForm(values: TaskFormValues): TaskFormErrors {
     ) {
       errors.estimatedHours = `预计工时须为 0–${TASK_LIMITS.estimatedHours}，最多两位小数。`
     }
+  }
+  return errors
+}
+
+export const TASK_PROGRESS_LIMITS = {
+  completedContent: 10000,
+  issues: 10000,
+  nextSteps: 10000,
+  blockerReason: 2000,
+} as const
+
+export type TaskProgressFormErrors = Partial<
+  Record<keyof TaskProgressFormValues, string>
+>
+
+export function currentLocalCalendarDate(now = new Date()): string {
+  const year = String(now.getFullYear()).padStart(4, '0')
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export function validateTaskProgressForm(
+  values: TaskProgressFormValues,
+  status: 'in_progress' | 'blocked',
+): TaskProgressFormErrors {
+  const errors: TaskProgressFormErrors = {}
+  const completed = values.completedContent.trim()
+  const issues = values.issues.trim()
+  const nextSteps = values.nextSteps.trim()
+  const blockerReason = values.blockerReason.trim()
+  const progress = Number(values.progress)
+
+  if (!isTaskDateOnly(values.recordDate)) {
+    errors.recordDate = '请输入有效进展日期。'
+  }
+  if (!completed) errors.completedContent = '请填写今日完成内容。'
+  else if (completed.length > TASK_PROGRESS_LIMITS.completedContent) {
+    errors.completedContent = `今日完成内容不能超过 ${TASK_PROGRESS_LIMITS.completedContent} 个字符。`
+  }
+  if (
+    values.progress.trim() === '' ||
+    !/^\d{1,3}$/u.test(values.progress.trim()) ||
+    !Number.isInteger(progress) ||
+    progress < 0 ||
+    progress > 100
+  ) {
+    errors.progress = '当前完成比例须为 0–100 的整数。'
+  }
+  if (issues.length > TASK_PROGRESS_LIMITS.issues) {
+    errors.issues = `遇到的问题不能超过 ${TASK_PROGRESS_LIMITS.issues} 个字符。`
+  }
+  if (nextSteps.length > TASK_PROGRESS_LIMITS.nextSteps) {
+    errors.nextSteps = `下一步计划不能超过 ${TASK_PROGRESS_LIMITS.nextSteps} 个字符。`
+  }
+  if (status === 'blocked' && values.markBlocked) {
+    errors.markBlocked = '已阻塞任务不能重复标记阻塞。'
+  }
+  if (values.markBlocked && !blockerReason) {
+    errors.blockerReason = '请填写阻塞原因。'
+  } else if (blockerReason.length > TASK_PROGRESS_LIMITS.blockerReason) {
+    errors.blockerReason = `阻塞原因不能超过 ${TASK_PROGRESS_LIMITS.blockerReason} 个字符。`
   }
   return errors
 }

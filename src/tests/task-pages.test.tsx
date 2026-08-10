@@ -1,4 +1,11 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Link, Route, Routes } from 'react-router'
 import { describe, expect, it, vi } from 'vitest'
@@ -12,7 +19,11 @@ import {
   TaskContext,
   type TaskContextValue,
 } from '@/features/tasks/TaskContext'
-import type { Task, TaskAssignmentCandidate } from '@/features/tasks'
+import type {
+  Task,
+  TaskAssignmentCandidate,
+  TaskProgressUpdate,
+} from '@/features/tasks'
 import { TASK_STATE_CONSISTENCY_MAX_ATTEMPTS } from '@/features/tasks'
 import type {
   TaskStatusHistoryItem,
@@ -111,6 +122,9 @@ const task: Task = {
   visibility_users: [],
   status: 'todo',
   progress: 0,
+  last_progress_at: null,
+  last_progress_by: null,
+  last_progress_by_display_name: null,
   blocker_reason: null,
   blocked_at: null,
   blocked_by: null,
@@ -122,10 +136,10 @@ const task: Task = {
 }
 
 function transitionResult(
-  nextTask: Task,
+  _nextTask: Task,
   transition: TaskTransitionResult['transition'],
 ): TaskTransitionResult {
-  return { task: nextTask, transition, was_existing: false }
+  return { transition, was_existing: false }
 }
 
 function historyItem(
@@ -137,6 +151,28 @@ function historyItem(
     reason,
     actor_id: FICTIONAL_APP_USER_ID,
     actor_display_name: '虚构负责人',
+  }
+}
+
+function progressItem(
+  overrides: Partial<TaskProgressUpdate> = {},
+): TaskProgressUpdate {
+  return {
+    update_id: 'abababab-1111-4111-8111-111111111111',
+    task_id: TASK_ID,
+    sequence: 1,
+    record_date: '2026-08-10',
+    completed_content: 'Fictional completed work',
+    progress: 40,
+    issues: null,
+    next_steps: 'Fictional next step',
+    needs_assistance: true,
+    is_blocked: false,
+    block_transition_id: null,
+    created_by: FICTIONAL_APP_USER_ID,
+    created_by_display_name: '虚构负责人',
+    created_at: '2026-08-10T02:00:00+00:00',
+    ...overrides,
   }
 }
 
@@ -260,6 +296,11 @@ function taskValue(
       error: { code: 'permission_denied' as const, message: '不可用' },
     })),
     listStatusHistory: vi.fn(async () => ({ ok: true as const, data: [] })),
+    listUpdates: vi.fn(async () => ({ ok: true as const, data: [] })),
+    createProgressUpdate: vi.fn(async () => ({
+      ok: false as const,
+      error: { code: 'permission_denied' as const, message: '不可用' },
+    })),
     ...overrides,
   }
 }
@@ -390,6 +431,7 @@ describe('任务页面', () => {
     expect(
       screen.getByRole('heading', { name: '状态历史' }),
     ).toBeInTheDocument()
+    expect(screen.getByText('还没有进展记录。')).toBeInTheDocument()
   })
 
   it('todo assignee 可开始但非管理者不能取消', async () => {
@@ -416,6 +458,586 @@ describe('任务页面', () => {
     ).toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: '取消任务' }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/今日完成内容/)).not.toBeInTheDocument()
+    expect(
+      screen.getByText('请先开始任务，进入进行中后再记录执行进展。'),
+    ).toBeInTheDocument()
+  })
+
+  it('in_progress assignee 提交进展后原子刷新进度、最新时间和时间线', async () => {
+    const user = userEvent.setup()
+    const startTransition = {
+      transition_id: 'acacacac-1111-4111-8111-111111111111',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const update = progressItem()
+    const inProgressTask: Task = { ...task, status: 'in_progress' }
+    const progressedTask: Task = {
+      ...inProgressTask,
+      progress: update.progress,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+      updated_at: update.created_at,
+    }
+    const tasks = taskValue({
+      get: vi
+        .fn<TaskContextValue['get']>()
+        .mockResolvedValueOnce({ ok: true, data: inProgressTask })
+        .mockResolvedValueOnce({ ok: true, data: progressedTask }),
+      listStatusHistory: vi
+        .fn<TaskContextValue['listStatusHistory']>()
+        .mockResolvedValue({ ok: true, data: [historyItem(startTransition)] }),
+      listUpdates: vi
+        .fn<TaskContextValue['listUpdates']>()
+        .mockResolvedValueOnce({ ok: true, data: [] })
+        .mockResolvedValueOnce({ ok: true, data: [update] }),
+      createProgressUpdate: vi.fn(async () => ({
+        ok: true as const,
+        data: { task: progressedTask, update, was_existing: false },
+      })),
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.type(
+      await screen.findByLabelText(/今日完成内容/),
+      'Fictional completed work',
+    )
+    const progressInput = screen.getByLabelText(/当前完成比例/)
+    await user.clear(progressInput)
+    await user.type(progressInput, '40')
+    await user.type(screen.getByLabelText('下一步计划'), 'Fictional next step')
+    await user.click(screen.getByLabelText('需要协助'))
+    await user.click(screen.getByRole('button', { name: '提交进展' }))
+
+    expect(tasks.createProgressUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: TASK_ID,
+        progress: 40,
+        completedContent: 'Fictional completed work',
+        nextSteps: 'Fictional next step',
+        needsAssistance: true,
+        markBlocked: false,
+        idempotencyKey: expect.any(String),
+      }),
+    )
+    expect(
+      await screen.findByRole('progressbar', { name: '当前任务进度 40%' }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Fictional completed work')).toBeInTheDocument()
+    expect(screen.getAllByText('需要协助')).toHaveLength(2)
+    expect(screen.getAllByText('#1')).toHaveLength(2)
+    expect(screen.getByLabelText(/今日完成内容/)).toHaveValue('')
+    expect(screen.getByLabelText(/当前完成比例/)).toHaveValue(40)
+  })
+
+  it('进展网络重试保留 key，非重试错误后生成新业务意图 key', async () => {
+    const user = userEvent.setup()
+    const startTransition = {
+      transition_id: 'acacacac-2222-4222-8222-222222222222',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const update = progressItem()
+    const inProgressTask: Task = { ...task, status: 'in_progress' }
+    const progressedTask: Task = {
+      ...inProgressTask,
+      progress: update.progress,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+      updated_at: update.created_at,
+    }
+    const createProgressUpdate = vi
+      .fn<TaskContextValue['createProgressUpdate']>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { code: 'network_unavailable', message: '网络暂时不可用。' },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { code: 'permission_denied', message: '权限已变化。' },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { task: progressedTask, update, was_existing: false },
+      })
+    const tasks = taskValue({
+      get: vi
+        .fn<TaskContextValue['get']>()
+        .mockResolvedValueOnce({ ok: true, data: inProgressTask })
+        .mockResolvedValueOnce({ ok: true, data: progressedTask }),
+      listStatusHistory: vi
+        .fn<TaskContextValue['listStatusHistory']>()
+        .mockResolvedValue({ ok: true, data: [historyItem(startTransition)] }),
+      listUpdates: vi
+        .fn<TaskContextValue['listUpdates']>()
+        .mockResolvedValueOnce({ ok: true, data: [] })
+        .mockResolvedValueOnce({ ok: true, data: [update] }),
+      createProgressUpdate,
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.type(await screen.findByLabelText(/今日完成内容/), 'Retry work')
+    const progressInput = screen.getByLabelText(/当前完成比例/)
+    await user.clear(progressInput)
+    await user.type(progressInput, '40')
+    const submit = screen.getByRole('button', { name: '提交进展' })
+    await user.click(submit)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '网络暂时不可用。',
+    )
+    await user.click(submit)
+    expect(await screen.findByRole('alert')).toHaveTextContent('权限已变化。')
+    await user.click(submit)
+    await screen.findByRole('progressbar', { name: '当前任务进度 40%' })
+
+    expect(createProgressUpdate).toHaveBeenCalledTimes(3)
+    expect(createProgressUpdate.mock.calls[0][0].idempotencyKey).toBe(
+      createProgressUpdate.mock.calls[1][0].idempotencyKey,
+    )
+    expect(createProgressUpdate.mock.calls[2][0].idempotencyKey).not.toBe(
+      createProgressUpdate.mock.calls[1][0].idempotencyKey,
+    )
+  })
+
+  it('非 assignee 只读时间线，不显示进展写入口', async () => {
+    const startTransition = {
+      transition_id: 'acacacac-3333-4333-8333-333333333333',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const update = progressItem({
+      created_by: MEMBER_ID,
+      created_by_display_name: '虚构成员',
+    })
+    const readerTask: Task = {
+      ...task,
+      assignee_id: MEMBER_ID,
+      assignee_display_name: '虚构成员',
+      status: 'in_progress',
+      progress: update.progress,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+    }
+    const tasks = taskValue({
+      get: vi.fn(async () => ({ ok: true as const, data: readerTask })),
+      listStatusHistory: vi.fn(async () => ({
+        ok: true as const,
+        data: [historyItem(startTransition)],
+      })),
+      listUpdates: vi.fn(async () => ({ ok: true as const, data: [update] })),
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    expect(
+      await screen.findByText('Fictional completed work'),
+    ).toBeInTheDocument()
+    expect(screen.queryByLabelText('今日完成内容')).not.toBeInTheDocument()
+    expect(
+      screen.getByText('只有当前任务负责人可以新增进展。'),
+    ).toBeInTheDocument()
+  })
+
+  it('进展内标记阻塞必须经过确认并刷新 Task 3.3 block 关联', async () => {
+    const user = userEvent.setup()
+    const startTransition = {
+      transition_id: 'acacacac-4444-4444-8444-444444444444',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const blockTransition = {
+      transition_id: 'acacacac-5555-4555-8555-555555555555',
+      task_id: TASK_ID,
+      sequence: 2,
+      from_status: 'in_progress' as const,
+      to_status: 'blocked' as const,
+      action: 'block' as const,
+      created_at: '2026-08-10T02:00:00+00:00',
+    }
+    const update = progressItem({
+      progress: 50,
+      is_blocked: true,
+      block_transition_id: blockTransition.transition_id,
+    })
+    const inProgressTask: Task = { ...task, status: 'in_progress' }
+    const blockedTask: Task = {
+      ...inProgressTask,
+      status: 'blocked',
+      progress: 50,
+      blocker_reason: 'Fictional blocker',
+      blocked_at: blockTransition.created_at,
+      blocked_by: FICTIONAL_APP_USER_ID,
+      blocked_by_display_name: '虚构负责人',
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+      updated_at: update.created_at,
+    }
+    const tasks = taskValue({
+      get: vi
+        .fn<TaskContextValue['get']>()
+        .mockResolvedValueOnce({ ok: true, data: inProgressTask })
+        .mockResolvedValueOnce({ ok: true, data: blockedTask }),
+      listStatusHistory: vi
+        .fn<TaskContextValue['listStatusHistory']>()
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [historyItem(startTransition)],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [
+            historyItem(startTransition),
+            historyItem(blockTransition, 'Fictional blocker'),
+          ],
+        }),
+      listUpdates: vi
+        .fn<TaskContextValue['listUpdates']>()
+        .mockResolvedValueOnce({ ok: true, data: [] })
+        .mockResolvedValueOnce({ ok: true, data: [update] }),
+      createProgressUpdate: vi.fn(async () => ({
+        ok: true as const,
+        data: { task: blockedTask, update, was_existing: false },
+      })),
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.type(await screen.findByLabelText(/今日完成内容/), 'Block work')
+    const progressInput = screen.getByLabelText(/当前完成比例/)
+    await user.clear(progressInput)
+    await user.type(progressInput, '50')
+    await user.click(screen.getByLabelText('提交进展时同时将任务标记为阻塞'))
+    const progressForm = screen
+      .getByRole('heading', { name: '更新进展' })
+      .closest('form')
+    expect(progressForm).not.toBeNull()
+    await user.type(
+      within(progressForm as HTMLFormElement).getByLabelText(/阻塞原因/),
+      'Fictional blocker',
+    )
+    await user.click(screen.getByRole('button', { name: '提交进展' }))
+    expect(
+      screen.getByRole('heading', { name: '确认同时标记阻塞？' }),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '确认提交并标记阻塞' }))
+
+    expect(tasks.createProgressUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        markBlocked: true,
+        blockerReason: 'Fictional blocker',
+      }),
+    )
+    expect(await screen.findByText('当前状态：已阻塞')).toBeInTheDocument()
+    expect(screen.getByText('当时处于阻塞')).toBeInTheDocument()
+    expect(screen.getByText('虚构负责人 · 标记阻塞')).toBeInTheDocument()
+  })
+
+  it('blocked assignee 可继续提交进展，但不会重复 block 或隐式 resume', async () => {
+    const user = userEvent.setup()
+    const blockTransition = {
+      transition_id: 'acacacac-6666-4666-8666-666666666666',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'in_progress' as const,
+      to_status: 'blocked' as const,
+      action: 'block' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const blockedTask: Task = {
+      ...task,
+      status: 'blocked',
+      blocker_reason: 'Fictional existing blocker',
+      blocked_at: blockTransition.created_at,
+      blocked_by: FICTIONAL_APP_USER_ID,
+      blocked_by_display_name: '虚构负责人',
+    }
+    const update = progressItem({
+      progress: 60,
+      is_blocked: true,
+      block_transition_id: null,
+    })
+    const progressedBlockedTask: Task = {
+      ...blockedTask,
+      progress: update.progress,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+      updated_at: update.created_at,
+    }
+    const blockedHistory = [
+      historyItem(blockTransition, 'Fictional existing blocker'),
+    ]
+    const tasks = taskValue({
+      get: vi
+        .fn<TaskContextValue['get']>()
+        .mockResolvedValueOnce({ ok: true, data: blockedTask })
+        .mockResolvedValueOnce({ ok: true, data: progressedBlockedTask }),
+      listStatusHistory: vi.fn(async () => ({
+        ok: true as const,
+        data: blockedHistory,
+      })),
+      listUpdates: vi
+        .fn<TaskContextValue['listUpdates']>()
+        .mockResolvedValueOnce({ ok: true, data: [] })
+        .mockResolvedValueOnce({ ok: true, data: [update] }),
+      createProgressUpdate: vi.fn(async () => ({
+        ok: true as const,
+        data: { task: progressedBlockedTask, update, was_existing: false },
+      })),
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.type(
+      await screen.findByLabelText(/今日完成内容/),
+      'Blocked work',
+    )
+    const progressInput = screen.getByLabelText(/当前完成比例/)
+    await user.clear(progressInput)
+    await user.type(progressInput, '60')
+    expect(
+      screen.queryByLabelText('提交进展时同时将任务标记为阻塞'),
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '提交进展' }))
+
+    expect(tasks.createProgressUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ markBlocked: false, blockerReason: '' }),
+    )
+    expect(await screen.findByText('当前状态：已阻塞')).toBeInTheDocument()
+    expect(screen.getByText('Fictional existing blocker')).toBeInTheDocument()
+    expect(screen.getByText('当时处于阻塞')).toBeInTheDocument()
+    expect(screen.getAllByText('虚构负责人 · 标记阻塞')).toHaveLength(1)
+  })
+
+  it('独立标记阻塞后归一化隐藏字段并保留普通进展草稿', async () => {
+    const user = userEvent.setup()
+    const inProgressTask: Task = { ...task, status: 'in_progress' }
+    const startTransition = {
+      transition_id: 'acacacac-7777-4777-8777-777777777777',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const blockTransition = {
+      transition_id: 'acacacac-8888-4888-8888-888888888888',
+      task_id: TASK_ID,
+      sequence: 2,
+      from_status: 'in_progress' as const,
+      to_status: 'blocked' as const,
+      action: 'block' as const,
+      created_at: '2026-08-10T02:00:00+00:00',
+    }
+    const blockedTask: Task = {
+      ...inProgressTask,
+      status: 'blocked',
+      blocker_reason: 'Fictional independent blocker',
+      blocked_at: blockTransition.created_at,
+      blocked_by: FICTIONAL_APP_USER_ID,
+      blocked_by_display_name: '虚构负责人',
+      updated_at: blockTransition.created_at,
+    }
+    const update = progressItem({
+      record_date: '2026-08-09',
+      completed_content: 'Fictional preserved draft',
+      progress: 67,
+      issues: 'Fictional preserved issue',
+      next_steps: 'Fictional preserved next step',
+      needs_assistance: true,
+      is_blocked: true,
+      block_transition_id: null,
+      created_at: '2026-08-10T03:00:00+00:00',
+    })
+    const progressedBlockedTask: Task = {
+      ...blockedTask,
+      progress: update.progress,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+      updated_at: update.created_at,
+    }
+    const initialHistory = [historyItem(startTransition)]
+    const blockedHistory = [
+      historyItem(startTransition),
+      historyItem(blockTransition, 'Fictional independent blocker'),
+    ]
+    const createProgressUpdate = vi.fn(async () => ({
+      ok: true as const,
+      data: { task: progressedBlockedTask, update, was_existing: false },
+    }))
+    const tasks = taskValue({
+      get: vi
+        .fn<TaskContextValue['get']>()
+        .mockResolvedValueOnce({ ok: true, data: inProgressTask })
+        .mockResolvedValueOnce({ ok: true, data: blockedTask })
+        .mockResolvedValueOnce({ ok: true, data: progressedBlockedTask }),
+      block: vi.fn(async () => ({
+        ok: true as const,
+        data: transitionResult(blockedTask, blockTransition),
+      })),
+      listStatusHistory: vi
+        .fn<TaskContextValue['listStatusHistory']>()
+        .mockResolvedValueOnce({ ok: true, data: initialHistory })
+        .mockResolvedValueOnce({ ok: true, data: blockedHistory })
+        .mockResolvedValueOnce({ ok: true, data: blockedHistory }),
+      listUpdates: vi
+        .fn<TaskContextValue['listUpdates']>()
+        .mockResolvedValueOnce({ ok: true, data: [] })
+        .mockResolvedValueOnce({ ok: true, data: [] })
+        .mockResolvedValueOnce({ ok: true, data: [update] }),
+      createProgressUpdate,
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    const recordDate = await screen.findByLabelText(/进展日期/)
+    fireEvent.change(recordDate, { target: { value: '2026-08-09' } })
+    await user.type(
+      screen.getByLabelText(/今日完成内容/),
+      'Fictional preserved draft',
+    )
+    const progressInput = screen.getByLabelText(/当前完成比例/)
+    await user.clear(progressInput)
+    await user.type(progressInput, '67')
+    await user.type(
+      screen.getByLabelText('遇到的问题'),
+      'Fictional preserved issue',
+    )
+    await user.type(
+      screen.getByLabelText('下一步计划'),
+      'Fictional preserved next step',
+    )
+    await user.click(screen.getByLabelText('需要协助'))
+    await user.click(screen.getByLabelText('提交进展时同时将任务标记为阻塞'))
+    const progressForm = screen
+      .getByRole('heading', { name: '更新进展' })
+      .closest('form')
+    expect(progressForm).not.toBeNull()
+    await user.type(
+      within(progressForm as HTMLFormElement).getByLabelText(/阻塞原因/),
+      'Fictional stale progress blocker',
+    )
+
+    await user.click(screen.getByRole('button', { name: '标记阻塞' }))
+    const statusDialog = screen.getByRole('dialog')
+    await user.type(
+      within(statusDialog).getByLabelText(/阻塞原因/),
+      'Fictional independent blocker',
+    )
+    await user.click(
+      within(statusDialog).getByRole('button', { name: '确认标记阻塞' }),
+    )
+
+    expect(await screen.findByText('当前状态：已阻塞')).toBeInTheDocument()
+    expect(screen.getByLabelText(/进展日期/)).toHaveValue('2026-08-09')
+    expect(screen.getByLabelText(/今日完成内容/)).toHaveValue(
+      'Fictional preserved draft',
+    )
+    expect(screen.getByLabelText(/当前完成比例/)).toHaveValue(67)
+    expect(screen.getByLabelText('遇到的问题')).toHaveValue(
+      'Fictional preserved issue',
+    )
+    expect(screen.getByLabelText('下一步计划')).toHaveValue(
+      'Fictional preserved next step',
+    )
+    expect(screen.getByLabelText('需要协助')).toBeChecked()
+    expect(
+      screen.queryByLabelText('提交进展时同时将任务标记为阻塞'),
+    ).not.toBeInTheDocument()
+    const blockedProgressForm = screen
+      .getByRole('heading', { name: '更新进展' })
+      .closest('form')
+    expect(blockedProgressForm).not.toBeNull()
+    expect(
+      within(blockedProgressForm as HTMLFormElement).queryByLabelText(
+        /阻塞原因/,
+      ),
+    ).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '提交进展' }))
+
+    expect(createProgressUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recordDate: '2026-08-09',
+        completedContent: 'Fictional preserved draft',
+        progress: 67,
+        issues: 'Fictional preserved issue',
+        nextSteps: 'Fictional preserved next step',
+        needsAssistance: true,
+        markBlocked: false,
+        blockerReason: '',
+      }),
+    )
+    expect(
+      screen.queryByText('已阻塞任务不能重复标记阻塞。'),
     ).not.toBeInTheDocument()
   })
 
@@ -560,6 +1182,10 @@ describe('任务页面', () => {
     expect(
       screen.queryByRole('button', { name: '取消任务' }),
     ).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/今日完成内容/)).not.toBeInTheDocument()
+    expect(
+      screen.getByText('当前任务状态不允许新增执行进展。'),
+    ).toBeInTheDocument()
   })
 
   it('网络失败重试复用同一状态 intent key', async () => {
@@ -731,6 +1357,167 @@ describe('任务页面', () => {
       screen.getByRole('heading', { name: secondTask.title }),
     ).toBeInTheDocument()
     expect(screen.getByText('当前状态：待开始')).toBeInTheDocument()
+  })
+
+  it('任务 A 的进展迟到 success 不会覆盖任务 B 的进度和时间线', async () => {
+    const progressAction = createDeferred<{
+      ok: true
+      data: {
+        task: Task
+        update: TaskProgressUpdate
+        was_existing: boolean
+      }
+    }>()
+    const firstTask: Task = { ...task, status: 'in_progress' }
+    const secondTask: Task = {
+      ...firstTask,
+      task_id: SECOND_TASK_ID,
+      title: '虚构进展任务乙',
+    }
+    const firstStart = {
+      transition_id: 'eeeeeeee-5555-4555-8555-555555555555',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-09T02:00:00+00:00',
+    }
+    const secondStart = {
+      ...firstStart,
+      transition_id: 'eeeeeeee-6666-4666-8666-666666666666',
+      task_id: SECOND_TASK_ID,
+    }
+    const firstUpdate = progressItem()
+    const progressedFirstTask: Task = {
+      ...firstTask,
+      progress: firstUpdate.progress,
+      last_progress_at: firstUpdate.created_at,
+      last_progress_by: firstUpdate.created_by,
+      last_progress_by_display_name: firstUpdate.created_by_display_name,
+      updated_at: firstUpdate.created_at,
+    }
+    const tasks = taskValue({
+      get: vi.fn(async (requestedTaskId: string) => ({
+        ok: true as const,
+        data: requestedTaskId === TASK_ID ? firstTask : secondTask,
+      })),
+      listStatusHistory: vi.fn(async (requestedTaskId: string) => ({
+        ok: true as const,
+        data: [
+          historyItem(requestedTaskId === TASK_ID ? firstStart : secondStart),
+        ],
+      })),
+      createProgressUpdate: vi.fn(() => progressAction.promise),
+    })
+    const user = userEvent.setup()
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={
+          <>
+            <Link to={`/projects/${PROJECT_ID}/tasks/${SECOND_TASK_ID}`}>
+              切换进展任务
+            </Link>
+            <TaskDetailPage />
+          </>
+        }
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.type(await screen.findByLabelText(/今日完成内容/), 'Late work')
+    await user.click(screen.getByRole('button', { name: '提交进展' }))
+    await user.click(screen.getByRole('link', { name: '切换进展任务' }))
+    expect(
+      await screen.findByRole('heading', { name: secondTask.title }),
+    ).toBeInTheDocument()
+
+    await act(async () =>
+      progressAction.resolve({
+        ok: true,
+        data: {
+          task: progressedFirstTask,
+          update: firstUpdate,
+          was_existing: false,
+        },
+      }),
+    )
+    expect(
+      screen.getByRole('heading', { name: secondTask.title }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('progressbar', { name: '当前任务进度 0%' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('Fictional completed work'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('进展 mutation 在组件卸载后返回时不再刷新或提交状态', async () => {
+    const progressAction = createDeferred<{
+      ok: true
+      data: {
+        task: Task
+        update: TaskProgressUpdate
+        was_existing: boolean
+      }
+    }>()
+    const inProgressTask: Task = { ...task, status: 'in_progress' }
+    const startTransition = {
+      transition_id: 'eeeeeeee-7777-4777-8777-777777777777',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-09T02:00:00+00:00',
+    }
+    const update = progressItem()
+    const progressedTask: Task = {
+      ...inProgressTask,
+      progress: update.progress,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+    }
+    const listUpdates = vi.fn(async () => ({ ok: true as const, data: [] }))
+    const tasks = taskValue({
+      get: vi.fn(async () => ({ ok: true as const, data: inProgressTask })),
+      listStatusHistory: vi.fn(async () => ({
+        ok: true as const,
+        data: [historyItem(startTransition)],
+      })),
+      listUpdates,
+      createProgressUpdate: vi.fn(() => progressAction.promise),
+    })
+    const user = userEvent.setup()
+    const view = renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.type(
+      await screen.findByLabelText(/今日完成内容/),
+      'Unmount work',
+    )
+    await user.click(screen.getByRole('button', { name: '提交进展' }))
+    view.unmount()
+    await act(async () =>
+      progressAction.resolve({
+        ok: true,
+        data: { task: progressedTask, update, was_existing: false },
+      }),
+    )
+
+    expect(listUpdates).toHaveBeenCalledTimes(1)
   })
 
   it('Major：start 成功后另一 actor 推进到 cancelled，页面显示最新一致状态', async () => {

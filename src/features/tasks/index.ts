@@ -10,6 +10,10 @@ export type {
   TaskFormValues,
   TaskListInput,
   TaskPerson,
+  TaskProgressFormValues,
+  TaskProgressInput,
+  TaskProgressResult,
+  TaskProgressUpdate,
   TaskPriority,
   TaskStatus,
   TaskStatusAction,
@@ -24,6 +28,7 @@ export type {
 } from '@/features/tasks/types'
 export {
   isTaskStatusHistoryConsistent,
+  isTaskProgressConsistent,
   loadConsistentTaskState,
   refreshConsistentTaskState,
   TASK_STATE_CONSISTENCY_MAX_ATTEMPTS,

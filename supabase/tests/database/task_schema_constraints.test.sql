@@ -24,8 +24,8 @@ select columns_are('public', 'tasks', array[
   'assignee_id','reviewer_id','priority','start_date','due_date',
   'estimated_hours','workload_level','visibility','status','progress',
   'created_by','updated_by','idempotency_key','created_at','updated_at',
-  'blocker_reason','blocked_at','blocked_by'
-], 'tasks has the reviewed task detail and current-blocker columns');
+  'blocker_reason','blocked_at','blocked_by','last_progress_at','last_progress_by'
+], 'tasks has the reviewed task detail, blocker and latest-progress columns');
 select columns_are('public', 'task_collaborators', array['task_id','user_id','created_at'], 'collaborator relation stays minimal');
 select columns_are('public', 'task_visibility_users', array['task_id','user_id','created_at'], 'visibility relation stays minimal');
 

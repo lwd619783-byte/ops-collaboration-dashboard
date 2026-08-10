@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* eslint-disable no-undef -- standalone Node integration verifier */
 /**
- * Task 3.1/3.3 real PostgreSQL concurrency verifier.
+ * Task 3.1/3.3/3.4 real PostgreSQL concurrency verifier.
  *
  * Every race uses two business connections and an observer that proves the
  * second backend is blocked by the first through pg_blocking_pids(). Fixtures
@@ -161,6 +161,13 @@ const ids = {
   editTransitionProject: crypto.randomUUID(),
   archiveTransitionProject: crypto.randomUUID(),
   transitionArchiveProject: crypto.randomUUID(),
+  updateSameKeyProject: crypto.randomUUID(),
+  updateDifferentKeyProject: crypto.randomUUID(),
+  updateCancelProject: crypto.randomUUID(),
+  updateBlockCancelProject: crypto.randomUUID(),
+  updateEditProject: crypto.randomUUID(),
+  updateArchiveProject: crypto.randomUUID(),
+  updateAssigneeProject: crypto.randomUUID(),
 }
 
 const subjects = {
@@ -186,6 +193,13 @@ const projectIds = [
   ids.editTransitionProject,
   ids.archiveTransitionProject,
   ids.transitionArchiveProject,
+  ids.updateSameKeyProject,
+  ids.updateDifferentKeyProject,
+  ids.updateCancelProject,
+  ids.updateBlockCancelProject,
+  ids.updateEditProject,
+  ids.updateArchiveProject,
+  ids.updateAssigneeProject,
 ]
 const moduleByProject = new Map(
   projectIds.map((projectId) => [projectId, crypto.randomUUID()]),
@@ -202,6 +216,13 @@ const taskByProject = new Map(
     ids.editTransitionProject,
     ids.archiveTransitionProject,
     ids.transitionArchiveProject,
+    ids.updateSameKeyProject,
+    ids.updateDifferentKeyProject,
+    ids.updateCancelProject,
+    ids.updateBlockCancelProject,
+    ids.updateEditProject,
+    ids.updateArchiveProject,
+    ids.updateAssigneeProject,
   ].map((projectId) => [projectId, crypto.randomUUID()]),
 )
 const allUserIds = [
@@ -280,6 +301,7 @@ async function setupFixtures() {
         ids.archiveProject,
         ids.archiveTransitionProject,
         ids.transitionArchiveProject,
+        ids.updateArchiveProject,
       ].includes(projectId)
         ? 'completed'
         : 'active'
@@ -359,6 +381,10 @@ async function cleanupFixtures() {
     await client.query('begin')
     await client.query('set local session_replication_role = replica')
     await client.query(
+      'delete from public.task_updates where task_id in (select id from public.tasks where project_id = any($1::uuid[]))',
+      [projectIds],
+    )
+    await client.query(
       'delete from public.task_status_history where task_id in (select id from public.tasks where project_id = any($1::uuid[]))',
       [projectIds],
     )
@@ -424,6 +450,30 @@ const startSql = 'select public.start_task($1,$2) as transition'
 const blockSql = 'select public.block_task($1,$2,$3) as transition'
 const resumeSql = 'select public.resume_task($1,$2) as transition'
 const cancelSql = 'select public.cancel_task($1,$2) as transition'
+const createUpdateSql = `select public.create_task_update(
+  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10
+) as task_update`
+
+function progressParams(
+  taskId,
+  completedContent,
+  progress,
+  idempotencyKey,
+  { markBlocked = false, blockerReason = null } = {},
+) {
+  return [
+    taskId,
+    '2026-08-10',
+    completedContent,
+    progress,
+    null,
+    null,
+    false,
+    markBlocked,
+    blockerReason,
+    idempotencyKey,
+  ]
+}
 
 async function runActor(subject, sql, params) {
   const client = await connect()
@@ -496,6 +546,32 @@ async function transitionState(taskId) {
         [taskId],
       )
     ).rows
+  } finally {
+    await client.end()
+  }
+}
+
+async function progressState(taskId) {
+  const client = await connect()
+  try {
+    const task = (
+      await client.query(
+        `select status,progress,blocker_reason,blocked_at,blocked_by,
+                last_progress_at::text,last_progress_by,title,updated_at::text
+         from public.tasks where id=$1`,
+        [taskId],
+      )
+    ).rows[0]
+    const updates = (
+      await client.query(
+        `select id,update_seq::integer,progress,is_blocked,block_transition_id,
+                completed_content,created_at::text,created_by
+         from public.task_updates where task_id=$1 order by update_seq`,
+        [taskId],
+      )
+    ).rows
+    const history = await transitionState(taskId)
+    return { task, updates, history }
   } finally {
     await client.end()
   }
@@ -1002,6 +1078,302 @@ try {
     (await taskState(transitionArchiveTaskId)).status === 'in_progress' &&
       (await transitionState(transitionArchiveTaskId)).length === 1 &&
       (await projectStatus(ids.transitionArchiveProject)) === 'archived',
+  )
+
+  const updateSameKeyTaskId = taskByProject.get(ids.updateSameKeyProject)
+  await runActor(subjects.assignee, startSql, [
+    updateSameKeyTaskId,
+    crypto.randomUUID(),
+  ])
+  const updateSameKey = crypto.randomUUID()
+  const updateSameKeyRace = await lockWaitRace({
+    firstActor: subjects.assignee,
+    firstSql: createUpdateSql,
+    firstParams: progressParams(
+      updateSameKeyTaskId,
+      'Fictional same-key progress',
+      20,
+      updateSameKey,
+    ),
+    secondActor: subjects.assignee,
+    secondSql: createUpdateSql,
+    secondParams: progressParams(
+      updateSameKeyTaskId,
+      'Fictional same-key progress',
+      20,
+      updateSameKey,
+    ),
+  })
+  check(
+    'same-key progress: duplicate genuinely waited on the task write chain',
+    updateSameKeyRace.blockedObserved,
+  )
+  check(
+    'same-key progress: both calls complete without a database error',
+    updateSameKeyRace.secondError === null,
+  )
+  check(
+    'same-key progress: first is new and second is an idempotent replay',
+    updateSameKeyRace.firstResult.rows[0].task_update.was_existing === false &&
+      updateSameKeyRace.secondResult?.rows[0].task_update.was_existing === true,
+  )
+  const updateSameKeyState = await progressState(updateSameKeyTaskId)
+  check(
+    'same-key progress: one ledger row and one progress value remain',
+    updateSameKeyState.updates.length === 1 &&
+      updateSameKeyState.updates[0].update_seq === 1 &&
+      updateSameKeyState.task.progress === 20,
+  )
+
+  const updateDifferentKeyTaskId = taskByProject.get(
+    ids.updateDifferentKeyProject,
+  )
+  await runActor(subjects.assignee, startSql, [
+    updateDifferentKeyTaskId,
+    crypto.randomUUID(),
+  ])
+  const updateDifferentKeyRace = await lockWaitRace({
+    firstActor: subjects.assignee,
+    firstSql: createUpdateSql,
+    firstParams: progressParams(
+      updateDifferentKeyTaskId,
+      'Fictional first concurrent progress',
+      30,
+      crypto.randomUUID(),
+    ),
+    secondActor: subjects.assignee,
+    secondSql: createUpdateSql,
+    secondParams: progressParams(
+      updateDifferentKeyTaskId,
+      'Fictional second concurrent progress',
+      70,
+      crypto.randomUUID(),
+    ),
+  })
+  check(
+    'different-key progress: second writer genuinely waited',
+    updateDifferentKeyRace.blockedObserved,
+  )
+  check(
+    'different-key progress: both serialized updates succeed',
+    updateDifferentKeyRace.secondError === null,
+  )
+  const updateDifferentKeyState = await progressState(updateDifferentKeyTaskId)
+  check(
+    'different-key progress: sequence is unique and final task matches the linearized tail',
+    updateDifferentKeyState.updates.length === 2 &&
+      updateDifferentKeyState.updates[0].update_seq === 1 &&
+      updateDifferentKeyState.updates[1].update_seq === 2 &&
+      updateDifferentKeyState.task.progress === 70 &&
+      updateDifferentKeyState.task.last_progress_at ===
+        updateDifferentKeyState.updates[1].created_at &&
+      updateDifferentKeyState.task.last_progress_by === ids.assigneeStable,
+  )
+
+  const updateCancelTaskId = taskByProject.get(ids.updateCancelProject)
+  await runActor(subjects.assignee, startSql, [
+    updateCancelTaskId,
+    crypto.randomUUID(),
+  ])
+  const updateCancelRace = await lockWaitRace({
+    firstActor: subjects.assignee,
+    firstSql: createUpdateSql,
+    firstParams: progressParams(
+      updateCancelTaskId,
+      'Fictional progress before cancellation',
+      45,
+      crypto.randomUUID(),
+    ),
+    secondActor: subjects.owner,
+    secondSql: cancelSql,
+    secondParams: [updateCancelTaskId, crypto.randomUUID()],
+  })
+  check(
+    'progress vs cancel: cancel genuinely waited behind progress',
+    updateCancelRace.blockedObserved,
+  )
+  check(
+    'progress vs cancel: both legal serial operations complete',
+    updateCancelRace.secondError === null,
+  )
+  const updateCancelState = await progressState(updateCancelTaskId)
+  check(
+    'progress vs cancel: terminal task preserves committed progress without blocker residue',
+    updateCancelState.task.status === 'cancelled' &&
+      updateCancelState.task.progress === 45 &&
+      updateCancelState.task.blocker_reason === null &&
+      updateCancelState.updates.length === 1 &&
+      updateCancelState.history.at(-1)?.to_status === 'cancelled',
+  )
+
+  const updateBlockCancelTaskId = taskByProject.get(
+    ids.updateBlockCancelProject,
+  )
+  await runActor(subjects.assignee, startSql, [
+    updateBlockCancelTaskId,
+    crypto.randomUUID(),
+  ])
+  const updateBlockCancelRace = await lockWaitRace({
+    firstActor: subjects.assignee,
+    firstSql: createUpdateSql,
+    firstParams: progressParams(
+      updateBlockCancelTaskId,
+      'Fictional progress that detects a blocker',
+      50,
+      crypto.randomUUID(),
+      {
+        markBlocked: true,
+        blockerReason: 'Fictional dependency during progress race',
+      },
+    ),
+    secondActor: subjects.owner,
+    secondSql: cancelSql,
+    secondParams: [updateBlockCancelTaskId, crypto.randomUUID()],
+  })
+  check(
+    'progress-with-block vs cancel: cancel genuinely waited',
+    updateBlockCancelRace.blockedObserved,
+  )
+  check(
+    'progress-with-block vs cancel: both serial operations complete without deadlock',
+    updateBlockCancelRace.secondError === null,
+  )
+  const updateBlockCancelState = await progressState(updateBlockCancelTaskId)
+  check(
+    'progress-with-block vs cancel: update links the real block transition and final cancel clears current blocker',
+    updateBlockCancelState.task.status === 'cancelled' &&
+      updateBlockCancelState.task.progress === 50 &&
+      updateBlockCancelState.task.blocker_reason === null &&
+      updateBlockCancelState.updates.length === 1 &&
+      updateBlockCancelState.updates[0].is_blocked === true &&
+      updateBlockCancelState.updates[0].block_transition_id !== null &&
+      updateBlockCancelState.history.length === 3 &&
+      updateBlockCancelState.history[1].action === 'block' &&
+      updateBlockCancelState.history[2].action === 'cancel',
+  )
+
+  const updateEditTaskId = taskByProject.get(ids.updateEditProject)
+  await runActor(subjects.assignee, startSql, [
+    updateEditTaskId,
+    crypto.randomUUID(),
+  ])
+  const updateEditVersion = await taskVersion(updateEditTaskId)
+  const updateEditRace = await lockWaitRace({
+    firstActor: subjects.assignee,
+    firstSql: createUpdateSql,
+    firstParams: progressParams(
+      updateEditTaskId,
+      'Fictional progress before stale metadata edit',
+      65,
+      crypto.randomUUID(),
+    ),
+    secondActor: subjects.owner,
+    secondSql: updateSql,
+    secondParams: [
+      ids.updateEditProject,
+      updateEditTaskId,
+      moduleByProject.get(ids.updateEditProject),
+      'Stale metadata after progress',
+      ids.assigneeStable,
+      [],
+      ids.lead,
+      updateEditVersion,
+    ],
+  })
+  check(
+    'progress vs metadata: stale edit genuinely waited on project lock',
+    updateEditRace.blockedObserved,
+  )
+  check(
+    'progress vs metadata: old optimistic version is rejected',
+    updateEditRace.secondError?.code === '40001',
+  )
+  const updateEditState = await progressState(updateEditTaskId)
+  check(
+    'progress vs metadata: progress wins and stale title is not written',
+    updateEditState.task.progress === 65 &&
+      updateEditState.task.title === 'Fictional task before concurrent edit' &&
+      updateEditState.updates.length === 1,
+  )
+
+  const updateArchiveTaskId = taskByProject.get(ids.updateArchiveProject)
+  await runActor(subjects.assignee, startSql, [
+    updateArchiveTaskId,
+    crypto.randomUUID(),
+  ])
+  const updateArchiveVersion = await projectVersion(ids.updateArchiveProject)
+  const updateArchiveRace = await lockWaitRace({
+    firstActor: subjects.owner,
+    firstSql: 'select * from public.archive_project($1,$2)',
+    firstParams: [ids.updateArchiveProject, updateArchiveVersion],
+    secondActor: subjects.assignee,
+    secondSql: createUpdateSql,
+    secondParams: progressParams(
+      updateArchiveTaskId,
+      'Denied progress after archive',
+      80,
+      crypto.randomUUID(),
+    ),
+  })
+  check(
+    'archive vs progress: progress genuinely waited on project lock',
+    updateArchiveRace.blockedObserved,
+  )
+  check(
+    'archive vs progress: archived project rejects the later update',
+    updateArchiveRace.secondError?.code === '55000',
+  )
+  const updateArchiveState = await progressState(updateArchiveTaskId)
+  check(
+    'archive vs progress: rejected update leaves progress ledger empty',
+    updateArchiveState.task.progress === 0 &&
+      updateArchiveState.task.last_progress_at === null &&
+      updateArchiveState.updates.length === 0 &&
+      (await projectStatus(ids.updateArchiveProject)) === 'archived',
+  )
+
+  const updateAssigneeTaskId = taskByProject.get(ids.updateAssigneeProject)
+  await runActor(subjects.assignee, startSql, [
+    updateAssigneeTaskId,
+    crypto.randomUUID(),
+  ])
+  const updateAssigneeVersion = await taskVersion(updateAssigneeTaskId)
+  const updateAssigneeRace = await lockWaitRace({
+    firstActor: subjects.owner,
+    firstSql: updateSql,
+    firstParams: [
+      ids.updateAssigneeProject,
+      updateAssigneeTaskId,
+      moduleByProject.get(ids.updateAssigneeProject),
+      'Fictional reassigned task',
+      ids.collaboratorB,
+      [],
+      ids.lead,
+      updateAssigneeVersion,
+    ],
+    secondActor: subjects.assignee,
+    secondSql: createUpdateSql,
+    secondParams: progressParams(
+      updateAssigneeTaskId,
+      'Denied stale assignee progress',
+      90,
+      crypto.randomUUID(),
+    ),
+  })
+  check(
+    'assignee change vs progress: stale assignee update genuinely waited',
+    updateAssigneeRace.blockedObserved,
+  )
+  check(
+    'assignee change vs progress: old assignee is rejected after lock reauthorization',
+    updateAssigneeRace.secondError?.code === '42501',
+  )
+  const updateAssigneeState = await progressState(updateAssigneeTaskId)
+  check(
+    'assignee change vs progress: reassignment commits with no stale progress residue',
+    updateAssigneeState.task.title === 'Fictional reassigned task' &&
+      updateAssigneeState.task.progress === 0 &&
+      updateAssigneeState.updates.length === 0,
   )
 } finally {
   if (setupComplete) await cleanupFixtures()

@@ -26,6 +26,9 @@ export type Task = Omit<
   | 'description'
   | 'due_date'
   | 'estimated_hours'
+  | 'last_progress_at'
+  | 'last_progress_by'
+  | 'last_progress_by_display_name'
   | 'start_date'
   | 'visibility_users'
 > & {
@@ -38,6 +41,9 @@ export type Task = Omit<
   description: string | null
   due_date: string | null
   estimated_hours: number | null
+  last_progress_at: string | null
+  last_progress_by: string | null
+  last_progress_by_display_name: string | null
   start_date: string | null
   visibility_users: TaskPerson[]
 }
@@ -136,7 +142,50 @@ export type TaskStatusHistoryItem = Omit<
 }
 
 export type TaskTransitionResult = {
-  task: Task
   transition: TaskStatusTransition
+  was_existing: boolean
+}
+
+type GeneratedTaskProgressUpdate =
+  Database['public']['Functions']['list_task_updates']['Returns'][number]
+
+export type TaskProgressUpdate = Omit<
+  GeneratedTaskProgressUpdate,
+  'block_transition_id' | 'issues' | 'next_steps'
+> & {
+  block_transition_id: string | null
+  issues: string | null
+  next_steps: string | null
+}
+
+export type TaskProgressFormValues = {
+  recordDate: string
+  completedContent: string
+  progress: string
+  issues: string
+  nextSteps: string
+  needsAssistance: boolean
+  markBlocked: boolean
+  blockerReason: string
+}
+
+export type TaskProgressInput = {
+  taskId: string
+  projectId: string
+  workspaceId: string
+  recordDate: string
+  completedContent: string
+  progress: number
+  issues: string
+  nextSteps: string
+  needsAssistance: boolean
+  markBlocked: boolean
+  blockerReason: string
+  idempotencyKey: string
+}
+
+export type TaskProgressResult = {
+  task: Task
+  update: TaskProgressUpdate
   was_existing: boolean
 }

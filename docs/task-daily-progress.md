@@ -9,7 +9,7 @@ Migration `20260810120000_task_daily_progress_v1.sql` 新增 `task_updates`。�
 - `(task_id, update_seq)` 唯一；序号在持有 task 写锁后分配，不以时间戳作为并发排序依据。
 - `(created_by, idempotency_key)` 唯一，提供数据库级重试去重。
 - `completed_content` trim 后必填且最多 10000 字符；`issues`、`next_steps` 为空时存 `NULL`，非空时同样 trim 且最多 10000 字符。
-- `progress` 是 0–100 的整数。100% 仍可保持 `in_progress`，不会自动进入验收或完成状态。
+- `progress` 是 0–100 的整数。100% 仍保持 `in_progress`，不会自动进入验收或完成状态；Task 3.5 要求负责人或项目管理者另行确认提交验收。
 - `block_transition_id` 只能关联同一任务、同一 actor 的合法 Task 3.3 `block` 历史，且一个 block transition 最多被一条进展关联。
 - trigger 拒绝 `UPDATE` 和 `DELETE`，也拒绝不具备受控事务上下文的 `INSERT`。V1 不提供编辑、删除或通用 correction RPC。
 
@@ -55,7 +55,7 @@ Migration `20260810120000_task_daily_progress_v1.sql` 新增 `task_updates`。�
 - `todo`：拒绝；必须先使用 Task 3.3 start。
 - `in_progress`：可普通新增；勾选“同时标记阻塞”时必须填写原因并确认，随后原子执行 `in_progress → blocked`。
 - `blocked`：可继续新增；记录 `is_blocked=true`，但不创建 `blocked → blocked` 历史、不修改 current blocker，也不隐式 resume。
-- `pending_review`、`completed`、`cancelled`：拒绝新增。Task 3.4 不增加这些状态的 mutation。
+- `pending_review`、`completed`、`cancelled`：拒绝新增。Task 3.4 不增加这些状态的 mutation；`pending_review / completed` 只由 Task 3.5 语义化验收 RPC 处理。
 
 ## 幂等
 
@@ -96,4 +96,4 @@ Task 3.4 沿用 Task 3.1/3.3 的顺序：project → task 相关 app users/works
 
 ## 非目标
 
-Task 3.4 不实现 Task 3.5 验收、`pending_review/completed` mutation、通知或协助派发、看板 inline mutation、拖拽、批量进展、编辑/删除历史、附件、评论、mention、Stage 4 工作台、微信小程序或 CloudBase 业务桥接，也不新增第三方依赖。
+Task 3.4 自身不实现验收；Task 3.5 的独立边界见 [任务提交验收、通过与退回 V1](task-review-closure.md)。当前仍不实现通知或协助派发、看板 inline mutation、拖拽、批量进展、编辑/删除历史、附件、评论、mention、Stage 4 工作台、微信小程序或 CloudBase 业务桥接，也不新增第三方依赖。

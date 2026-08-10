@@ -368,6 +368,70 @@ export type Database = {
           },
         ]
       }
+      task_reviews: {
+        Row: {
+          action: Database["public"]["Enums"]["task_review_action"]
+          actor_id: string
+          created_at: string
+          from_status: Database["public"]["Enums"]["task_status"]
+          id: string
+          idempotency_key: string
+          return_reason: string | null
+          review_seq: number
+          status_transition_id: string
+          task_id: string
+          to_status: Database["public"]["Enums"]["task_status"]
+        }
+        Insert: {
+          action: Database["public"]["Enums"]["task_review_action"]
+          actor_id: string
+          created_at?: string
+          from_status: Database["public"]["Enums"]["task_status"]
+          id?: string
+          idempotency_key: string
+          return_reason?: string | null
+          review_seq: number
+          status_transition_id: string
+          task_id: string
+          to_status: Database["public"]["Enums"]["task_status"]
+        }
+        Update: {
+          action?: Database["public"]["Enums"]["task_review_action"]
+          actor_id?: string
+          created_at?: string
+          from_status?: Database["public"]["Enums"]["task_status"]
+          id?: string
+          idempotency_key?: string
+          return_reason?: string | null
+          review_seq?: number
+          status_transition_id?: string
+          task_id?: string
+          to_status?: Database["public"]["Enums"]["task_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_reviews_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_reviews_status_transition_id_fkey"
+            columns: ["status_transition_id"]
+            isOneToOne: true
+            referencedRelation: "task_status_history"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_reviews_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       task_status_history: {
         Row: {
           action: Database["public"]["Enums"]["task_status_action"]
@@ -535,6 +599,8 @@ export type Database = {
           blocked_at: string | null
           blocked_by: string | null
           blocker_reason: string | null
+          completed_at: string | null
+          completed_by: string | null
           created_at: string
           created_by: string
           description: string | null
@@ -563,6 +629,8 @@ export type Database = {
           blocked_at?: string | null
           blocked_by?: string | null
           blocker_reason?: string | null
+          completed_at?: string | null
+          completed_by?: string | null
           created_at?: string
           created_by: string
           description?: string | null
@@ -591,6 +659,8 @@ export type Database = {
           blocked_at?: string | null
           blocked_by?: string | null
           blocker_reason?: string | null
+          completed_at?: string | null
+          completed_by?: string | null
           created_at?: string
           created_by?: string
           description?: string | null
@@ -624,6 +694,13 @@ export type Database = {
           {
             foreignKeyName: "tasks_blocked_by_fkey"
             columns: ["blocked_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_completed_by_fkey"
+            columns: ["completed_by"]
             isOneToOne: false
             referencedRelation: "app_users"
             referencedColumns: ["id"]
@@ -970,6 +1047,10 @@ export type Database = {
           updated_by: string
         }[]
       }
+      approve_task_review: {
+        Args: { p_idempotency_key: string; p_task_id: string }
+        Returns: Json
+      }
       archive_project: {
         Args: { p_expected_updated_at: string; p_project_id: string }
         Returns: {
@@ -1214,6 +1295,15 @@ export type Database = {
           updated_by: string
         }[]
       }
+      execute_task_review: {
+        Args: {
+          p_action: Database["public"]["Enums"]["task_review_action"]
+          p_idempotency_key: string
+          p_return_reason: string
+          p_task_id: string
+        }
+        Returns: Json
+      }
       execute_task_transition: {
         Args: {
           p_action: Database["public"]["Enums"]["task_status_action"]
@@ -1255,6 +1345,9 @@ export type Database = {
           blocked_by_display_name: string
           blocker_reason: string
           collaborators: Json
+          completed_at: string
+          completed_by: string
+          completed_by_display_name: string
           created_at: string
           created_by: string
           description: string
@@ -1412,6 +1505,22 @@ export type Database = {
           project_id: string
           project_role: Database["public"]["Enums"]["project_role"]
           workspace_id: string
+        }[]
+      }
+      list_task_reviews: {
+        Args: { p_task_id: string }
+        Returns: {
+          action: Database["public"]["Enums"]["task_review_action"]
+          actor_display_name: string
+          actor_id: string
+          created_at: string
+          from_status: Database["public"]["Enums"]["task_status"]
+          return_reason: string
+          review_id: string
+          sequence: number
+          status_transition_id: string
+          task_id: string
+          to_status: Database["public"]["Enums"]["task_status"]
         }[]
       }
       list_task_status_history: {
@@ -1631,6 +1740,14 @@ export type Database = {
         Args: { p_idempotency_key: string; p_task_id: string }
         Returns: Json
       }
+      return_task_review: {
+        Args: {
+          p_idempotency_key: string
+          p_return_reason: string
+          p_task_id: string
+        }
+        Returns: Json
+      }
       set_project_lead: {
         Args: {
           p_expected_updated_at: string
@@ -1712,6 +1829,10 @@ export type Database = {
         Args: { p_idempotency_key: string; p_task_id: string }
         Returns: Json
       }
+      submit_task_for_review: {
+        Args: { p_idempotency_key: string; p_task_id: string }
+        Returns: Json
+      }
       task_progress_snapshot: {
         Args: { p_task_id: string }
         Returns: {
@@ -1723,6 +1844,63 @@ export type Database = {
           blocked_by_display_name: string
           blocker_reason: string
           collaborators: Json
+          created_at: string
+          created_by: string
+          description: string
+          due_date: string
+          estimated_hours: number
+          last_progress_at: string
+          last_progress_by: string
+          last_progress_by_display_name: string
+          module_id: string
+          module_name: string
+          priority: Database["public"]["Enums"]["task_priority"]
+          progress: number
+          project_id: string
+          reviewer_display_name: string
+          reviewer_id: string
+          start_date: string
+          status: Database["public"]["Enums"]["task_status"]
+          task_id: string
+          title: string
+          updated_at: string
+          updated_by: string
+          visibility: Database["public"]["Enums"]["task_visibility"]
+          visibility_users: Json
+          workload_level: Database["public"]["Enums"]["task_workload_level"]
+          workspace_id: string
+        }[]
+      }
+      task_review_snapshot: {
+        Args: { p_task_id: string }
+        Returns: {
+          action: Database["public"]["Enums"]["task_review_action"]
+          actor_display_name: string
+          actor_id: string
+          created_at: string
+          from_status: Database["public"]["Enums"]["task_status"]
+          return_reason: string
+          review_id: string
+          sequence: number
+          status_transition_id: string
+          task_id: string
+          to_status: Database["public"]["Enums"]["task_status"]
+        }[]
+      }
+      task_review_task_snapshot: {
+        Args: { p_task_id: string }
+        Returns: {
+          acceptance_criteria: string
+          assignee_display_name: string
+          assignee_id: string
+          blocked_at: string
+          blocked_by: string
+          blocked_by_display_name: string
+          blocker_reason: string
+          collaborators: Json
+          completed_at: string
+          completed_by: string
+          completed_by_display_name: string
           created_at: string
           created_by: string
           description: string
@@ -1971,6 +2149,7 @@ export type Database = {
         | "archived"
       project_type: "operations"
       task_priority: "low" | "medium" | "high" | "urgent"
+      task_review_action: "submit" | "approve" | "return"
       task_status:
         | "todo"
         | "in_progress"
@@ -1978,7 +2157,14 @@ export type Database = {
         | "pending_review"
         | "completed"
         | "cancelled"
-      task_status_action: "start" | "block" | "resume" | "cancel"
+      task_status_action:
+        | "start"
+        | "block"
+        | "resume"
+        | "cancel"
+        | "submit_review"
+        | "approve_review"
+        | "return_review"
       task_visibility: "project" | "restricted"
       task_workload_level: "xs" | "s" | "m" | "l" | "xl"
       workspace_invitation_status:
@@ -2127,6 +2313,7 @@ export const Constants = {
       project_status: ["planning", "active", "paused", "completed", "archived"],
       project_type: ["operations"],
       task_priority: ["low", "medium", "high", "urgent"],
+      task_review_action: ["submit", "approve", "return"],
       task_status: [
         "todo",
         "in_progress",
@@ -2135,7 +2322,15 @@ export const Constants = {
         "completed",
         "cancelled",
       ],
-      task_status_action: ["start", "block", "resume", "cancel"],
+      task_status_action: [
+        "start",
+        "block",
+        "resume",
+        "cancel",
+        "submit_review",
+        "approve_review",
+        "return_review",
+      ],
       task_visibility: ["project", "restricted"],
       task_workload_level: ["xs", "s", "m", "l", "xl"],
       workspace_invitation_status: [

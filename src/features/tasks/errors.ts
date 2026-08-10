@@ -20,6 +20,13 @@ export type TaskErrorCode =
   | 'progress_block_reason_required'
   | 'progress_block_reason_too_long'
   | 'progress_concurrent_state_changed'
+  | 'review_invalid_status'
+  | 'review_progress_required'
+  | 'review_return_reason_required'
+  | 'review_return_reason_too_long'
+  | 'review_idempotency_conflict'
+  | 'review_edit_frozen'
+  | 'review_concurrent_state_changed'
   | 'unknown_service_error'
 
 export type SafeTaskError = { code: TaskErrorCode; message: string }
@@ -47,6 +54,13 @@ const messages: Record<TaskErrorCode, string> = {
   progress_block_reason_required: '同时标记阻塞时必须填写阻塞原因。',
   progress_block_reason_too_long: '阻塞原因不能超过 2000 个字符。',
   progress_concurrent_state_changed: '任务状态正在变化，请刷新后重试。',
+  review_invalid_status: '当前任务状态不能执行此验收操作，请刷新后重试。',
+  review_progress_required: '任务进度达到 100% 后才能提交验收。',
+  review_return_reason_required: '请填写退回原因。',
+  review_return_reason_too_long: '退回原因不能超过 2000 个字符。',
+  review_idempotency_conflict: '本次验收请求已被用于其他操作，请重新操作。',
+  review_edit_frozen: '待验收或已完成任务不能修改核心信息。',
+  review_concurrent_state_changed: '验收状态正在变化，请刷新后重试。',
   unknown_service_error: '任务操作暂时无法完成，请稍后重试。',
 }
 
@@ -120,6 +134,24 @@ function knownCode(signal: string | null): TaskErrorCode | null {
       return 'progress_block_reason_too_long'
     case 'task_update_concurrent_state_changed':
       return 'progress_concurrent_state_changed'
+    case 'task_review_permission_denied':
+      return 'permission_denied'
+    case 'task_review_invalid_status':
+      return 'review_invalid_status'
+    case 'task_review_progress_required':
+      return 'review_progress_required'
+    case 'task_review_return_reason_required':
+      return 'review_return_reason_required'
+    case 'task_review_return_reason_too_long':
+      return 'review_return_reason_too_long'
+    case 'task_review_idempotency_conflict':
+      return 'review_idempotency_conflict'
+    case 'task_review_edit_frozen':
+      return 'review_edit_frozen'
+    case 'task_review_concurrent_state_changed':
+      return 'review_concurrent_state_changed'
+    case 'task_review_payload_invalid':
+      return 'validation_failed'
     default:
       return null
   }

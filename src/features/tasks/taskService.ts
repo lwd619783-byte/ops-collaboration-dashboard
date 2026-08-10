@@ -21,6 +21,11 @@ import type {
   TaskProgressInput,
   TaskProgressResult,
   TaskProgressUpdate,
+  TaskReview,
+  TaskReviewAction,
+  TaskReviewInput,
+  TaskReviewResult,
+  TaskReturnReviewInput,
   TaskStatus,
   TaskStatusAction,
   TaskStatusHistoryItem,
@@ -220,6 +225,17 @@ function parseTaskCore(value: unknown): TaskCore | null {
     value.last_progress_at === null &&
     value.last_progress_by === null &&
     value.last_progress_by_display_name === null
+  const validCompletion =
+    value.status === 'completed' &&
+    isTimestamp(value.completed_at) &&
+    isUuid(value.completed_by) &&
+    isString(value.completed_by_display_name) &&
+    value.completed_by_display_name.trim().length > 0
+  const emptyCompletion =
+    value.status !== 'completed' &&
+    value.completed_at === null &&
+    value.completed_by === null &&
+    value.completed_by_display_name === null
   if (
     !isUuid(value.task_id) ||
     !isUuid(value.project_id) ||
@@ -260,7 +276,8 @@ function parseTaskCore(value: unknown): TaskCore | null {
     !isTimestamp(value.created_at) ||
     !isUuid(value.updated_by) ||
     !isTimestamp(value.updated_at) ||
-    (!validLatestProgress && !emptyLatestProgress)
+    (!validLatestProgress && !emptyLatestProgress) ||
+    (!validCompletion && !emptyCompletion)
   ) {
     return null
   }
@@ -279,6 +296,9 @@ function parseTaskCore(value: unknown): TaskCore | null {
     assignee_display_name: value.assignee_display_name,
     assignee_id: value.assignee_id,
     collaborators,
+    completed_at: value.completed_at as string | null,
+    completed_by: value.completed_by as string | null,
+    completed_by_display_name: value.completed_by_display_name as string | null,
     created_at: value.created_at,
     created_by: value.created_by,
     description: value.description,
@@ -315,6 +335,9 @@ function parseLegacyMutationTaskCore(value: unknown): TaskCore | null {
     last_progress_at: null,
     last_progress_by: null,
     last_progress_by_display_name: null,
+    completed_at: null,
+    completed_by: null,
+    completed_by_display_name: null,
   })
 }
 
@@ -375,12 +398,21 @@ const actionTransitions: Record<
   block: { from: ['in_progress'], to: 'blocked' },
   resume: { from: ['blocked'], to: 'in_progress' },
   cancel: { from: ['todo', 'in_progress', 'blocked'], to: 'cancelled' },
+  submit_review: { from: ['in_progress'], to: 'pending_review' },
+  approve_review: { from: ['pending_review'], to: 'completed' },
+  return_review: { from: ['pending_review'], to: 'in_progress' },
 }
 
 function isTaskStatusAction(value: unknown): value is TaskStatusAction {
-  return ['start', 'block', 'resume', 'cancel'].includes(
-    typeof value === 'string' ? value : '',
-  )
+  return [
+    'start',
+    'block',
+    'resume',
+    'cancel',
+    'submit_review',
+    'approve_review',
+    'return_review',
+  ].includes(typeof value === 'string' ? value : '')
 }
 
 function parseTransition(value: unknown): TaskStatusTransition | null {
@@ -546,7 +578,14 @@ function parseProgressResult(
   if (!isRecord(value) || typeof value.was_existing !== 'boolean') {
     return invalidPayload()
   }
-  const task = parseTask(value.task)
+  const task = isRecord(value.task)
+    ? parseTask({
+        ...value.task,
+        completed_at: null,
+        completed_by: null,
+        completed_by_display_name: null,
+      })
+    : null
   const update = parseProgressUpdate(value.update)
   if (
     !task ||
@@ -596,7 +635,7 @@ function parseHistoryItem(value: unknown): TaskStatusHistoryItem | null {
   }
   const expected = actionTransitions[value.action]
   const validReason =
-    value.action === 'block'
+    value.action === 'block' || value.action === 'return_review'
       ? isString(value.reason) &&
         value.reason.trim() === value.reason &&
         value.reason.length > 0 &&
@@ -644,6 +683,156 @@ function parseHistory(
     transitionIds.add(item.transition_id)
   }
   return { ok: true, data: rows }
+}
+
+const reviewTransitions: Record<
+  TaskReviewAction,
+  {
+    from: TaskStatus
+    to: TaskStatus
+    statusAction: TaskStatusAction
+  }
+> = {
+  submit: {
+    from: 'in_progress',
+    to: 'pending_review',
+    statusAction: 'submit_review',
+  },
+  approve: {
+    from: 'pending_review',
+    to: 'completed',
+    statusAction: 'approve_review',
+  },
+  return: {
+    from: 'pending_review',
+    to: 'in_progress',
+    statusAction: 'return_review',
+  },
+}
+
+function isTaskReviewAction(value: unknown): value is TaskReviewAction {
+  return ['submit', 'approve', 'return'].includes(
+    typeof value === 'string' ? value : '',
+  )
+}
+
+function parseReview(value: unknown): TaskReview | null {
+  if (
+    !isRecord(value) ||
+    !isUuid(value.review_id) ||
+    !isUuid(value.task_id) ||
+    typeof value.sequence !== 'number' ||
+    !Number.isSafeInteger(value.sequence) ||
+    value.sequence < 1 ||
+    !isTaskReviewAction(value.action) ||
+    !isUuid(value.actor_id) ||
+    !isString(value.actor_display_name) ||
+    value.actor_display_name.trim().length === 0 ||
+    !isTaskStatus(value.from_status) ||
+    !isTaskStatus(value.to_status) ||
+    !isUuid(value.status_transition_id) ||
+    !isTimestamp(value.created_at)
+  ) {
+    return null
+  }
+  const expected = reviewTransitions[value.action]
+  const validReason =
+    value.action === 'return'
+      ? isString(value.return_reason) &&
+        value.return_reason.trim() === value.return_reason &&
+        value.return_reason.length > 0 &&
+        value.return_reason.length <= 2000
+      : value.return_reason === null
+  if (
+    value.from_status !== expected.from ||
+    value.to_status !== expected.to ||
+    !validReason
+  ) {
+    return null
+  }
+  return {
+    action: value.action,
+    actor_display_name: value.actor_display_name,
+    actor_id: value.actor_id,
+    created_at: value.created_at,
+    from_status: value.from_status,
+    return_reason: value.return_reason as string | null,
+    review_id: value.review_id,
+    sequence: value.sequence,
+    status_transition_id: value.status_transition_id,
+    task_id: value.task_id,
+    to_status: value.to_status,
+  }
+}
+
+function parseReviews(
+  value: unknown,
+  taskId: string,
+): TaskServiceResult<TaskReview[]> {
+  if (!Array.isArray(value)) return invalidPayload()
+  const reviews = value.map(parseReview)
+  if (reviews.some((review) => review === null)) return invalidPayload()
+  const rows = reviews as TaskReview[]
+  const reviewIds = new Set<string>()
+  const transitionIds = new Set<string>()
+  for (const [index, review] of rows.entries()) {
+    if (
+      review.task_id !== taskId ||
+      review.sequence !== index + 1 ||
+      reviewIds.has(review.review_id) ||
+      transitionIds.has(review.status_transition_id)
+    ) {
+      return invalidPayload()
+    }
+    reviewIds.add(review.review_id)
+    transitionIds.add(review.status_transition_id)
+  }
+  return { ok: true, data: rows }
+}
+
+function parseReviewResult(
+  value: unknown,
+  input: TaskReviewInput,
+  action: TaskReviewAction,
+  returnReason: string | null,
+): TaskServiceResult<TaskReviewResult> {
+  if (!isRecord(value) || typeof value.was_existing !== 'boolean') {
+    return invalidPayload()
+  }
+  const task = parseTask(value.task)
+  const review = parseReview(value.review)
+  const transition = parseTransition(value.transition)
+  const expected = reviewTransitions[action]
+  if (
+    !task ||
+    !review ||
+    !transition ||
+    task.task_id !== input.taskId ||
+    task.project_id !== input.projectId ||
+    task.workspace_id !== input.workspaceId ||
+    review.task_id !== input.taskId ||
+    review.action !== action ||
+    review.return_reason !== returnReason ||
+    review.status_transition_id !== transition.transition_id ||
+    review.actor_id.length === 0 ||
+    review.from_status !== transition.from_status ||
+    review.to_status !== transition.to_status ||
+    review.created_at !== transition.created_at ||
+    transition.task_id !== input.taskId ||
+    transition.action !== expected.statusAction ||
+    (!value.was_existing && task.status !== expected.to) ||
+    (!value.was_existing &&
+      action === 'approve' &&
+      (task.completed_at !== review.created_at ||
+        task.completed_by !== review.actor_id ||
+        task.completed_by_display_name !== review.actor_display_name))
+  ) {
+    return invalidPayload()
+  }
+  return {
+    ok: true,
+    data: { review, transition, was_existing: value.was_existing },
+  }
 }
 
 function parseCandidate(value: unknown): TaskAssignmentCandidate | null {
@@ -948,6 +1137,74 @@ export async function listTaskUpdates(
   } catch (error) {
     return { ok: false, error: mapTaskError(error) }
   }
+}
+
+export async function listTaskReviews(
+  client: SupabaseClient<Database>,
+  taskId: string,
+): Promise<TaskServiceResult<TaskReview[]>> {
+  try {
+    const { data, error } = await client.rpc('list_task_reviews', {
+      p_task_id: taskId,
+    })
+    if (error) return { ok: false, error: mapTaskError(error) }
+    return parseReviews(data, taskId)
+  } catch (error) {
+    return { ok: false, error: mapTaskError(error) }
+  }
+}
+
+async function runReview(
+  input: TaskReviewInput,
+  action: TaskReviewAction,
+  returnReason: string | null,
+  request: () => Promise<{ data: unknown; error: unknown }>,
+): Promise<TaskServiceResult<TaskReviewResult>> {
+  try {
+    const { data, error } = await request()
+    if (error) return { ok: false, error: mapTaskError(error) }
+    return parseReviewResult(data, input, action, returnReason)
+  } catch (error) {
+    return { ok: false, error: mapTaskError(error) }
+  }
+}
+
+export async function submitTaskForReview(
+  client: SupabaseClient<Database>,
+  input: TaskReviewInput,
+): Promise<TaskServiceResult<TaskReviewResult>> {
+  return runReview(input, 'submit', null, async () =>
+    client.rpc('submit_task_for_review', {
+      p_task_id: input.taskId,
+      p_idempotency_key: input.idempotencyKey,
+    }),
+  )
+}
+
+export async function approveTaskReview(
+  client: SupabaseClient<Database>,
+  input: TaskReviewInput,
+): Promise<TaskServiceResult<TaskReviewResult>> {
+  return runReview(input, 'approve', null, async () =>
+    client.rpc('approve_task_review', {
+      p_task_id: input.taskId,
+      p_idempotency_key: input.idempotencyKey,
+    }),
+  )
+}
+
+export async function returnTaskReview(
+  client: SupabaseClient<Database>,
+  input: TaskReturnReviewInput,
+): Promise<TaskServiceResult<TaskReviewResult>> {
+  const normalizedReason = input.returnReason.trim()
+  return runReview(input, 'return', normalizedReason, async () =>
+    client.rpc('return_task_review', {
+      p_task_id: input.taskId,
+      p_return_reason: normalizedReason,
+      p_idempotency_key: input.idempotencyKey,
+    }),
+  )
 }
 
 type CreateProgressArgs =

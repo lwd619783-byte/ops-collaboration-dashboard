@@ -1,4 +1,5 @@
 import type {
+  TaskReviewAction,
   TaskPriority,
   TaskStatus,
   TaskStatusAction,
@@ -42,6 +43,15 @@ export const taskStatusActionLabels: Record<TaskStatusAction, string> = {
   block: '标记阻塞',
   resume: '恢复进行中',
   cancel: '取消任务',
+  submit_review: '提交验收',
+  approve_review: '通过验收',
+  return_review: '退回修改',
+}
+
+export const taskReviewActionLabels: Record<TaskReviewAction, string> = {
+  submit: '提交验收',
+  approve: '通过验收',
+  return: '退回修改',
 }
 
 export function isTaskPriority(value: unknown): value is TaskPriority {

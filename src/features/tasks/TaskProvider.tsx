@@ -3,6 +3,7 @@ import { createSafeTaskError } from '@/features/tasks/errors'
 import { TaskContext } from '@/features/tasks/TaskContext'
 import {
   blockTask,
+  approveTaskReview,
   cancelTask,
   createTask,
   createTaskProgressUpdate,
@@ -10,9 +11,12 @@ import {
   listProjectTasks,
   listTaskStatusHistory,
   listTaskUpdates,
+  listTaskReviews,
   listTaskAssignmentCandidates,
   resumeTask,
+  returnTaskReview,
   startTask,
+  submitTaskForReview,
   updateTask,
   type TaskServiceResult,
 } from '@/features/tasks/taskService'
@@ -76,6 +80,14 @@ export function TaskProvider({
       createProgressUpdate: (
         input: Parameters<typeof createTaskProgressUpdate>[1],
       ) => withClient((client) => createTaskProgressUpdate(client, input)),
+      listReviews: (taskId: string) =>
+        withClient((client) => listTaskReviews(client, taskId)),
+      submitReview: (input: Parameters<typeof submitTaskForReview>[1]) =>
+        withClient((client) => submitTaskForReview(client, input)),
+      approveReview: (input: Parameters<typeof approveTaskReview>[1]) =>
+        withClient((client) => approveTaskReview(client, input)),
+      returnReview: (input: Parameters<typeof returnTaskReview>[1]) =>
+        withClient((client) => returnTaskReview(client, input)),
     }),
     [withClient],
   )

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  approveTaskReview,
   blockTask,
   cancelTask,
   createTask,
@@ -7,10 +8,13 @@ import {
   getTask,
   listProjectTasks,
   listTaskAssignmentCandidates,
+  listTaskReviews,
   listTaskStatusHistory,
   listTaskUpdates,
+  returnTaskReview,
   resumeTask,
   startTask,
+  submitTaskForReview,
   updateTask,
 } from '@/features/tasks/taskService'
 import { mapTaskError } from '@/features/tasks/errors'
@@ -25,6 +29,8 @@ const MODULE_ID = 'bbbbbbbb-1111-4111-8111-111111111111'
 const TASK_ID = 'cccccccc-1111-4111-8111-111111111111'
 const REVIEWER_ID = '22222222-2222-4222-8222-222222222222'
 const UPDATE_ID = 'eeeeeeee-3333-4333-8333-333333333333'
+const REVIEW_ID = 'eeeeeeee-4444-4444-8444-444444444444'
+const REVIEW_TRANSITION_ID = 'eeeeeeee-5555-4555-8555-555555555555'
 
 const taskRow = {
   task_id: TASK_ID,
@@ -52,6 +58,9 @@ const taskRow = {
   last_progress_at: null,
   last_progress_by: null,
   last_progress_by_display_name: null,
+  completed_at: null,
+  completed_by: null,
+  completed_by_display_name: null,
   blocker_reason: null,
   blocked_at: null,
   blocked_by: null,
@@ -117,6 +126,27 @@ const progressRow = {
   created_by: FICTIONAL_APP_USER_ID,
   created_by_display_name: '虚构负责人',
   created_at: '2026-08-10T02:00:00+00:00',
+}
+
+const reviewRow = {
+  review_id: REVIEW_ID,
+  task_id: TASK_ID,
+  sequence: 1,
+  action: 'submit' as const,
+  actor_id: FICTIONAL_APP_USER_ID,
+  actor_display_name: 'Fictional assignee',
+  from_status: 'in_progress' as const,
+  to_status: 'pending_review' as const,
+  return_reason: null,
+  status_transition_id: REVIEW_TRANSITION_ID,
+  created_at: '2026-08-10T03:00:00+00:00',
+}
+
+const reviewInput = {
+  taskId: TASK_ID,
+  projectId: PROJECT_ID,
+  workspaceId: FICTIONAL_WORKSPACE_ID,
+  idempotencyKey: createInput.idempotencyKey,
 }
 
 describe('任务 service', () => {
@@ -802,6 +832,210 @@ describe('任务 service', () => {
     )
   })
 
+  it('validates the task review list scope, sequence, action payload, and unique transition linkage', async () => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc.mockResolvedValue({ data: [reviewRow], error: null })
+
+    await expect(listTaskReviews(supabase.client, TASK_ID)).resolves.toEqual({
+      ok: true,
+      data: [reviewRow],
+    })
+    expect(supabase.rpc).toHaveBeenCalledWith('list_task_reviews', {
+      p_task_id: TASK_ID,
+    })
+
+    for (const data of [
+      [{ ...reviewRow, sequence: 2 }],
+      [{ ...reviewRow, return_reason: 'not allowed' }],
+      [
+        reviewRow,
+        {
+          ...reviewRow,
+          review_id: 'eeeeeeee-6666-4666-8666-666666666666',
+          sequence: 2,
+        },
+      ],
+    ]) {
+      supabase.rpc.mockResolvedValue({ data, error: null })
+      expect((await listTaskReviews(supabase.client, TASK_ID)).ok).toBe(false)
+    }
+  })
+
+  it('submits for review with a whitelisted payload and validates the atomic review linkage', async () => {
+    const supabase = createSupabaseClientMock()
+    const transition = {
+      transition_id: REVIEW_TRANSITION_ID,
+      task_id: TASK_ID,
+      sequence: 2,
+      from_status: 'in_progress',
+      to_status: 'pending_review',
+      action: 'submit_review',
+      created_at: reviewRow.created_at,
+    }
+    supabase.rpc.mockResolvedValue({
+      data: {
+        task: {
+          ...taskRow,
+          status: 'pending_review',
+          progress: 100,
+          last_progress_at: progressRow.created_at,
+          last_progress_by: FICTIONAL_APP_USER_ID,
+          last_progress_by_display_name: 'Fictional assignee',
+          updated_at: reviewRow.created_at,
+        },
+        transition,
+        review: reviewRow,
+        was_existing: false,
+      },
+      error: null,
+    })
+
+    await expect(
+      submitTaskForReview(supabase.client, reviewInput),
+    ).resolves.toEqual({
+      ok: true,
+      data: { transition, review: reviewRow, was_existing: false },
+    })
+    expect(supabase.rpc).toHaveBeenCalledWith('submit_task_for_review', {
+      p_task_id: TASK_ID,
+      p_idempotency_key: createInput.idempotencyKey,
+    })
+    expect(supabase.rpc.mock.calls[0][1]).not.toHaveProperty('actor_id')
+    expect(supabase.rpc.mock.calls[0][1]).not.toHaveProperty('target_status')
+  })
+
+  it('approves review only when the completion snapshot matches the review actor and time', async () => {
+    const supabase = createSupabaseClientMock()
+    const approveReview = {
+      ...reviewRow,
+      action: 'approve' as const,
+      actor_id: REVIEWER_ID,
+      actor_display_name: 'Fictional reviewer',
+      from_status: 'pending_review' as const,
+      to_status: 'completed' as const,
+    }
+    const transition = {
+      transition_id: REVIEW_TRANSITION_ID,
+      task_id: TASK_ID,
+      sequence: 3,
+      from_status: 'pending_review',
+      to_status: 'completed',
+      action: 'approve_review',
+      created_at: approveReview.created_at,
+    }
+    const data = {
+      task: {
+        ...taskRow,
+        status: 'completed',
+        progress: 100,
+        last_progress_at: progressRow.created_at,
+        last_progress_by: FICTIONAL_APP_USER_ID,
+        last_progress_by_display_name: 'Fictional assignee',
+        completed_at: approveReview.created_at,
+        completed_by: REVIEWER_ID,
+        completed_by_display_name: 'Fictional reviewer',
+        updated_at: approveReview.created_at,
+      },
+      transition,
+      review: approveReview,
+      was_existing: false,
+    }
+    supabase.rpc.mockResolvedValue({ data, error: null })
+
+    expect((await approveTaskReview(supabase.client, reviewInput)).ok).toBe(
+      true,
+    )
+    expect(supabase.rpc).toHaveBeenCalledWith('approve_task_review', {
+      p_task_id: TASK_ID,
+      p_idempotency_key: createInput.idempotencyKey,
+    })
+
+    supabase.rpc.mockResolvedValue({
+      data: {
+        ...data,
+        task: { ...data.task, completed_by: FICTIONAL_APP_USER_ID },
+      },
+      error: null,
+    })
+    expect((await approveTaskReview(supabase.client, reviewInput)).ok).toBe(
+      false,
+    )
+  })
+
+  it('normalizes a return reason and rejects malformed return review results', async () => {
+    const supabase = createSupabaseClientMock()
+    const returnedReview = {
+      ...reviewRow,
+      action: 'return' as const,
+      actor_id: REVIEWER_ID,
+      actor_display_name: 'Fictional reviewer',
+      from_status: 'pending_review' as const,
+      to_status: 'in_progress' as const,
+      return_reason: 'Please add evidence.',
+    }
+    const transition = {
+      transition_id: REVIEW_TRANSITION_ID,
+      task_id: TASK_ID,
+      sequence: 3,
+      from_status: 'pending_review',
+      to_status: 'in_progress',
+      action: 'return_review',
+      created_at: returnedReview.created_at,
+    }
+    const data = {
+      task: {
+        ...taskRow,
+        status: 'in_progress',
+        progress: 100,
+        last_progress_at: progressRow.created_at,
+        last_progress_by: FICTIONAL_APP_USER_ID,
+        last_progress_by_display_name: 'Fictional assignee',
+        updated_at: returnedReview.created_at,
+      },
+      transition,
+      review: returnedReview,
+      was_existing: false,
+    }
+    supabase.rpc.mockResolvedValue({ data, error: null })
+
+    await expect(
+      returnTaskReview(supabase.client, {
+        ...reviewInput,
+        returnReason: '  Please add evidence.  ',
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      data: { transition, review: returnedReview, was_existing: false },
+    })
+    expect(supabase.rpc).toHaveBeenCalledWith('return_task_review', {
+      p_task_id: TASK_ID,
+      p_return_reason: 'Please add evidence.',
+      p_idempotency_key: createInput.idempotencyKey,
+    })
+
+    for (const malformed of [
+      { ...data, review: { ...returnedReview, return_reason: null } },
+      {
+        ...data,
+        review: {
+          ...returnedReview,
+          status_transition_id: 'eeeeeeee-7777-4777-8777-777777777777',
+        },
+      },
+      { ...data, review: { ...returnedReview, created_at: 'not-a-time' } },
+    ]) {
+      supabase.rpc.mockResolvedValue({ data: malformed, error: null })
+      expect(
+        (
+          await returnTaskReview(supabase.client, {
+            ...reviewInput,
+            returnReason: 'Please add evidence.',
+          })
+        ).ok,
+      ).toBe(false)
+    }
+  })
+
   it('数据库错误只映射稳定安全分类', () => {
     expect(
       mapTaskError({ code: '55000', message: 'task_project_archived' }),
@@ -827,5 +1061,18 @@ describe('任务 service', () => {
         message: 'task_update_idempotency_conflict',
       }).code,
     ).toBe('progress_idempotency_conflict')
+    expect(
+      mapTaskError({
+        code: '23505',
+        message: 'task_review_idempotency_conflict',
+      }).code,
+    ).toBe('review_idempotency_conflict')
+    expect(
+      mapTaskError({ code: '55000', message: 'task_review_progress_required' })
+        .code,
+    ).toBe('review_progress_required')
+    expect(
+      mapTaskError({ code: '55000', message: 'task_review_edit_frozen' }).code,
+    ).toBe('review_edit_frozen')
   })
 })

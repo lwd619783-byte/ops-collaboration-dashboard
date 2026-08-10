@@ -13,7 +13,7 @@ Task 3.3 在 Task 3.1 的项目任务和 Task 3.2 的只读任务中心之上增
 | `resume` | `blocked → in_progress`                    | 无   |
 | `cancel` | `todo / in_progress / blocked → cancelled` | 无   |
 
-数据库不提供可传入目标状态的通用 setter。`pending_review` 和 `completed` 仍只是 schema 预留词汇；Task 3.3 没有进入、离开或修改它们的 RPC/UI。Task 3.3 状态 RPC 不修改 `progress`；Task 3.4 只在追加每日进展的同一事务中写入进展比例，并可复用本状态机原子执行一次 block。
+数据库不提供可传入目标状态的通用 setter。Task 3.3 本身没有进入、离开或修改 `pending_review / completed` 的 RPC/UI；Task 3.5 只通过独立语义化验收 RPC 进入或离开这些状态，并把每次验收动作关联到本表中的精确共享历史。Task 3.3 状态 RPC 不修改 `progress`；Task 3.4 只在追加每日进展的同一事务中写入进展比例，并可复用本状态机原子执行一次 block。
 
 ## 数据模型与 blocker 不变量
 
@@ -68,7 +68,7 @@ Migration `supabase/migrations/20260809220000_task_status_transitions_v1.sql` �
 
 ## Terminal lifecycle
 
-`cancelled` 和未来的 `completed` 是 terminal；`todo / in_progress / blocked / pending_review` 是 non-terminal。项目成员移除/降级、工作空间成员停用和 app user 停用 guard 只把 non-terminal task 的 assignee/collaborator/reviewer/显式可见关系解释为当前职责。cancelled 历史任务和 `task_status_history.actor_id` 不会永久阻止人员生命周期操作。模块删除规则不变：任何状态的任务仍保留原模块引用，因此被任务引用的模块继续不可删除。
+`cancelled` 和 `completed` 是 terminal；`todo / in_progress / blocked / pending_review` 是 non-terminal。项目成员移除/降级、工作空间成员停用和 app user 停用 guard 只把 non-terminal task 的 assignee/collaborator/reviewer/显式可见关系解释为当前职责。terminal 历史任务、`task_status_history.actor_id` 和 Task 3.5 review actor 不会永久阻止人员生命周期操作。模块删除规则不变：任何状态的任务仍保留原模块引用，因此被任务引用的模块继续不可删除。
 
 ## 前端
 
@@ -95,7 +95,7 @@ Migration `supabase/migrations/20260809220000_task_status_transitions_v1.sql` �
 
 ## 非目标
 
-Task 3.3 本身不提供进展写入；Task 3.4 的独立边界见 [每日任务进展与进度同步 V1](task-daily-progress.md)。当前仍不实现 Task 3.5 验收/完成、pending_review/completed mutation、拖拽、board inline action、批量操作、通知、外部平台、私人任务、全局工作台或 bundle code splitting，也未增加第三方依赖。
+Task 3.3 本身不提供进展或验收写入；Task 3.4 的独立边界见 [每日任务进展与进度同步 V1](task-daily-progress.md)，Task 3.5 的边界见 [任务提交验收、通过与退回 V1](task-review-closure.md)。当前仍不实现已完成重开、拖拽、board inline action、批量操作、通知、外部平台、私人任务、全局工作台或 bundle code splitting，也未增加第三方依赖。
 
 ## 本地验证
 

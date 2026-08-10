@@ -139,7 +139,11 @@ update public.tasks set
   blocked_by='f1000000-0000-4000-8000-000000000003'
 where id='f6000000-0000-4000-8000-000000000003';
 update public.tasks set status='pending_review' where id='f6000000-0000-4000-8000-000000000005';
-update public.tasks set status='completed' where id='f6000000-0000-4000-8000-000000000006';
+update public.tasks set
+  status='completed',
+  completed_at=now(),
+  completed_by='f1000000-0000-4000-8000-000000000005'
+where id='f6000000-0000-4000-8000-000000000006';
 update public.tasks set status='cancelled' where id='f6000000-0000-4000-8000-000000000007';
 delete from public.project_members
 where project_id='f3000000-0000-4000-8000-000000000001'

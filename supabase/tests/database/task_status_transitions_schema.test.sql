@@ -11,8 +11,8 @@ select columns_are('public', 'task_status_history', array[
 ], 'task status history is structured and minimal');
 select is(
   (select enum_range(null::public.task_status_action)::text),
-  '{start,block,resume,cancel}',
-  'Task 3.3 action vocabulary is closed'
+  '{start,block,resume,cancel,submit_review,approve_review,return_review}',
+  'shared status action vocabulary contains only reviewed Task 3.3 and Task 3.5 actions'
 );
 select is(
   (select confdeltype::text from pg_constraint where conname='tasks_blocked_by_fkey'),

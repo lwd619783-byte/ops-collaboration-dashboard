@@ -1,6 +1,7 @@
 import type {
   Task,
   TaskProgressUpdate,
+  TaskReview,
   TaskStatusHistoryItem,
 } from '@/features/tasks/types'
 import { createSafeTaskError } from '@/features/tasks/errors'
@@ -18,12 +19,73 @@ export type TaskStateReader = {
   listUpdates: (
     taskId: string,
   ) => Promise<TaskServiceResult<TaskProgressUpdate[]>>
+  listReviews: (taskId: string) => Promise<TaskServiceResult<TaskReview[]>>
 }
 
 export type ConsistentTaskState = {
   task: Task
   history: TaskStatusHistoryItem[]
   updates: TaskProgressUpdate[]
+  reviews: TaskReview[]
+}
+
+const reviewStatusActions = {
+  submit: 'submit_review',
+  approve: 'approve_review',
+  return: 'return_review',
+} as const
+
+export function isTaskReviewConsistent(
+  task: Task,
+  history: readonly TaskStatusHistoryItem[],
+  reviews: readonly TaskReview[],
+): boolean {
+  if (
+    reviews.some((review) => {
+      const transition = history.find(
+        (item) => item.transition_id === review.status_transition_id,
+      )
+      return (
+        !transition ||
+        transition.task_id !== review.task_id ||
+        transition.actor_id !== review.actor_id ||
+        transition.action !== reviewStatusActions[review.action] ||
+        transition.from_status !== review.from_status ||
+        transition.to_status !== review.to_status ||
+        transition.reason !== review.return_reason ||
+        transition.created_at !== review.created_at
+      )
+    })
+  ) {
+    return false
+  }
+
+  const validCompletion =
+    task.status === 'completed' &&
+    task.completed_at !== null &&
+    task.completed_by !== null &&
+    task.completed_by_display_name !== null
+  const emptyCompletion =
+    task.status !== 'completed' &&
+    task.completed_at === null &&
+    task.completed_by === null &&
+    task.completed_by_display_name === null
+  if (!validCompletion && !emptyCompletion) return false
+
+  const latest = reviews[reviews.length - 1]
+  if (task.status === 'pending_review') {
+    return latest?.action === 'submit' && latest.to_status === 'pending_review'
+  }
+  if (task.status === 'completed') {
+    return (
+      latest?.action === 'approve' &&
+      latest.to_status === 'completed' &&
+      task.completed_at === latest.created_at &&
+      task.completed_by === latest.actor_id &&
+      task.completed_by_display_name === latest.actor_display_name
+    )
+  }
+  return true
 }
 
 export function isTaskProgressConsistent(
@@ -79,6 +141,7 @@ async function loadConsistentTaskStateWith(
   taskId: string,
   expectedTransitionId: string | null,
   expectedUpdateId: string | null,
+  expectedReviewId: string | null,
   maxAttempts: number,
 ): Promise<TaskServiceResult<ConsistentTaskState>> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -86,12 +149,15 @@ async function loadConsistentTaskStateWith(
     if (!historyResult.ok) return historyResult
     const updatesResult = await reader.listUpdates(taskId)
     if (!updatesResult.ok) return updatesResult
+    const reviewsResult = await reader.listReviews(taskId)
+    if (!reviewsResult.ok) return reviewsResult
     const taskResult = await reader.get(taskId)
     if (!taskResult.ok) return taskResult
     if (
       taskResult.data.task_id !== taskId ||
       historyResult.data.some((item) => item.task_id !== taskId) ||
-      updatesResult.data.some((item) => item.task_id !== taskId)
+      updatesResult.data.some((item) => item.task_id !== taskId) ||
+      reviewsResult.data.some((item) => item.task_id !== taskId)
     ) {
       return { ok: false, error: createSafeTaskError('unknown_service_error') }
     }
@@ -103,6 +169,15 @@ async function loadConsistentTaskStateWith(
         taskResult.data,
         historyResult.data,
         updatesResult.data,
+      )
+    ) {
+      continue
+    }
+    if (
+      !isTaskReviewConsistent(
+        taskResult.data,
+        historyResult.data,
+        reviewsResult.data,
       )
     ) {
       continue
@@ -121,12 +196,19 @@ async function loadConsistentTaskStateWith(
     ) {
       continue
     }
+    if (
+      expectedReviewId !== null &&
+      !reviewsResult.data.some((item) => item.review_id === expectedReviewId)
+    ) {
+      continue
+    }
     return {
       ok: true,
       data: {
         task: taskResult.data,
         history: historyResult.data,
         updates: updatesResult.data,
+        reviews: reviewsResult.data,
       },
     }
   }
@@ -138,7 +220,14 @@ export async function loadConsistentTaskState(
   taskId: string,
   maxAttempts: number = TASK_STATE_CONSISTENCY_MAX_ATTEMPTS,
 ): Promise<TaskServiceResult<ConsistentTaskState>> {
-  return loadConsistentTaskStateWith(reader, taskId, null, null, maxAttempts)
+  return loadConsistentTaskStateWith(
+    reader,
+    taskId,
+    null,
+    null,
+    null,
+    maxAttempts,
+  )
 }
 
 export async function refreshConsistentTaskState(
@@ -146,6 +235,7 @@ export async function refreshConsistentTaskState(
   taskId: string,
   expectedTransitionId: string | null,
   expectedUpdateId: string | null = null,
+  expectedReviewId: string | null = null,
   maxAttempts: number = TASK_STATE_CONSISTENCY_MAX_ATTEMPTS,
 ): Promise<TaskServiceResult<ConsistentTaskState>> {
   return loadConsistentTaskStateWith(
@@ -153,6 +243,7 @@ export async function refreshConsistentTaskState(
     taskId,
     expectedTransitionId,
     expectedUpdateId,
+    expectedReviewId,
     maxAttempts,
   )
 }

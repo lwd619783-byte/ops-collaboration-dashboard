@@ -1,8 +1,13 @@
 import type { Database } from '@/types/database.generated'
 
 export type TaskPriority = Database['public']['Enums']['task_priority']
+export type TaskReviewAction = Database['public']['Enums']['task_review_action']
 export type TaskStatus = Database['public']['Enums']['task_status']
 export type TaskStatusAction = Database['public']['Enums']['task_status_action']
+export type TaskExecutionAction = Extract<
+  TaskStatusAction,
+  'start' | 'block' | 'resume' | 'cancel'
+>
 export type TaskVisibility = Database['public']['Enums']['task_visibility']
 export type TaskWorkloadLevel =
   Database['public']['Enums']['task_workload_level']
@@ -23,6 +28,9 @@ export type Task = Omit<
   | 'blocked_by_display_name'
   | 'blocker_reason'
   | 'collaborators'
+  | 'completed_at'
+  | 'completed_by'
+  | 'completed_by_display_name'
   | 'description'
   | 'due_date'
   | 'estimated_hours'
@@ -38,6 +46,9 @@ export type Task = Omit<
   blocked_by_display_name: string | null
   blocker_reason: string | null
   collaborators: TaskPerson[]
+  completed_at: string | null
+  completed_by: string | null
+  completed_by_display_name: string | null
   description: string | null
   due_date: string | null
   estimated_hours: number | null
@@ -117,6 +128,12 @@ export type TaskTransitionInput = {
   idempotencyKey: string
 }
 
+export type TaskReviewInput = TaskTransitionInput
+
+export type TaskReturnReviewInput = TaskReviewInput & {
+  returnReason: string
+}
+
 export type TaskBlockInput = TaskTransitionInput & {
   blockerReason: string
 }
@@ -142,6 +159,19 @@ export type TaskStatusHistoryItem = Omit<
 }
 
 export type TaskTransitionResult = {
+  transition: TaskStatusTransition
+  was_existing: boolean
+}
+
+type GeneratedTaskReview =
+  Database['public']['Functions']['list_task_reviews']['Returns'][number]
+
+export type TaskReview = Omit<GeneratedTaskReview, 'return_reason'> & {
+  return_reason: string | null
+}
+
+export type TaskReviewResult = {
+  review: TaskReview
   transition: TaskStatusTransition
   was_existing: boolean
 }

@@ -9,6 +9,10 @@ import type {
   TaskProgressInput,
   TaskProgressResult,
   TaskProgressUpdate,
+  TaskReview,
+  TaskReviewInput,
+  TaskReviewResult,
+  TaskReturnReviewInput,
   TaskStatusHistoryItem,
   TaskSummary,
   TaskTransitionInput,
@@ -45,6 +49,16 @@ export type TaskContextValue = {
   createProgressUpdate: (
     input: TaskProgressInput,
   ) => Promise<TaskServiceResult<TaskProgressResult>>
+  listReviews: (taskId: string) => Promise<TaskServiceResult<TaskReview[]>>
+  submitReview: (
+    input: TaskReviewInput,
+  ) => Promise<TaskServiceResult<TaskReviewResult>>
+  approveReview: (
+    input: TaskReviewInput,
+  ) => Promise<TaskServiceResult<TaskReviewResult>>
+  returnReview: (
+    input: TaskReturnReviewInput,
+  ) => Promise<TaskServiceResult<TaskReviewResult>>
 }
 
 export const TaskContext = createContext<TaskContextValue | null>(null)

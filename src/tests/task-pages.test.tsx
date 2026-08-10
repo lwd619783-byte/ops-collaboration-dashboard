@@ -23,6 +23,8 @@ import type {
   Task,
   TaskAssignmentCandidate,
   TaskProgressUpdate,
+  TaskReview,
+  TaskReviewResult,
 } from '@/features/tasks'
 import { TASK_STATE_CONSISTENCY_MAX_ATTEMPTS } from '@/features/tasks'
 import type {
@@ -49,6 +51,9 @@ const MODULE_ID = 'bbbbbbbb-1111-4111-8111-111111111111'
 const TASK_ID = 'cccccccc-1111-4111-8111-111111111111'
 const SECOND_TASK_ID = 'cccccccc-2222-4222-8222-222222222222'
 const MEMBER_ID = '22222222-2222-4222-8222-222222222222'
+const OTHER_REVIEWER_ID = '33333333-3333-4333-8333-333333333333'
+const SUBMIT_REVIEW_ID = 'abababab-2222-4222-8222-222222222222'
+const APPROVE_REVIEW_ID = 'abababab-3333-4333-8333-333333333333'
 
 const project: Project = {
   project_id: PROJECT_ID,
@@ -125,6 +130,9 @@ const task: Task = {
   last_progress_at: null,
   last_progress_by: null,
   last_progress_by_display_name: null,
+  completed_at: null,
+  completed_by: null,
+  completed_by_display_name: null,
   blocker_reason: null,
   blocked_at: null,
   blocked_by: null,
@@ -172,6 +180,23 @@ function progressItem(
     created_by: FICTIONAL_APP_USER_ID,
     created_by_display_name: '虚构负责人',
     created_at: '2026-08-10T02:00:00+00:00',
+    ...overrides,
+  }
+}
+
+function reviewItem(overrides: Partial<TaskReview> = {}): TaskReview {
+  return {
+    review_id: SUBMIT_REVIEW_ID,
+    task_id: TASK_ID,
+    sequence: 1,
+    action: 'submit',
+    actor_id: FICTIONAL_APP_USER_ID,
+    actor_display_name: 'Fictional assignee',
+    from_status: 'in_progress',
+    to_status: 'pending_review',
+    return_reason: null,
+    status_transition_id: 'abababab-4444-4444-8444-444444444444',
+    created_at: '2026-08-10T03:00:00+00:00',
     ...overrides,
   }
 }
@@ -297,7 +322,20 @@ function taskValue(
     })),
     listStatusHistory: vi.fn(async () => ({ ok: true as const, data: [] })),
     listUpdates: vi.fn(async () => ({ ok: true as const, data: [] })),
+    listReviews: vi.fn(async () => ({ ok: true as const, data: [] })),
     createProgressUpdate: vi.fn(async () => ({
+      ok: false as const,
+      error: { code: 'permission_denied' as const, message: '不可用' },
+    })),
+    submitReview: vi.fn(async () => ({
+      ok: false as const,
+      error: { code: 'permission_denied' as const, message: '不可用' },
+    })),
+    approveReview: vi.fn(async () => ({
+      ok: false as const,
+      error: { code: 'permission_denied' as const, message: '不可用' },
+    })),
+    returnReview: vi.fn(async () => ({
       ok: false as const,
       error: { code: 'permission_denied' as const, message: '不可用' },
     })),
@@ -960,38 +998,33 @@ describe('任务页面', () => {
 
     const recordDate = await screen.findByLabelText(/进展日期/)
     fireEvent.change(recordDate, { target: { value: '2026-08-09' } })
-    await user.type(
-      screen.getByLabelText(/今日完成内容/),
-      'Fictional preserved draft',
-    )
+    fireEvent.change(screen.getByLabelText(/今日完成内容/), {
+      target: { value: 'Fictional preserved draft' },
+    })
     const progressInput = screen.getByLabelText(/当前完成比例/)
-    await user.clear(progressInput)
-    await user.type(progressInput, '67')
-    await user.type(
-      screen.getByLabelText('遇到的问题'),
-      'Fictional preserved issue',
-    )
-    await user.type(
-      screen.getByLabelText('下一步计划'),
-      'Fictional preserved next step',
-    )
+    fireEvent.change(progressInput, { target: { value: '67' } })
+    fireEvent.change(screen.getByLabelText('遇到的问题'), {
+      target: { value: 'Fictional preserved issue' },
+    })
+    fireEvent.change(screen.getByLabelText('下一步计划'), {
+      target: { value: 'Fictional preserved next step' },
+    })
     await user.click(screen.getByLabelText('需要协助'))
     await user.click(screen.getByLabelText('提交进展时同时将任务标记为阻塞'))
     const progressForm = screen
       .getByRole('heading', { name: '更新进展' })
       .closest('form')
     expect(progressForm).not.toBeNull()
-    await user.type(
+    fireEvent.change(
       within(progressForm as HTMLFormElement).getByLabelText(/阻塞原因/),
-      'Fictional stale progress blocker',
+      { target: { value: 'Fictional stale progress blocker' } },
     )
 
     await user.click(screen.getByRole('button', { name: '标记阻塞' }))
     const statusDialog = screen.getByRole('dialog')
-    await user.type(
-      within(statusDialog).getByLabelText(/阻塞原因/),
-      'Fictional independent blocker',
-    )
+    fireEvent.change(within(statusDialog).getByLabelText(/阻塞原因/), {
+      target: { value: 'Fictional independent blocker' },
+    })
     await user.click(
       within(statusDialog).getByRole('button', { name: '确认标记阻塞' }),
     )
@@ -1104,7 +1137,7 @@ describe('任务页面', () => {
 
     await user.click(await screen.findByRole('button', { name: '标记阻塞' }))
     const reason = screen.getByLabelText(/阻塞原因/u)
-    await user.type(reason, '   ')
+    fireEvent.change(reason, { target: { value: '   ' } })
     expect(screen.getByRole('button', { name: '确认标记阻塞' })).toBeDisabled()
     await user.clear(reason)
     await user.type(reason, 'Fictional dependency')
@@ -1727,6 +1760,691 @@ describe('任务页面', () => {
       })
     })
     expect(await screen.findByText('当前状态：进行中')).toBeInTheDocument()
+  })
+  it('blocks a direct edit deep link for pending-review tasks', async () => {
+    const pendingTask: Task = {
+      ...task,
+      status: 'pending_review',
+      progress: 100,
+    }
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}/edit`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId/edit"
+        element={<EditTaskPage />}
+      />,
+      projectValue(),
+      taskValue({
+        get: vi.fn(async () => ({ ok: true as const, data: pendingTask })),
+      }),
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: '任务当前不可编辑' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByLabelText(/任务标题/)).not.toBeInTheDocument()
+  })
+
+  it('submits a 100% in-progress task and refreshes to the linked pending-review ledger', async () => {
+    const user = userEvent.setup()
+    const startTransition = {
+      transition_id: 'abababab-5555-4555-8555-555555555555',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const update = progressItem({ progress: 100 })
+    const readyTask: Task = {
+      ...task,
+      status: 'in_progress',
+      progress: 100,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+      updated_at: update.created_at,
+    }
+    const submitTransition = {
+      transition_id: 'abababab-4444-4444-8444-444444444444',
+      task_id: TASK_ID,
+      sequence: 2,
+      from_status: 'in_progress' as const,
+      to_status: 'pending_review' as const,
+      action: 'submit_review' as const,
+      created_at: '2026-08-10T03:00:00+00:00',
+    }
+    const review = reviewItem()
+    const pendingTask: Task = {
+      ...readyTask,
+      status: 'pending_review',
+      updated_at: submitTransition.created_at,
+    }
+    const submitReview = vi.fn<TaskContextValue['submitReview']>(async () => ({
+      ok: true as const,
+      data: {
+        review,
+        transition: submitTransition,
+        was_existing: false,
+      },
+    }))
+    const tasks = taskValue({
+      get: vi
+        .fn<TaskContextValue['get']>()
+        .mockResolvedValueOnce({ ok: true, data: readyTask })
+        .mockResolvedValueOnce({ ok: true, data: pendingTask }),
+      listStatusHistory: vi
+        .fn<TaskContextValue['listStatusHistory']>()
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [historyItem(startTransition)],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [historyItem(startTransition), historyItem(submitTransition)],
+        }),
+      listUpdates: vi.fn(async () => ({ ok: true as const, data: [update] })),
+      listReviews: vi
+        .fn<TaskContextValue['listReviews']>()
+        .mockResolvedValueOnce({ ok: true, data: [] })
+        .mockResolvedValueOnce({ ok: true, data: [review] }),
+      submitReview,
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.click(await screen.findByRole('button', { name: '提交验收' }))
+    expect(
+      screen.getByRole('heading', { name: '确认提交验收？' }),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '确认提交验收' }))
+
+    expect(await screen.findByText('当前状态：待验收')).toBeInTheDocument()
+    expect(submitReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: TASK_ID,
+        projectId: PROJECT_ID,
+        workspaceId: FICTIONAL_WORKSPACE_ID,
+        idempotencyKey: expect.any(String),
+      }),
+    )
+    expect(
+      screen.getByText('Fictional assignee · 提交验收'),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('link', { name: '编辑任务' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('shows the 100% requirement and gives an ordinary pending-review reader no mutation controls', async () => {
+    const update = progressItem({ progress: 40 })
+    const inProgressTask: Task = {
+      ...task,
+      status: 'in_progress',
+      progress: 40,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+    }
+    const startTransition = {
+      transition_id: 'abababab-6666-4666-8666-666666666666',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const tasks = taskValue({
+      get: vi.fn(async () => ({ ok: true as const, data: inProgressTask })),
+      listStatusHistory: vi.fn(async () => ({
+        ok: true as const,
+        data: [historyItem(startTransition)],
+      })),
+      listUpdates: vi.fn(async () => ({ ok: true as const, data: [update] })),
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    expect(
+      await screen.findByText('当前进度为 40%，达到 100% 后才能提交验收。'),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '提交验收' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('shows an ordinary pending-review reader a waiting state without mutation or edit controls', async () => {
+    const update = progressItem({
+      progress: 100,
+      created_by: MEMBER_ID,
+      created_by_display_name: 'Fictional assignee',
+    })
+    const startTransition = {
+      transition_id: 'acacacac-1111-4111-8111-111111111111',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const submitTransition = {
+      transition_id: 'acacacac-2222-4222-8222-222222222222',
+      task_id: TASK_ID,
+      sequence: 2,
+      from_status: 'in_progress' as const,
+      to_status: 'pending_review' as const,
+      action: 'submit_review' as const,
+      created_at: '2026-08-10T03:00:00+00:00',
+    }
+    const review = reviewItem({
+      actor_id: MEMBER_ID,
+      status_transition_id: submitTransition.transition_id,
+    })
+    const pendingTask: Task = {
+      ...task,
+      assignee_id: MEMBER_ID,
+      reviewer_id: OTHER_REVIEWER_ID,
+      status: 'pending_review',
+      progress: 100,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+      updated_at: submitTransition.created_at,
+    }
+    const tasks = taskValue({
+      get: vi.fn(async () => ({ ok: true as const, data: pendingTask })),
+      listStatusHistory: vi.fn(async () => ({
+        ok: true as const,
+        data: [
+          { ...historyItem(startTransition), actor_id: MEMBER_ID },
+          { ...historyItem(submitTransition), actor_id: MEMBER_ID },
+        ],
+      })),
+      listUpdates: vi.fn(async () => ({ ok: true as const, data: [update] })),
+      listReviews: vi.fn(async () => ({ ok: true as const, data: [review] })),
+    })
+    const customProject = { ...project, owner_id: MEMBER_ID }
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue({
+        get: vi.fn(async () => ({ ok: true as const, data: customProject })),
+      }),
+      tasks,
+      workspaceValue('member'),
+    )
+
+    expect(await screen.findByText('等待验收。')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '通过验收' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '退回修改' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('link', { name: '编辑任务' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps the return dialog open with a required reason and a safe backend error', async () => {
+    const user = userEvent.setup()
+    const update = progressItem({
+      progress: 100,
+      created_by: MEMBER_ID,
+      created_by_display_name: 'Fictional assignee',
+    })
+    const startTransition = {
+      transition_id: 'abababab-7777-4777-8777-777777777777',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const submitTransition = {
+      transition_id: 'abababab-8888-4888-8888-888888888888',
+      task_id: TASK_ID,
+      sequence: 2,
+      from_status: 'in_progress' as const,
+      to_status: 'pending_review' as const,
+      action: 'submit_review' as const,
+      created_at: '2026-08-10T03:00:00+00:00',
+    }
+    const review = reviewItem({
+      actor_id: MEMBER_ID,
+      status_transition_id: submitTransition.transition_id,
+    })
+    const pendingTask: Task = {
+      ...task,
+      assignee_id: MEMBER_ID,
+      reviewer_id: FICTIONAL_APP_USER_ID,
+      status: 'pending_review',
+      progress: 100,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+      updated_at: submitTransition.created_at,
+    }
+    const returnReview = vi.fn<TaskContextValue['returnReview']>(async () => ({
+      ok: false as const,
+      error: {
+        code: 'review_concurrent_state_changed',
+        message: '验收状态正在变化，请刷新后重试。',
+      },
+    }))
+    const taskHistory: TaskStatusHistoryItem[] = [
+      { ...historyItem(startTransition), actor_id: MEMBER_ID },
+      { ...historyItem(submitTransition), actor_id: MEMBER_ID },
+    ]
+    const customProject = { ...project, owner_id: MEMBER_ID }
+    const tasks = taskValue({
+      get: vi.fn(async () => ({ ok: true as const, data: pendingTask })),
+      listStatusHistory: vi.fn(async () => ({
+        ok: true as const,
+        data: taskHistory,
+      })),
+      listUpdates: vi.fn(async () => ({ ok: true as const, data: [update] })),
+      listReviews: vi.fn(async () => ({ ok: true as const, data: [review] })),
+      returnReview,
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue({
+        get: vi.fn(async () => ({ ok: true as const, data: customProject })),
+      }),
+      tasks,
+      workspaceValue('member'),
+    )
+
+    await user.click(await screen.findByRole('button', { name: '退回修改' }))
+    const dialog = screen.getByRole('dialog')
+    const reason = within(dialog).getByLabelText(/退回原因/)
+    await user.type(reason, '   ')
+    expect(
+      within(dialog).getByRole('button', { name: '确认退回修改' }),
+    ).toBeDisabled()
+    await user.clear(reason)
+    await user.type(reason, 'Please add evidence.')
+    await user.click(
+      within(dialog).getByRole('button', { name: '确认退回修改' }),
+    )
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      '验收状态正在变化，请刷新后重试。',
+    )
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(returnReview).toHaveBeenCalledWith(
+      expect.objectContaining({ returnReason: 'Please add evidence.' }),
+    )
+  })
+
+  it('approves a pending review and refreshes the authoritative completion snapshot', async () => {
+    const user = userEvent.setup()
+    const update = progressItem({ progress: 100 })
+    const startTransition = {
+      transition_id: 'adadadad-1111-4111-8111-111111111111',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const submitTransition = {
+      transition_id: 'adadadad-2222-4222-8222-222222222222',
+      task_id: TASK_ID,
+      sequence: 2,
+      from_status: 'in_progress' as const,
+      to_status: 'pending_review' as const,
+      action: 'submit_review' as const,
+      created_at: '2026-08-10T03:00:00+00:00',
+    }
+    const approveTransition = {
+      transition_id: 'adadadad-3333-4333-8333-333333333333',
+      task_id: TASK_ID,
+      sequence: 3,
+      from_status: 'pending_review' as const,
+      to_status: 'completed' as const,
+      action: 'approve_review' as const,
+      created_at: '2026-08-10T04:00:00+00:00',
+    }
+    const submitReview = reviewItem({
+      status_transition_id: submitTransition.transition_id,
+    })
+    const approveReview = reviewItem({
+      review_id: APPROVE_REVIEW_ID,
+      sequence: 2,
+      action: 'approve',
+      actor_display_name: 'Fictional manager',
+      from_status: 'pending_review',
+      to_status: 'completed',
+      status_transition_id: approveTransition.transition_id,
+      created_at: approveTransition.created_at,
+    })
+    const pendingTask: Task = {
+      ...task,
+      status: 'pending_review',
+      progress: 100,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+      updated_at: submitTransition.created_at,
+    }
+    const completedTask: Task = {
+      ...pendingTask,
+      status: 'completed',
+      completed_at: approveReview.created_at,
+      completed_by: approveReview.actor_id,
+      completed_by_display_name: approveReview.actor_display_name,
+      updated_at: approveReview.created_at,
+    }
+    const approveReviewMutation = vi.fn<TaskContextValue['approveReview']>(
+      async () => ({
+        ok: true as const,
+        data: {
+          review: approveReview,
+          transition: approveTransition,
+          was_existing: false,
+        },
+      }),
+    )
+    const tasks = taskValue({
+      get: vi
+        .fn<TaskContextValue['get']>()
+        .mockResolvedValueOnce({ ok: true, data: pendingTask })
+        .mockResolvedValueOnce({ ok: true, data: completedTask }),
+      listStatusHistory: vi
+        .fn<TaskContextValue['listStatusHistory']>()
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [historyItem(startTransition), historyItem(submitTransition)],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [
+            historyItem(startTransition),
+            historyItem(submitTransition),
+            {
+              ...historyItem(approveTransition),
+              actor_display_name: 'Fictional manager',
+            },
+          ],
+        }),
+      listUpdates: vi.fn(async () => ({ ok: true as const, data: [update] })),
+      listReviews: vi
+        .fn<TaskContextValue['listReviews']>()
+        .mockResolvedValueOnce({ ok: true, data: [submitReview] })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [submitReview, approveReview],
+        }),
+      approveReview: approveReviewMutation,
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.click(await screen.findByRole('button', { name: '通过验收' }))
+    await user.click(screen.getByRole('button', { name: '确认通过验收' }))
+
+    expect(await screen.findByText('当前状态：已完成')).toBeInTheDocument()
+    expect(screen.getByText('Fictional manager')).toBeInTheDocument()
+    expect(approveReviewMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: TASK_ID,
+        idempotencyKey: expect.any(String),
+      }),
+    )
+  })
+
+  it('renders completion metadata and the append-only review timeline without edit or execution actions', async () => {
+    const update = progressItem({ progress: 100 })
+    const startTransition = {
+      transition_id: 'abababab-9999-4999-8999-999999999999',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const submitTransition = {
+      transition_id: 'bcbcbcbc-1111-4111-8111-111111111111',
+      task_id: TASK_ID,
+      sequence: 2,
+      from_status: 'in_progress' as const,
+      to_status: 'pending_review' as const,
+      action: 'submit_review' as const,
+      created_at: '2026-08-10T03:00:00+00:00',
+    }
+    const approveTransition = {
+      transition_id: 'bcbcbcbc-2222-4222-8222-222222222222',
+      task_id: TASK_ID,
+      sequence: 3,
+      from_status: 'pending_review' as const,
+      to_status: 'completed' as const,
+      action: 'approve_review' as const,
+      created_at: '2026-08-10T04:00:00+00:00',
+    }
+    const submitReview = reviewItem({
+      status_transition_id: submitTransition.transition_id,
+    })
+    const approveReview = reviewItem({
+      review_id: APPROVE_REVIEW_ID,
+      sequence: 2,
+      action: 'approve',
+      actor_id: MEMBER_ID,
+      actor_display_name: 'Fictional reviewer',
+      from_status: 'pending_review',
+      to_status: 'completed',
+      status_transition_id: approveTransition.transition_id,
+      created_at: approveTransition.created_at,
+    })
+    const completedTask: Task = {
+      ...task,
+      status: 'completed',
+      progress: 100,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+      completed_at: approveReview.created_at,
+      completed_by: approveReview.actor_id,
+      completed_by_display_name: approveReview.actor_display_name,
+      updated_at: approveReview.created_at,
+    }
+    const tasks = taskValue({
+      get: vi.fn(async () => ({ ok: true as const, data: completedTask })),
+      listStatusHistory: vi.fn(async () => ({
+        ok: true as const,
+        data: [
+          historyItem(startTransition),
+          historyItem(submitTransition),
+          {
+            ...historyItem(approveTransition),
+            actor_id: MEMBER_ID,
+            actor_display_name: 'Fictional reviewer',
+          },
+        ],
+      })),
+      listUpdates: vi.fn(async () => ({ ok: true as const, data: [update] })),
+      listReviews: vi.fn(async () => ({
+        ok: true as const,
+        data: [submitReview, approveReview],
+      })),
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={<TaskDetailPage />}
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    expect(await screen.findByText('Fictional reviewer')).toBeInTheDocument()
+    expect(
+      screen.getAllByText('Fictional reviewer · 通过验收').length,
+    ).toBeGreaterThan(0)
+    expect(screen.getAllByText('#2').length).toBeGreaterThan(0)
+    expect(
+      screen.queryByRole('link', { name: '编辑任务' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '通过验收' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '提交进展' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('ignores a late review success after navigating from task A to task B', async () => {
+    const user = userEvent.setup()
+    const action = createDeferred<{ ok: true; data: TaskReviewResult }>()
+    const update = progressItem({ progress: 100 })
+    const firstStart = {
+      transition_id: 'bcbcbcbc-3333-4333-8333-333333333333',
+      task_id: TASK_ID,
+      sequence: 1,
+      from_status: 'todo' as const,
+      to_status: 'in_progress' as const,
+      action: 'start' as const,
+      created_at: '2026-08-10T01:00:00+00:00',
+    }
+    const submitTransition = {
+      transition_id: 'bcbcbcbc-4444-4444-8444-444444444444',
+      task_id: TASK_ID,
+      sequence: 2,
+      from_status: 'in_progress' as const,
+      to_status: 'pending_review' as const,
+      action: 'submit_review' as const,
+      created_at: '2026-08-10T03:00:00+00:00',
+    }
+    const submitReview = reviewItem({
+      status_transition_id: submitTransition.transition_id,
+    })
+    const firstTask: Task = {
+      ...task,
+      status: 'pending_review',
+      progress: 100,
+      last_progress_at: update.created_at,
+      last_progress_by: update.created_by,
+      last_progress_by_display_name: update.created_by_display_name,
+    }
+    const secondTask: Task = {
+      ...task,
+      task_id: SECOND_TASK_ID,
+      title: 'Fictional review task B',
+    }
+    const approveTransition = {
+      transition_id: 'bcbcbcbc-5555-4555-8555-555555555555',
+      task_id: TASK_ID,
+      sequence: 3,
+      from_status: 'pending_review' as const,
+      to_status: 'completed' as const,
+      action: 'approve_review' as const,
+      created_at: '2026-08-10T04:00:00+00:00',
+    }
+    const approveReview = reviewItem({
+      review_id: APPROVE_REVIEW_ID,
+      sequence: 2,
+      action: 'approve',
+      from_status: 'pending_review',
+      to_status: 'completed',
+      status_transition_id: approveTransition.transition_id,
+      created_at: approveTransition.created_at,
+    })
+    const tasks = taskValue({
+      get: vi.fn(async (requestedTaskId: string) => ({
+        ok: true as const,
+        data: requestedTaskId === TASK_ID ? firstTask : secondTask,
+      })),
+      listStatusHistory: vi.fn(async (requestedTaskId: string) => ({
+        ok: true as const,
+        data:
+          requestedTaskId === TASK_ID
+            ? [historyItem(firstStart), historyItem(submitTransition)]
+            : [],
+      })),
+      listUpdates: vi.fn(async (requestedTaskId: string) => ({
+        ok: true as const,
+        data: requestedTaskId === TASK_ID ? [update] : [],
+      })),
+      listReviews: vi.fn(async (requestedTaskId: string) => ({
+        ok: true as const,
+        data: requestedTaskId === TASK_ID ? [submitReview] : [],
+      })),
+      approveReview: vi.fn(() => action.promise),
+    })
+    renderTaskRoutes(
+      `/projects/${PROJECT_ID}/tasks/${TASK_ID}`,
+      <Route
+        path="/projects/:projectId/tasks/:taskId"
+        element={
+          <>
+            <Link to={`/projects/${PROJECT_ID}/tasks/${SECOND_TASK_ID}`}>
+              Switch review task
+            </Link>
+            <TaskDetailPage />
+          </>
+        }
+      />,
+      projectValue(),
+      tasks,
+    )
+
+    await user.click(await screen.findByRole('button', { name: '通过验收' }))
+    await user.click(screen.getByRole('button', { name: '确认通过验收' }))
+    await user.click(screen.getByRole('link', { name: 'Switch review task' }))
+    expect(
+      await screen.findByRole('heading', { name: secondTask.title }),
+    ).toBeInTheDocument()
+
+    await act(async () => {
+      action.resolve({
+        ok: true,
+        data: {
+          review: approveReview,
+          transition: approveTransition,
+          was_existing: false,
+        },
+      })
+    })
+    expect(
+      screen.getByRole('heading', { name: secondTask.title }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('当前状态：待开始')).toBeInTheDocument()
   })
 })
 

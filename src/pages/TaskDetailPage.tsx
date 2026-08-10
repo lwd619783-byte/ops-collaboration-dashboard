@@ -19,7 +19,9 @@ import { useProjects, type Project } from '@/features/projects'
 import {
   useTasks,
   type Task,
-  type TaskStatusAction,
+  type TaskExecutionAction,
+  type TaskReview,
+  type TaskReviewAction,
   type TaskStatusHistoryItem,
   type TaskProgressFormValues,
   type TaskProgressUpdate,
@@ -36,6 +38,7 @@ import {
 import {
   canManageProjectTasks,
   taskPriorityLabels,
+  taskReviewActionLabels,
   taskStatusActionLabels,
   taskStatusLabels,
   taskVisibilityLabels,
@@ -44,11 +47,18 @@ import {
 import { useWorkspace } from '@/features/workspaces'
 
 const BLOCKER_REASON_LIMIT = 2000
+const RETURN_REASON_LIMIT = 2000
 
 type StatusIntent = {
-  action: TaskStatusAction
+  action: TaskExecutionAction
   idempotencyKey: string
   blockerReason: string | null
+}
+
+type ReviewIntent = {
+  action: TaskReviewAction
+  idempotencyKey: string
+  returnReason: string | null
 }
 
 type ProgressIntent = {
@@ -81,17 +91,28 @@ export function TaskDetailPage() {
   const [task, setTask] = useState<Task | null>(null)
   const [history, setHistory] = useState<TaskStatusHistoryItem[]>([])
   const [updates, setUpdates] = useState<TaskProgressUpdate[]>([])
+  const [reviews, setReviews] = useState<TaskReview[]>([])
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>(
     'loading',
   )
   const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null)
-  const [actionLoading, setActionLoading] = useState<TaskStatusAction | null>(
+  const [actionLoading, setActionLoading] =
+    useState<TaskExecutionAction | null>(null)
+  const [progressLoading, setProgressLoading] = useState(false)
+  const [reviewLoading, setReviewLoading] = useState<TaskReviewAction | null>(
     null,
   )
-  const [progressLoading, setProgressLoading] = useState(false)
-  const actionBusy = actionLoading !== null || progressLoading
+  const actionBusy =
+    actionLoading !== null || progressLoading || reviewLoading !== null
   const [actionError, setActionError] = useState<string | null>(null)
-  const [dialog, setDialog] = useState<'block' | 'cancel' | null>(null)
+  const [dialog, setDialog] = useState<
+    | 'block'
+    | 'cancel'
+    | 'submitReview'
+    | 'approveReview'
+    | 'returnReview'
+    | null
+  >(null)
   const [blockerReason, setBlockerReason] = useState('')
   const [blockerReasonError, setBlockerReasonError] = useState<string | null>(
     null,
@@ -104,10 +125,16 @@ export function TaskDetailPage() {
   )
   const [progressError, setProgressError] = useState<string | null>(null)
   const [progressConfirmOpen, setProgressConfirmOpen] = useState(false)
+  const [reviewError, setReviewError] = useState<string | null>(null)
+  const [returnReason, setReturnReason] = useState('')
+  const [returnReasonError, setReturnReasonError] = useState<string | null>(
+    null,
+  )
   const requestEpochRef = useRef(0)
   const actionEpochRef = useRef(0)
   const intentRef = useRef<StatusIntent | null>(null)
   const progressIntentRef = useRef<ProgressIntent | null>(null)
+  const reviewIntentRef = useRef<ReviewIntent | null>(null)
   const mountedRef = useRef(true)
   const scopeKey =
     currentWorkspace && appUserId
@@ -120,6 +147,7 @@ export function TaskDetailPage() {
     actionEpochRef.current += 1
     intentRef.current = null
     progressIntentRef.current = null
+    reviewIntentRef.current = null
   }, [scopeKey])
 
   useEffect(() => {
@@ -140,12 +168,17 @@ export function TaskDetailPage() {
     setActionError(null)
     setActionLoading(null)
     setProgressLoading(false)
+    setReviewLoading(null)
     setProgressError(null)
     setProgressErrors({})
     setProgressConfirmOpen(false)
+    setReviewError(null)
+    setReturnReason('')
+    setReturnReasonError(null)
     setDialog(null)
     intentRef.current = null
     progressIntentRef.current = null
+    reviewIntentRef.current = null
     const [projectResult, stateResult] = await Promise.all([
       projects.get(projectId),
       loadConsistentTaskState(tasks, taskId),
@@ -160,12 +193,15 @@ export function TaskDetailPage() {
       stateResult.data.task.task_id !== taskId ||
       stateResult.data.task.project_id !== projectId ||
       stateResult.data.task.workspace_id !== currentWorkspace.workspace_id ||
-      stateResult.data.history.some((item) => item.task_id !== taskId)
+      stateResult.data.history.some((item) => item.task_id !== taskId) ||
+      stateResult.data.updates.some((item) => item.task_id !== taskId) ||
+      stateResult.data.reviews.some((item) => item.task_id !== taskId)
     ) {
       setProject(null)
       setTask(null)
       setHistory([])
       setUpdates([])
+      setReviews([])
       setLoadedScopeKey(requestScopeKey)
       setLoadState('error')
       return
@@ -174,6 +210,7 @@ export function TaskDetailPage() {
     setTask(stateResult.data.task)
     setHistory(stateResult.data.history)
     setUpdates(stateResult.data.updates)
+    setReviews(stateResult.data.reviews)
     setProgressForm(initialProgressForm(stateResult.data.task.progress))
     setLoadedScopeKey(requestScopeKey)
     setLoadState('ready')
@@ -199,7 +236,7 @@ export function TaskDetailPage() {
   }, [load])
 
   const runAction = useCallback(
-    async (action: TaskStatusAction, reason: string | null = null) => {
+    async (action: TaskExecutionAction, reason: string | null = null) => {
       if (!project || !task || !scopeKey || !currentWorkspace) return false
       const normalizedReason = reason?.trim() || null
       const existingIntent = intentRef.current
@@ -300,6 +337,7 @@ export function TaskDetailPage() {
       setTask(refreshResult.data.task)
       setHistory(refreshResult.data.history)
       setUpdates(refreshResult.data.updates)
+      setReviews(refreshResult.data.reviews)
       setActionLoading(null)
       setActionError(null)
       intentRef.current = null
@@ -309,12 +347,16 @@ export function TaskDetailPage() {
   )
 
   const closeDialog = () => {
-    if (actionLoading) return
+    if (actionBusy) return
     setDialog(null)
     setActionError(null)
+    setReviewError(null)
     setBlockerReasonError(null)
+    setReturnReasonError(null)
     setBlockerReason('')
+    setReturnReason('')
     intentRef.current = null
+    reviewIntentRef.current = null
   }
 
   const submitBlock = async () => {
@@ -427,6 +469,7 @@ export function TaskDetailPage() {
     setTask(refreshResult.data.task)
     setHistory(refreshResult.data.history)
     setUpdates(refreshResult.data.updates)
+    setReviews(refreshResult.data.reviews)
     setProgressForm(initialProgressForm(refreshResult.data.task.progress))
     setProgressErrors({})
     setProgressError(null)
@@ -448,6 +491,124 @@ export function TaskDetailPage() {
       return
     }
     void runProgressUpdate()
+  }
+
+  const runReview = useCallback(
+    async (action: TaskReviewAction, reason: string | null = null) => {
+      if (!project || !task || !scopeKey || !currentWorkspace) return false
+      const normalizedReason = reason?.trim() || null
+      const existingIntent = reviewIntentRef.current
+      const idempotencyKey =
+        existingIntent?.action === action &&
+        existingIntent.returnReason === normalizedReason
+          ? existingIntent.idempotencyKey
+          : crypto.randomUUID()
+      reviewIntentRef.current = {
+        action,
+        idempotencyKey,
+        returnReason: normalizedReason,
+      }
+      const epoch = ++actionEpochRef.current
+      const requestScopeKey = scopeKey
+      setReviewLoading(action)
+      setReviewError(null)
+      const input = {
+        taskId: task.task_id,
+        projectId: project.project_id,
+        workspaceId: currentWorkspace.workspace_id,
+        idempotencyKey,
+      }
+      const result =
+        action === 'submit'
+          ? await tasks.submitReview(input)
+          : action === 'approve'
+            ? await tasks.approveReview(input)
+            : await tasks.returnReview({
+                ...input,
+                returnReason: normalizedReason ?? '',
+              })
+      if (
+        !mountedRef.current ||
+        actionEpochRef.current !== epoch ||
+        scopeKeyRef.current !== requestScopeKey
+      ) {
+        return false
+      }
+      if (!result.ok) {
+        if (
+          result.error.code !== 'network_unavailable' &&
+          result.error.code !== 'unknown_service_error'
+        ) {
+          reviewIntentRef.current = null
+        }
+        setReviewError(result.error.message)
+        setReviewLoading(null)
+        return false
+      }
+
+      const refreshResult = await refreshConsistentTaskState(
+        tasks,
+        task.task_id,
+        result.data.transition.transition_id,
+        null,
+        result.data.review.review_id,
+      )
+      if (
+        !mountedRef.current ||
+        actionEpochRef.current !== epoch ||
+        scopeKeyRef.current !== requestScopeKey
+      ) {
+        return false
+      }
+      if (
+        !refreshResult.ok ||
+        refreshResult.data.task.task_id !== task.task_id ||
+        refreshResult.data.task.project_id !== project.project_id ||
+        refreshResult.data.task.workspace_id !==
+          currentWorkspace.workspace_id ||
+        refreshResult.data.history.some(
+          (item) => item.task_id !== task.task_id,
+        ) ||
+        refreshResult.data.updates.some(
+          (item) => item.task_id !== task.task_id,
+        ) ||
+        refreshResult.data.reviews.some((item) => item.task_id !== task.task_id)
+      ) {
+        setReviewError(TASK_STATE_CONFLICT_MESSAGE)
+        setReviewLoading(null)
+        reviewIntentRef.current = null
+        return false
+      }
+      setTask(refreshResult.data.task)
+      setHistory(refreshResult.data.history)
+      setUpdates(refreshResult.data.updates)
+      setReviews(refreshResult.data.reviews)
+      setProgressForm(initialProgressForm(refreshResult.data.task.progress))
+      setProgressErrors({})
+      setProgressConfirmOpen(false)
+      setReviewLoading(null)
+      setReviewError(null)
+      reviewIntentRef.current = null
+      return true
+    },
+    [currentWorkspace, project, scopeKey, task, tasks],
+  )
+
+  const submitReturnReview = async () => {
+    const normalized = returnReason.trim()
+    if (!normalized) {
+      setReturnReasonError('请填写退回原因。')
+      return
+    }
+    if (normalized.length > RETURN_REASON_LIMIT) {
+      setReturnReasonError(`退回原因不能超过 ${RETURN_REASON_LIMIT} 个字符。`)
+      return
+    }
+    setReturnReasonError(null)
+    if (await runReview('return', normalized)) {
+      setDialog(null)
+      setReturnReason('')
+    }
   }
 
   if (!currentWorkspace || !auth.appUser) return null
@@ -484,6 +645,15 @@ export function TaskDetailPage() {
     project.status !== 'archived' &&
     task.assignee_id === auth.appUser.id &&
     (task.status === 'in_progress' || task.status === 'blocked')
+  const hasSubmitAuthority =
+    project.status !== 'archived' &&
+    (canManage || task.assignee_id === auth.appUser.id)
+  const canSubmitReview =
+    hasSubmitAuthority && task.status === 'in_progress' && task.progress === 100
+  const canDecideReview =
+    project.status !== 'archived' &&
+    task.status === 'pending_review' &&
+    (canManage || task.reviewer_id === auth.appUser.id)
   const latestFirstUpdates = [...updates].sort(
     (left, right) => right.sequence - left.sequence,
   )
@@ -522,14 +692,16 @@ export function TaskDetailPage() {
           >
             返回项目
           </Link>
-          {canManage && (
-            <Link
-              className="button button-primary button-md"
-              to={`/projects/${project.project_id}/tasks/${task.task_id}/edit`}
-            >
-              编辑任务
-            </Link>
-          )}
+          {canManage &&
+            task.status !== 'pending_review' &&
+            task.status !== 'completed' && (
+              <Link
+                className="button button-primary button-md"
+                to={`/projects/${project.project_id}/tasks/${task.task_id}/edit`}
+              >
+                编辑任务
+              </Link>
+            )}
         </div>
       </section>
 
@@ -588,6 +760,75 @@ export function TaskDetailPage() {
           <p className="muted">当前没有可执行的 Task 3.3 状态操作。</p>
         )}
         {actionError && !dialog && <p role="alert">{actionError}</p>}
+      </section>
+
+      <section className="task-detail-card task-review-actions">
+        <h3>验收操作</h3>
+        {task.status === 'in_progress' && hasSubmitAuthority ? (
+          canSubmitReview ? (
+            <Button
+              disabled={actionBusy}
+              loading={reviewLoading === 'submit'}
+              onClick={() => {
+                if (actionBusy) return
+                setReviewError(null)
+                setDialog('submitReview')
+              }}
+            >
+              提交验收
+            </Button>
+          ) : (
+            <p className="muted">
+              当前进度为 {task.progress}%，达到 100% 后才能提交验收。
+            </p>
+          )
+        ) : task.status === 'pending_review' ? (
+          canDecideReview ? (
+            <div className="task-status-action-buttons">
+              <Button
+                disabled={actionBusy}
+                loading={reviewLoading === 'approve'}
+                onClick={() => {
+                  if (actionBusy) return
+                  setReviewError(null)
+                  setDialog('approveReview')
+                }}
+              >
+                通过验收
+              </Button>
+              <Button
+                disabled={actionBusy}
+                onClick={() => {
+                  if (actionBusy) return
+                  setReviewError(null)
+                  setReturnReasonError(null)
+                  setDialog('returnReview')
+                }}
+                variant="secondary"
+              >
+                退回修改
+              </Button>
+            </div>
+          ) : (
+            <p className="muted">等待验收。</p>
+          )
+        ) : task.status === 'completed' ? (
+          <dl className="task-detail-grid">
+            <div>
+              <dt>完成时间</dt>
+              <dd>
+                <DateDisplay kind="date-time" value={task.completed_at} />
+              </dd>
+            </div>
+            <div>
+              <dt>完成人 / 审批人</dt>
+              <dd>{task.completed_by_display_name}</dd>
+            </div>
+          </dl>
+        ) : (
+          <p className="muted">当前状态没有可执行的验收操作。</p>
+        )}
+        {reviewError && !dialog && <p role="alert">{reviewError}</p>}
       </section>
 
       {task.status === 'blocked' && (
@@ -901,6 +1142,33 @@ export function TaskDetailPage() {
       </section>
 
       <section className="task-detail-card task-status-history">
+        <h3>验收记录</h3>
+        {reviews.length === 0 ? (
+          <p className="muted">还没有验收记录。</p>
+        ) : (
+          <ol className="task-status-history-list">
+            {reviews.map((item) => (
+              <li key={item.review_id}>
+                <div className="task-status-history-heading">
+                  <strong>
+                    {item.actor_display_name} ·{' '}
+                    {taskReviewActionLabels[item.action]}
+                  </strong>
+                  <span>#{item.sequence}</span>
+                </div>
+                <p>
+                  {taskStatusLabels[item.from_status]} →{' '}
+                  {taskStatusLabels[item.to_status]}
+                </p>
+                {item.return_reason && <p>退回原因：{item.return_reason}</p>}
+                <DateDisplay kind="date-time" value={item.created_at} />
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+
+      <section className="task-detail-card task-status-history">
         <h3>状态历史</h3>
         {history.length === 0 ? (
           <p className="muted">尚无状态变更记录。</p>
@@ -926,6 +1194,70 @@ export function TaskDetailPage() {
           </ol>
         )}
       </section>
+
+      <Dialog
+        confirmLabel="确认提交验收"
+        confirmLoading={reviewLoading === 'submit'}
+        description="提交后任务将进入待验收，核心任务信息会冻结；如需修改，必须由验收人退回。"
+        onClose={closeDialog}
+        onConfirm={() => {
+          void runReview('submit').then((succeeded) => {
+            if (succeeded) setDialog(null)
+          })
+        }}
+        open={dialog === 'submitReview'}
+        title="确认提交验收？"
+      >
+        <p>当前进度：{task.progress}%</p>
+        {reviewError && <p role="alert">{reviewError}</p>}
+      </Dialog>
+
+      <Dialog
+        confirmLabel="确认通过验收"
+        confirmLoading={reviewLoading === 'approve'}
+        description="通过后任务将标记为已完成并写入数据库权威的完成时间和审批人；V1 不提供重新打开入口。"
+        onClose={closeDialog}
+        onConfirm={() => {
+          void runReview('approve').then((succeeded) => {
+            if (succeeded) setDialog(null)
+          })
+        }}
+        open={dialog === 'approveReview'}
+        title="确认通过验收？"
+      >
+        {reviewError && <p role="alert">{reviewError}</p>}
+      </Dialog>
+
+      <Dialog
+        confirmDisabled={
+          !returnReason.trim() ||
+          returnReason.trim().length > RETURN_REASON_LIMIT
+        }
+        confirmLabel="确认退回修改"
+        confirmLoading={reviewLoading === 'return'}
+        description="退回后任务恢复为进行中并保留当前进度，负责人可继续更新进展和修改任务。"
+        onClose={closeDialog}
+        onConfirm={() => void submitReturnReview()}
+        open={dialog === 'returnReview'}
+        title="退回任务修改"
+      >
+        <TextareaField
+          description={`${returnReason.length}/${RETURN_REASON_LIMIT}`}
+          error={returnReasonError ?? undefined}
+          label="退回原因"
+          maxLength={RETURN_REASON_LIMIT}
+          onChange={(event) => {
+            setReturnReason(event.target.value)
+            setReturnReasonError(null)
+            setReviewError(null)
+            reviewIntentRef.current = null
+          }}
+          required
+          rows={5}
+          value={returnReason}
+        />
+        {reviewError && <p role="alert">{reviewError}</p>}
+      </Dialog>
 
       <Dialog
         confirmLabel="确认提交并标记阻塞"

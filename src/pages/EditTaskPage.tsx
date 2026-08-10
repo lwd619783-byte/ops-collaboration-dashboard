@@ -85,6 +85,26 @@ export function EditTaskPage() {
   }
 
   const task = resources.task
+  if (task.status === 'pending_review' || task.status === 'completed') {
+    return (
+      <ErrorState
+        action={
+          <Link
+            className="text-link"
+            to={`/projects/${projectId}/tasks/${taskId}`}
+          >
+            返回任务详情
+          </Link>
+        }
+        description={
+          task.status === 'pending_review'
+            ? '任务已提交验收，核心信息已冻结；需要修改时请先退回任务。'
+            : '已完成任务的核心信息已锁定，Task 3.5 V1 不提供重新打开入口。'
+        }
+        title="任务当前不可编辑"
+      />
+    )
+  }
   const submit = async (values: TaskFormValues) => {
     if (isSubmitting) return
     const actionScopeKey = scopeKeyRef.current

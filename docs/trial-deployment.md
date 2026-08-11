@@ -7,6 +7,8 @@
 
 > Remote Trial deployment has not been executed because credentials and an authorized environment are intentionally not available in Task 3.9.1.
 
+Task 3.9.2-R1 是一次 deployment-discovered repository remediation：它只加固数据库部署路由的本地门禁与操作说明，不重新执行 Trial 远端部署，也不改变 Task 3.9.1 的历史结论。
+
 ## 1. Environment model
 
 | 项目           | Local                           | Trial/Staging             | Production           |
@@ -65,6 +67,8 @@ Task 3.9.1 不创建远端项目、不登录外部控制台、不设置 Secret�
 
 真实 `.env`、`.env.local`、`.env.staging`、`supabase/.temp/`、`.supabase/` 和 `.vercel/` 均保持 Git 忽略。`.env.example` 只保留明显占位符。`.supabase/` 是 Supabase next/alpha shell 的 checkout-local 状态目录；即使当前 stable shell 不使用，也不得提交。
 
+数据库部署使用的 `SUPABASE_TRIAL_DB_URL` 与 `PGPASSWORD` 是受控操作员会话变量，不是应用配置。前者必须是 passwordless 连接 URL，后者是唯一允许的数据库密码来源；两者均不得写入仓库、`.env*`、脚本、Markdown、shell history、日志、报告、聊天或截图。会话结束后必须清除。
+
 ## 4. Trial target gate
 
 `scripts/trial-deployment-gate.mjs` 是非网络、非 mutation 的防误操作前置检查。它：
@@ -80,6 +84,22 @@ Task 3.9.1 不创建远端项目、不登录外部控制台、不设置 Secret�
 - 成功与失败输出都不打印 project ref、workdir 或 profile 值；
 - 不运行 Supabase CLI，也不执行数据库、Function 或 Vercel mutation。
 
+target gate 只证明 linked target identity，不证明后续数据库命令将使用哪一条 transport route。数据库命令还必须通过独立的 route gate；任一门禁通过都不能替代另一门禁。
+
+### Session Pooler database route gate
+
+`scripts/trial-database-route-gate.mjs` 是第二个非网络、非 mutation、fail-closed 的本地门禁。它复用上述 target gate，并额外要求：
+
+- link 后的 `supabase/.temp/project-ref` 与显式 Trial ref 完全一致；不接受 `--allow-unlinked`；
+- 从当前 checkout 的 `supabase/.temp/pooler-url` 读取 linked CLI 产生的数据库路由锚点；文件缺失、不可读或格式异常时立即停止；
+- `SUPABASE_TRIAL_DB_URL` 必须是与 linked 路由逐字段一致的 passwordless PostgreSQL URL；协议只允许 `postgres`/`postgresql`，用户名必须是 `postgres.<linked-project-ref>`，database 必须是 `postgres`；
+- hostname 必须属于 linked metadata 提供的 shared pooler 域，端口必须是 `5432`，且操作员 URL 只能带唯一的 `sslmode=require` 查询参数；不得带 fragment、额外 query、嵌入密码或硬编码 region/hostname；
+- `PGPASSWORD` 必须非空，且是唯一允许的数据库 credential source；`SUPABASE_DB_PASSWORD` 必须未设置或为空；
+- Supabase CLI 2.110.0 实际读取的其他连接选择器必须全部未设置或为空：`PGAPPNAME`、`PGCONNECT_TIMEOUT`、`PGDATABASE`、`PGHOST`、`PGPASSFILE`、`PGPORT`、`PGSERVICE`、`PGSERVICEFILE`、`PGSSLCERT`、`PGSSLKEY`、`PGSSLMODE`、`PGSSLPASSWORD`、`PGSSLROOTCERT`、`PGUSER`；
+- 成功与失败输出只给出脱敏状态，不输出 project ref、hostname、username、URL、password 或任何环境变量值。
+
+route gate 只读取 checkout-local linked metadata 与当前进程环境，不发起 DNS、TCP、Management API 或数据库连接，不执行 Supabase CLI，也不封装后续命令。
+
 ### Supabase CLI 2.110.0 linked-state contract
 
 本仓库的 `package.json` 与 lockfile 锁定 **Supabase CLI 2.110.0 stable channel**。实际安装二进制的 `supabase --help` 标识 stable channel，`link --help` 包含 stable/legacy shell 的 `--password` 与 `--skip-pooler`。官方 v2.110.0 tag 同时包含两套 shell，但其 stable 发布配置选择 `shell=legacy`：
@@ -93,6 +113,10 @@ Task 3.9.1 不创建远端项目、不登录外部控制台、不设置 Secret�
 - 如果以后升级 CLI 版本或切换发布 channel，必须重新审计实际安装二进制与官方对应源码，并先更新 gate 和本 runbook，不能沿用任一旧路径假设。
 
 版本对应的官方证据见 [stable 发布 shell 选择](https://github.com/supabase/cli/blob/v2.110.0/.github/workflows/release.yml)、[stable/legacy link side effects](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/commands/link/SIDE_EFFECTS.md)、[stable ref resolver](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/config/legacy-project-ref.layer.ts)、[legacy workdir/profile resolver](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/config/legacy-cli-config.layer.ts) 与 [next/alpha project state schema](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/next/config/project-link-state.service.ts)。
+
+Supabase CLI 2.110.0 stable/legacy 的数据库配置解析还会读取上述 PG 环境变量；route gate 的拒绝列表以该锁定版本的 [database config parser](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/shared/legacy-db-config.parse.ts) 和 pgpass resolver 为依据。升级 CLI 或改变 channel 时，必须重新审计实际解析集合并同步更新 gate、测试和本 runbook。
+
+`supabase link` 成功只确认 control-plane 身份和 linked metadata，不等于当前操作员网络可用默认 Direct TCP 数据库路径。Direct endpoint TCP reachability does not guarantee a usable PostgreSQL session. CLI 2.110.0 在路径可达时仍可能选择 direct connection；Task 3.9.2 当前批准的 migration transport 必须来自 Trial Dashboard / linked pooler metadata，并以 checkout-local metadata 精确给出的 **Shared Supavisor Session Pooler / 5432** 为准。这是 deployment-discovered compatibility boundary，不是对 Supabase 缺陷的判断。**Transaction Pooler / 6543** 不得用于 schema migration，因为 migration 需要完整 PostgreSQL session/transaction 语义。
 
 All Trial commands must run from the current repository checkout; an ambient workdir redirect is forbidden. A non-default Supabase profile is forbidden. Gate 与其后的 CLI command 必须在同一 PowerShell 会话、同一 checkout 依次执行，期间不得设置 `--workdir` 或更改下列环境边界。不得向 Trial 命令增加 `--profile`：
 
@@ -121,6 +145,25 @@ npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:
 npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
 ```
 
+link 后，在同一 PowerShell 会话中由受控交互设置 passwordless route 与数据库密码，清除所有会改变 CLI 2.110.0 连接选择的 ambient variable，再运行 route gate。下面的 `Read-Host` 输入不会把值写进命令历史；不得把真实值改写成命令字面量：
+
+```powershell
+$env:SUPABASE_TRIAL_DB_URL = Read-Host 'Passwordless Trial Session Pooler URL' -MaskInput
+$env:PGPASSWORD = Read-Host 'Trial database password' -MaskInput
+
+Remove-Item Env:SUPABASE_DB_PASSWORD -ErrorAction SilentlyContinue
+@(
+  'PGAPPNAME', 'PGCONNECT_TIMEOUT', 'PGDATABASE', 'PGHOST',
+  'PGPASSFILE', 'PGPORT', 'PGSERVICE', 'PGSERVICEFILE',
+  'PGSSLCERT', 'PGSSLKEY', 'PGSSLMODE', 'PGSSLPASSWORD',
+  'PGSSLROOTCERT', 'PGUSER'
+) | ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
+
+npm run trial:db-route:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
+```
+
+route gate 通过后，目标门禁、路由门禁与对应数据库命令必须紧邻、在同一 checkout 和同一会话中执行；期间不得更改相关环境变量。操作结束后清除 `SUPABASE_TRIAL_DB_URL` 与 `PGPASSWORD`。
+
 CI 和公开日志只运行 `npm run trial:baseline:check`，不获得远端凭据，也不执行部署。真实远端部署保持受控、显式、人工发起。
 
 ## 5. Supabase Trial setup
@@ -139,22 +182,29 @@ npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:
 npx supabase link --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
 ```
 
-7. 立即运行 link 后 gate。若不匹配，停止并解除错误 link；不得继续 migration 或 Function 部署。
+7. 立即运行 link 后 target gate。若不匹配，停止并解除错误 link；不得继续 migration 或 Function 部署。
 8. link 后确认 `.supabase/project.json` 没有被误当成 stable linked-state；该 next/alpha 文件即使存在也必须保持 Git 忽略，且不能让缺失或不匹配的 `supabase/.temp/project-ref` 通过 gate。
-9. 不在脚本中写数据库密码；需要密码时使用 CLI 的受控交互或平台支持的 Secret 输入。
+9. 确认 `supabase/.temp/pooler-url` 存在并由当前 stable linked state 产生；不得从旧 checkout、聊天、截图或手工硬编码 region/hostname 构造替代值。缺失或不可读时停止，不猜测路由。
+10. 数据库命令前按第 4 节在受控会话设置 passwordless `SUPABASE_TRIAL_DB_URL` 与唯一密码来源 `PGPASSWORD`，清理 ambient PG selectors，并通过 route gate；不得把数据库 URL 或密码写入脚本或持久化文件。
 
 ## 6. Migration deployment
 
 历史 migration 是唯一 schema 来源。不得修改、squash 或 rewrite 已发布 migration，不得使用 database dump 初始化 Trial，也不得把控制台手工粘贴 SQL 当作唯一部署方法。
 
-在每条 linked 命令前先运行 link 后 target gate，确认 project ID/workdir 与 profile 三项环境边界仍满足门禁，然后由操作者核对 gate 输出并单独执行对应 CLI 命令。gate 不封装或自动触发 remote mutation：
+每一条数据库命令前依次运行 link 后 target gate 与 route gate：前者确认 Trial identity，后者确认 `--db-url` 精确对应 linked Session Pooler metadata，并确认 credential/ambient selector 边界。操作者核对两个 gate 的脱敏输出后，再单独执行对应 CLI 命令。两个 gate 都不封装或自动触发 remote mutation：
 
 ```powershell
 npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
-npx supabase migration list --linked
+
+npm run trial:db-route:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
+
+npx supabase migration list --db-url $env:SUPABASE_TRIAL_DB_URL
 
 npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
-npx supabase db push --dry-run --linked
+
+npm run trial:db-route:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
+
+npx supabase db push --dry-run --db-url $env:SUPABASE_TRIAL_DB_URL
 ```
 
 人工核对 dry-run：
@@ -169,19 +219,27 @@ npx supabase db push --dry-run --linked
 
 ```powershell
 npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
-npx supabase db push --linked
+
+npm run trial:db-route:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
+
+npx supabase db push --db-url $env:SUPABASE_TRIAL_DB_URL
 
 npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
-npx supabase migration list --linked
+
+npm run trial:db-route:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
+
+npx supabase migration list --db-url $env:SUPABASE_TRIAL_DB_URL
 ```
 
-本 runbook 不提供 `--include-seed`、`--include-all`、远端 `db reset`、远端 dump restore 或自动确认参数。失败后先保存脱敏错误分类和迁移状态，再判断可安全重试、forward fix 或人工恢复；禁止猜测成功。
+route gate PASS 绝不等于 DB push 已获授权；migration list、dry-run、migration set、unexpected operation 与 backup boundary 均经人工复核并获得明确 Human Migration Approval 后，才允许执行真正 push。
+
+本 runbook 不提供 `--include-seed`、`--include-all`、`--yes`、远端 `db reset`、远端 dump restore 或其他自动确认参数。失败后先保存脱敏错误分类和迁移状态，再判断可安全重试、forward fix 或人工恢复；禁止猜测成功。
 
 ## 7. Database post-deploy verification
 
 远端 migration 的 CLI exit code 不是唯一成功依据。部署后至少核对：
 
-1. `supabase migration list --linked` 与仓库 migration 历史一致；
+1. `supabase migration list --db-url $env:SUPABASE_TRIAL_DB_URL` 与仓库 migration 历史一致；
 2. 本地从空库生成的 `src/types/database.generated.ts` 无 drift；
 3. `health_check` 通过低权限 Trial 客户端返回安全 `ok`；
 4. `current_app_user_id()`、工作空间/项目/任务核心安全投影和语义化 RPC 存在；

@@ -1,6 +1,6 @@
 # 运维协同看板开发约定
 
-- 每个任务开始前阅读本文件和 [公开开发流程](docs/public-development-workflow.md)。本仓库为公开仓库，所有提交均按公开信息处理。
+- 每个任务开始前先完整阅读最高级项目约束 [《运维协同看板第一版建设方案 V1.3（受控试运行版）》](docs/project-construction-plan-v1.3.md)，再阅读本文件和 [公开开发流程](docs/public-development-workflow.md)。本仓库为公开仓库，所有提交均按公开信息处理。
 - 目标：维护可部署的运维协同看板前端；业务能力必须通过独立任务逐步引入。
 - 技术栈固定为 React、TypeScript 严格模式、Vite、Tailwind CSS、React Router、Vitest 与 npm。
 - 代码按功能组织：应用级内容放在 `src/app`，页面放在 `src/pages`，可复用组件放在 `src/components`，业务代码放在 `src/features`。

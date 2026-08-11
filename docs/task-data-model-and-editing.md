@@ -1,6 +1,6 @@
 # 任务数据模型与创建编辑 V1
 
-Task 3.1 在统一 `app_users.id`、工作空间权限、项目成员和有序项目模块之上建立只属于项目的共享任务基础。它提供受控创建、详情 deep link 和核心元数据编辑；Task 3.2 通过独立安全 summary 投影增加只读任务列表 / 看板；Task 3.3 增加受控状态流转、当前 blocker 与结构化历史；Task 3.4 增加追加式每日进展、原子 progress 写入与时间线；Task 3.5 功能分支增加提交验收、通过、退回和数据库权威完成信息。详见 [任务看板和列表 V1](task-board-and-list.md)、[任务状态流转与阻塞 V1](task-status-transitions.md)、[每日任务进展与进度同步 V1](task-daily-progress.md) 和 [任务提交验收、通过与退回 V1](task-review-closure.md)。私人任务、个人待办和笔记需要未来独立模型，绝不通过 `tasks` 的模糊模式混入项目任务。
+Task 3.1 在统一 `app_users.id`、工作空间权限、项目成员和有序项目模块之上建立只属于项目的共享任务基础。它提供受控创建、详情 deep link 和核心元数据编辑；Task 3.2 通过独立安全 summary 投影增加只读任务列表 / 看板；Task 3.3 增加受控状态流转、当前 blocker 与结构化历史；Task 3.4 增加追加式每日进展、原子 progress 写入与时间线；已封板的 Task 3.5 增加提交验收、通过、退回和数据库权威完成信息。详见 [任务看板和列表 V1](task-board-and-list.md)、[任务状态流转与阻塞 V1](task-status-transitions.md)、[每日任务进展与进度同步 V1](task-daily-progress.md) 和 [任务提交验收、通过与退回 V1](task-review-closure.md)。私人任务、个人待办和笔记需要未来独立模型，绝不通过 `tasks` 的模糊模式混入项目任务。
 
 ## 数据模型
 

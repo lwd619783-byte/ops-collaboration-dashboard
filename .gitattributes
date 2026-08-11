@@ -1,6 +1,10 @@
 # Normalize repository text files and keep working-tree text as LF.
 * text=auto eol=lf
 
+# Preserve the authoritative V1.3 plan byte-for-byte, including its line endings
+# and Markdown two-space hard line breaks.
+docs/project-construction-plan-v1.3.md -text whitespace=-trailing-space
+
 # Windows command scripts retain CRLF when introduced later.
 *.bat text eol=crlf
 *.cmd text eol=crlf

@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto'
-import { readFileSync, readdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import process from 'node:process'
 import {
   safeTrialTargetError,
@@ -10,8 +17,11 @@ import {
 } from './trial-deployment-gate.mjs'
 import {
   forbiddenAmbientPgSelectors,
+  forbiddenPersistentDatabaseEnvironmentKeys,
   safeTrialDatabaseRouteError,
+  stableDevelopmentProjectEnvRelativePaths,
   stableLinkedPoolerUrlRelativePath,
+  validateNoPersistentDatabaseRouteSelectors,
   validateTrialDatabaseRoute,
 } from './trial-database-route-gate.mjs'
 
@@ -140,6 +150,9 @@ for (const contract of [
   'sslmode=require',
   'Transaction Pooler / 6543',
   'Supabase CLI 2.110.0 stable channel',
+  'SUPABASE_ENV',
+  '`.env.development.local`',
+  'unrelated `VITE_*`',
 ]) {
   check(
     runbook.includes(contract),
@@ -411,6 +424,92 @@ check(
     ].join(','),
   'the audited Supabase CLI 2.110.0 PG selector set changed',
 )
+check(
+  forbiddenPersistentDatabaseEnvironmentKeys.join(',') ===
+    [
+      'SUPABASE_TRIAL_DB_URL',
+      'SUPABASE_DB_PASSWORD',
+      'PGPASSWORD',
+      ...forbiddenAmbientPgSelectors,
+    ].join(','),
+  'the persistent database environment selector set changed',
+)
+check(
+  stableDevelopmentProjectEnvRelativePaths
+    .map((parts) => parts.join('/'))
+    .join(',') ===
+    [
+      'supabase/.env.development.local',
+      'supabase/.env.local',
+      'supabase/.env.development',
+      'supabase/.env',
+      '.env.development.local',
+      '.env.local',
+      '.env.development',
+      '.env',
+    ].join(','),
+  'the stable development project environment scan paths changed',
+)
+
+const projectEnvironmentFixture = mkdtempSync(
+  join(tmpdir(), 'trial-route-baseline-'),
+)
+try {
+  writeFileSync(
+    join(projectEnvironmentFixture, '.env'),
+    'VITE_APP_NAME=fixture\nUNRELATED=allowed\n',
+    'utf8',
+  )
+  check(
+    validateNoPersistentDatabaseRouteSelectors(projectEnvironmentFixture, {
+      SUPABASE_ENV: 'development',
+    }),
+    'the project environment gate rejected unrelated assignments',
+  )
+
+  for (const assignment of [
+    'PGPASSWORD=fictional-password',
+    'SUPABASE_TRIAL_DB_URL=fictional-url',
+    'PGSERVICE=fictional-service',
+  ]) {
+    writeFileSync(
+      join(projectEnvironmentFixture, '.env'),
+      assignment + '\n',
+      'utf8',
+    )
+    let rejected = false
+    try {
+      validateNoPersistentDatabaseRouteSelectors(projectEnvironmentFixture, {
+        SUPABASE_ENV: 'development',
+      })
+    } catch (error) {
+      rejected =
+        error instanceof Error && error.message === safeTrialDatabaseRouteError
+    }
+    check(rejected, 'the project environment rejection contract failed')
+  }
+
+  writeFileSync(
+    join(projectEnvironmentFixture, '.env'),
+    'UNRELATED=allowed\n',
+    'utf8',
+  )
+  let nonDevelopmentRejected = false
+  try {
+    validateNoPersistentDatabaseRouteSelectors(projectEnvironmentFixture, {
+      SUPABASE_ENV: 'staging',
+    })
+  } catch (error) {
+    nonDevelopmentRejected =
+      error instanceof Error && error.message === safeTrialDatabaseRouteError
+  }
+  check(
+    nonDevelopmentRejected,
+    'the project environment gate allowed a non-development SUPABASE_ENV',
+  )
+} finally {
+  rmSync(projectEnvironmentFixture, { recursive: true, force: true })
+}
 
 const baselineProjectRef = 'abcdefghijklmnopqrst'
 const baselinePoolerHost = 'baseline-fixture.pooler.supabase.com'

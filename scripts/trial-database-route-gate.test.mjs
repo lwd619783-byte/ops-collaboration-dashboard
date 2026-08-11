@@ -1,15 +1,18 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import {
   canonicalizeTrialPoolerUrl,
   forbiddenAmbientPgSelectors,
+  forbiddenPersistentDatabaseEnvironmentKeys,
   runTrialDatabaseRouteCheck,
   safeTrialDatabaseRouteError,
+  stableDevelopmentProjectEnvRelativePaths,
   stableLinkedPoolerUrlRelativePath,
+  validateNoPersistentDatabaseRouteSelectors,
   validateTrialDatabaseRoute,
 } from './trial-database-route-gate.mjs'
 import { stableLinkedProjectRefRelativePath } from './trial-deployment-gate.mjs'
@@ -74,6 +77,12 @@ function withRepository(options, callback) {
   }
 }
 
+function writeProjectEnvironmentFile(repositoryRoot, relativePath, contents) {
+  const filePath = join(repositoryRoot, ...relativePath)
+  mkdirSync(dirname(filePath), { recursive: true })
+  writeFileSync(filePath, contents, 'utf8')
+}
+
 function validate(overrides = {}) {
   return validateTrialDatabaseRoute({
     projectRef: trialProjectRef,
@@ -89,6 +98,7 @@ function sanitizedSpawnEnvironment(overrides = {}) {
     ...forbiddenAmbientPgSelectors,
     'PGPASSWORD',
     'SUPABASE_DB_PASSWORD',
+    'SUPABASE_ENV',
     'SUPABASE_PROJECT_ID',
     'SUPABASE_PROFILE',
     'SUPABASE_TRIAL_DB_URL',
@@ -132,6 +142,28 @@ describe('trial database route gate', () => {
       'supabase',
       '.temp',
       'pooler-url',
+    ])
+  })
+
+  it('pins the exact stable development project environment paths', () => {
+    expect(stableDevelopmentProjectEnvRelativePaths).toEqual([
+      ['supabase', '.env.development.local'],
+      ['supabase', '.env.local'],
+      ['supabase', '.env.development'],
+      ['supabase', '.env'],
+      ['.env.development.local'],
+      ['.env.local'],
+      ['.env.development'],
+      ['.env'],
+    ])
+  })
+
+  it('pins every database-specific persistent environment key', () => {
+    expect(forbiddenPersistentDatabaseEnvironmentKeys).toEqual([
+      'SUPABASE_TRIAL_DB_URL',
+      'SUPABASE_DB_PASSWORD',
+      'PGPASSWORD',
+      ...forbiddenAmbientPgSelectors,
     ])
   })
 
@@ -336,6 +368,136 @@ describe('trial database route gate', () => {
   })
 
   it.each([
+    [['.env'], 'PGSERVICE=fixture'],
+    [['.env.local'], 'PGSSLROOTCERT=fixture'],
+    [['.env.development'], 'PGPASSWORD=fixture'],
+    [['.env.development.local'], 'SUPABASE_TRIAL_DB_URL=fixture'],
+    [['supabase', '.env'], 'PGSERVICE=fixture'],
+    [['supabase', '.env.local'], 'PGSSLROOTCERT=fixture'],
+    [['supabase', '.env.development'], 'PGPASSWORD=fixture'],
+    [['supabase', '.env.development.local'], 'SUPABASE_TRIAL_DB_URL=fixture'],
+  ])('rejects a persistent database selector in %j', (relativePath, line) => {
+    withRepository({}, (repositoryRoot) => {
+      writeProjectEnvironmentFile(repositoryRoot, relativePath, line + '\n')
+      expect(() =>
+        runTrialDatabaseRouteCheck(
+          trialArguments,
+          repositoryRoot,
+          validEnvironment(),
+        ),
+      ).toThrow(safeTrialDatabaseRouteError)
+    })
+  })
+
+  it.each([
+    'PGHOST=fixture',
+    'PGHOST = fixture',
+    'export PGHOST=fixture',
+    'export PGHOST = fixture',
+    'PGHOST: fixture',
+  ])('rejects persistent dotenv assignment syntax: %s', (line) => {
+    withRepository({}, (repositoryRoot) => {
+      writeProjectEnvironmentFile(repositoryRoot, ['.env'], line + '\n')
+      expect(() =>
+        validateNoPersistentDatabaseRouteSelectors(
+          repositoryRoot,
+          validEnvironment(),
+        ),
+      ).toThrow(safeTrialDatabaseRouteError)
+    })
+  })
+
+  it('rejects an empty persistent database assignment', () => {
+    withRepository({}, (repositoryRoot) => {
+      writeProjectEnvironmentFile(repositoryRoot, ['.env'], 'PGHOST=\n')
+      expect(() =>
+        runTrialDatabaseRouteCheck(
+          trialArguments,
+          repositoryRoot,
+          validEnvironment(),
+        ),
+      ).toThrow(safeTrialDatabaseRouteError)
+    })
+  })
+
+  it('allows unrelated project environment assignments and comments', () => {
+    withRepository({}, (repositoryRoot) => {
+      writeProjectEnvironmentFile(
+        repositoryRoot,
+        ['.env'],
+        [
+          '# PGHOST=comment-only',
+          'VITE_APP_NAME=fixture',
+          'UNRELATED = allowed',
+          'MULTILINE="first line',
+          'PGHOST=quoted-value-not-an-assignment',
+          'last line"',
+          '',
+        ].join('\n'),
+      )
+      writeProjectEnvironmentFile(
+        repositoryRoot,
+        ['supabase', '.env.development.local'],
+        'VITE_SUPABASE_URL=https://example.invalid\n',
+      )
+      expect(
+        runTrialDatabaseRouteCheck(
+          trialArguments,
+          repositoryRoot,
+          validEnvironment(),
+        ),
+      ).toMatchObject({ route: 'session-pooler' })
+    })
+  })
+
+  it('fails closed when a project environment candidate is unreadable', () => {
+    withRepository({}, (repositoryRoot) => {
+      mkdirSync(join(repositoryRoot, '.env'), { recursive: true })
+      expect(() =>
+        validateNoPersistentDatabaseRouteSelectors(
+          repositoryRoot,
+          validEnvironment(),
+        ),
+      ).toThrow(safeTrialDatabaseRouteError)
+    })
+  })
+
+  it.each([undefined, '', 'development'])(
+    'accepts the stable development environment selection %s',
+    (projectEnvironment) => {
+      withRepository({}, (repositoryRoot) => {
+        expect(
+          runTrialDatabaseRouteCheck(
+            trialArguments,
+            repositoryRoot,
+            validEnvironment({ SUPABASE_ENV: projectEnvironment }),
+          ),
+        ).toMatchObject({ route: 'session-pooler' })
+      })
+    },
+  )
+
+  it.each(['test', 'staging', 'production', 'custom'])(
+    'rejects a non-development project environment selection without echo: %s',
+    (projectEnvironment) => {
+      withRepository({}, (repositoryRoot) => {
+        let failure = ''
+        try {
+          runTrialDatabaseRouteCheck(
+            trialArguments,
+            repositoryRoot,
+            validEnvironment({ SUPABASE_ENV: projectEnvironment }),
+          )
+        } catch (error) {
+          failure = error instanceof Error ? error.message : String(error)
+        }
+        expect(failure).toBe(safeTrialDatabaseRouteError)
+        expect(failure).not.toContain(projectEnvironment)
+      })
+    },
+  )
+
+  it.each([
     [undefined, 'missing'],
     ['', 'empty'],
     ['fictional-db-url', 'malformed'],
@@ -516,6 +678,29 @@ describe('trial database route gate', () => {
     }
   })
 
+  it('withholds a persistent project password canary from the error', () => {
+    withRepository({}, (repositoryRoot) => {
+      const canary = 'never-print-this-project-password'
+      writeProjectEnvironmentFile(
+        repositoryRoot,
+        ['.env'],
+        `PGPASSWORD=${canary}\n`,
+      )
+      let failure = ''
+      try {
+        runTrialDatabaseRouteCheck(
+          trialArguments,
+          repositoryRoot,
+          validEnvironment(),
+        )
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error)
+      }
+      expect(failure).toBe(safeTrialDatabaseRouteError)
+      expect(failure).not.toContain(canary)
+    })
+  })
+
   it('keeps CLI stderr redacted for canary target and environment values', () => {
     withRepository({}, (repositoryRoot) => {
       const result = spawnSync(
@@ -553,6 +738,33 @@ describe('trial database route gate', () => {
       ]) {
         expect(result.stderr).not.toContain(canary)
       }
+    })
+  })
+
+  it('fails the CLI safely for a persistent project selector', () => {
+    withRepository({}, (repositoryRoot) => {
+      const canary = 'never-print-this-project-password'
+      writeProjectEnvironmentFile(
+        repositoryRoot,
+        ['supabase', '.env.local'],
+        `PGPASSWORD=${canary}\n`,
+      )
+      const result = spawnSync(
+        process.execPath,
+        [
+          join(process.cwd(), 'scripts', 'trial-database-route-gate.mjs'),
+          ...trialArguments,
+        ],
+        {
+          cwd: repositoryRoot,
+          encoding: 'utf8',
+          env: sanitizedSpawnEnvironment(),
+        },
+      )
+      expect(result.status).toBe(1)
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toBe(safeTrialDatabaseRouteError + '\n')
+      expect(result.stderr).not.toContain(canary)
     })
   })
 

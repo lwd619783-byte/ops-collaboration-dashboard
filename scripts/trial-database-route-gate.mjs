@@ -38,12 +38,125 @@ export const forbiddenAmbientPgSelectors = Object.freeze([
   'PGUSER',
 ])
 
+export const forbiddenPersistentDatabaseEnvironmentKeys = Object.freeze([
+  'SUPABASE_TRIAL_DB_URL',
+  'SUPABASE_DB_PASSWORD',
+  'PGPASSWORD',
+  ...forbiddenAmbientPgSelectors,
+])
+
+// Supabase CLI 2.110.0 legacyLoadProjectEnv walks supabase/ before the
+// repository root and uses the development filename set by default. The gate
+// accepts only that stable environment selection and scans this exact set.
+export const stableDevelopmentProjectEnvRelativePaths = Object.freeze(
+  [
+    ['supabase', '.env.development.local'],
+    ['supabase', '.env.local'],
+    ['supabase', '.env.development'],
+    ['supabase', '.env'],
+    ['.env.development.local'],
+    ['.env.local'],
+    ['.env.development'],
+    ['.env'],
+  ].map((parts) => Object.freeze(parts)),
+)
+
 const projectRefPattern = /^[a-z]{20}$/u
 const sharedPoolerHostPattern =
   /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+pooler\.supabase\.com$/u
 
 function failRouteCheck() {
   throw new Error(safeTrialDatabaseRouteError)
+}
+
+function hasUnescapedClosingQuote(value, quote, startIndex = 0) {
+  for (let index = startIndex; index < value.length; index += 1) {
+    if (value[index] !== quote) continue
+    let precedingBackslashes = 0
+    for (
+      let cursor = index - 1;
+      cursor >= 0 && value[cursor] === '\\';
+      cursor -= 1
+    ) {
+      precedingBackslashes += 1
+    }
+    if (precedingBackslashes % 2 === 0) return true
+  }
+  return false
+}
+
+function continuedQuoteForValue(value) {
+  const normalized = value.trimStart()
+  const quote = normalized[0]
+  if (!['"', "'", '`'].includes(quote)) return undefined
+  return hasUnescapedClosingQuote(normalized, quote, 1) ? undefined : quote
+}
+
+export function containsForbiddenPersistentDatabaseEnvironmentAssignment(
+  contents,
+) {
+  if (typeof contents !== 'string') failRouteCheck()
+
+  let continuedQuote
+  for (const originalLine of contents.split(/\r?\n/u)) {
+    const line = originalLine.replace(/^\uFEFF/u, '')
+    if (continuedQuote !== undefined) {
+      if (hasUnescapedClosingQuote(line, continuedQuote)) {
+        continuedQuote = undefined
+      }
+      continue
+    }
+
+    if (/^\s*(?:#|$)/u.test(line)) continue
+    const assignment = /^\s*(?:export\s+)?([A-Za-z0-9_.]+)\s*(?:=|:)/u.exec(
+      line,
+    )
+    if (assignment === null) continue
+    if (forbiddenPersistentDatabaseEnvironmentKeys.includes(assignment[1])) {
+      return true
+    }
+    continuedQuote = continuedQuoteForValue(line.slice(assignment[0].length))
+  }
+  return false
+}
+
+export function validateTrialDatabaseProjectEnvironment(environment) {
+  const projectEnvironment = environment.SUPABASE_ENV
+  if (
+    projectEnvironment !== undefined &&
+    projectEnvironment !== '' &&
+    projectEnvironment !== 'development'
+  ) {
+    failRouteCheck()
+  }
+  return true
+}
+
+export function validateNoPersistentDatabaseRouteSelectors(
+  repositoryRoot,
+  environment = process.env,
+) {
+  validateTrialDatabaseProjectEnvironment(environment)
+  for (const relativePath of stableDevelopmentProjectEnvRelativePaths) {
+    let contents
+    try {
+      contents = readFileSync(resolve(repositoryRoot, ...relativePath), 'utf8')
+    } catch (error) {
+      if (
+        error !== null &&
+        typeof error === 'object' &&
+        'code' in error &&
+        error.code === 'ENOENT'
+      ) {
+        continue
+      }
+      failRouteCheck()
+    }
+    if (containsForbiddenPersistentDatabaseEnvironmentAssignment(contents)) {
+      failRouteCheck()
+    }
+  }
+  return true
 }
 
 function rawUrlUserinfo(value) {
@@ -133,6 +246,7 @@ export function validateTrialDatabaseRoute({
   linkedPoolerUrl,
   environment,
 }) {
+  validateTrialDatabaseProjectEnvironment(environment)
   const password = environment.PGPASSWORD
   if (password === undefined || password === '') failRouteCheck()
   if (
@@ -202,6 +316,8 @@ export function runTrialDatabaseRouteCheck(
   } catch {
     failRouteCheck()
   }
+
+  validateNoPersistentDatabaseRouteSelectors(repositoryRoot, environment)
 
   return validateTrialDatabaseRoute({
     projectRef: parsed.projectRef,

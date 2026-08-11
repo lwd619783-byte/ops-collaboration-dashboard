@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import {
   canonicalizeTrialPoolerUrl,
+  containsForbiddenPersistentDatabaseEnvironmentAssignment,
   forbiddenAmbientPgSelectors,
   forbiddenPersistentDatabaseEnvironmentKeys,
   runTrialDatabaseRouteCheck,
@@ -420,35 +421,105 @@ describe('trial database route gate', () => {
     })
   })
 
-  it('allows unrelated project environment assignments and comments', () => {
+  it('treats backtick as an ordinary unquoted value character', () => {
+    expect(
+      containsForbiddenPersistentDatabaseEnvironmentAssignment(
+        'UNRELATED=`ordinary-value\nPGHOST=forbidden\n',
+      ),
+    ).toBe(true)
+  })
+
+  it('rejects a persistent PGHOST after an unquoted backtick value', () => {
     withRepository({}, (repositoryRoot) => {
       writeProjectEnvironmentFile(
         repositoryRoot,
         ['.env'],
-        [
-          '# PGHOST=comment-only',
-          'VITE_APP_NAME=fixture',
-          'UNRELATED = allowed',
-          'MULTILINE="first line',
-          'PGHOST=quoted-value-not-an-assignment',
-          'last line"',
-          '',
-        ].join('\n'),
+        'UNRELATED=`fixture\nPGHOST=forbidden-host\n',
       )
-      writeProjectEnvironmentFile(
-        repositoryRoot,
-        ['supabase', '.env.development.local'],
-        'VITE_SUPABASE_URL=https://example.invalid\n',
-      )
-      expect(
+      expect(() =>
         runTrialDatabaseRouteCheck(
           trialArguments,
           repositoryRoot,
           validEnvironment(),
         ),
-      ).toMatchObject({ route: 'session-pooler' })
+      ).toThrow(safeTrialDatabaseRouteError)
     })
   })
+
+  it('rejects and redacts a persistent password after a backtick value', () => {
+    withRepository({}, (repositoryRoot) => {
+      const canary = 'never-print-this-password'
+      writeProjectEnvironmentFile(
+        repositoryRoot,
+        ['.env'],
+        `UNRELATED=\`fixture\nPGPASSWORD=${canary}\n`,
+      )
+
+      let failure = ''
+      try {
+        runTrialDatabaseRouteCheck(
+          trialArguments,
+          repositoryRoot,
+          validEnvironment(),
+        )
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error)
+      }
+      expect(failure).toBe(safeTrialDatabaseRouteError)
+      expect(failure).not.toContain(canary)
+
+      const result = spawnSync(
+        process.execPath,
+        [
+          join(process.cwd(), 'scripts', 'trial-database-route-gate.mjs'),
+          ...trialArguments,
+        ],
+        {
+          cwd: repositoryRoot,
+          encoding: 'utf8',
+          env: sanitizedSpawnEnvironment(),
+        },
+      )
+      expect(result.status).toBe(1)
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toBe(safeTrialDatabaseRouteError + '\n')
+      expect(result.stdout).not.toContain(canary)
+      expect(result.stderr).not.toContain(canary)
+    })
+  })
+
+  it.each(['"', "'"])(
+    'allows an unrelated %s-quoted multiline value and comments',
+    (quote) => {
+      withRepository({}, (repositoryRoot) => {
+        writeProjectEnvironmentFile(
+          repositoryRoot,
+          ['.env'],
+          [
+            '# PGHOST=comment-only',
+            'VITE_APP_NAME=fixture',
+            'UNRELATED = allowed',
+            `MULTILINE=${quote}first line`,
+            'PGHOST=quoted-value-not-an-assignment',
+            `last line${quote}`,
+            '',
+          ].join('\n'),
+        )
+        writeProjectEnvironmentFile(
+          repositoryRoot,
+          ['supabase', '.env.development.local'],
+          'VITE_SUPABASE_URL=https://example.invalid\n',
+        )
+        expect(
+          runTrialDatabaseRouteCheck(
+            trialArguments,
+            repositoryRoot,
+            validEnvironment(),
+          ),
+        ).toMatchObject({ route: 'session-pooler' })
+      })
+    },
+  )
 
   it('fails closed when a project environment candidate is unreadable', () => {
     withRepository({}, (repositoryRoot) => {

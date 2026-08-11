@@ -88,7 +88,9 @@ function hasUnescapedClosingQuote(value, quote, startIndex = 0) {
 function continuedQuoteForValue(value) {
   const normalized = value.trimStart()
   const quote = normalized[0]
-  if (!['"', "'", '`'].includes(quote)) return undefined
+  // Supabase CLI 2.110.0 / godotenv quoted values use single and double
+  // quotes only. A backtick is an ordinary unquoted value character.
+  if (!['"', "'"].includes(quote)) return undefined
   return hasUnescapedClosingQuote(normalized, quote, 1) ? undefined : quote
 }
 

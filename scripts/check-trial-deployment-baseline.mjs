@@ -467,6 +467,25 @@ try {
     'the project environment gate rejected unrelated assignments',
   )
 
+  writeFileSync(
+    join(projectEnvironmentFixture, '.env'),
+    'UNRELATED=`fixture\nPGHOST=forbidden\n',
+    'utf8',
+  )
+  let backtickRouteRejected = false
+  try {
+    validateNoPersistentDatabaseRouteSelectors(projectEnvironmentFixture, {
+      SUPABASE_ENV: 'development',
+    })
+  } catch (error) {
+    backtickRouteRejected =
+      error instanceof Error && error.message === safeTrialDatabaseRouteError
+  }
+  check(
+    backtickRouteRejected,
+    'the project environment backtick regression was not rejected',
+  )
+
   for (const assignment of [
     'PGPASSWORD=fictional-password',
     'SUPABASE_TRIAL_DB_URL=fictional-url',

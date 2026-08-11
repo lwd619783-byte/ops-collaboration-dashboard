@@ -34,6 +34,33 @@ check(
 )
 
 const runbook = read('docs/trial-deployment.md')
+const targetGate = read('scripts/trial-deployment-gate.mjs')
+for (const selector of [
+  'SUPABASE_PROJECT_ID',
+  'SUPABASE_WORKDIR',
+  'SUPABASE_PROFILE',
+]) {
+  check(
+    targetGate.includes('environment.' + selector),
+    'the target gate does not read the ambient selector: ' + selector,
+  )
+  check(
+    runbook.includes(selector),
+    'the runbook does not document the ambient selector: ' + selector,
+  )
+}
+check(
+  runbook.includes('current repository checkout'),
+  'the runbook does not require commands to use the current repository checkout',
+)
+check(
+  runbook.includes('workdir redirect is forbidden'),
+  'the runbook does not forbid ambient workdir redirects',
+)
+check(
+  runbook.includes('non-default Supabase profile is forbidden'),
+  'the runbook does not forbid non-default Supabase profiles',
+)
 for (const heading of [
   '## 1. Environment model',
   '## 2. Preconditions',
@@ -206,6 +233,30 @@ check(
   environmentOverrideRejected,
   'the target gate did not reject a conflicting CLI environment override',
 )
+
+for (const ambientSelector of [
+  { supabaseWorkdir: 'fictional/other-checkout' },
+  { supabaseProfile: 'supabase-staging' },
+]) {
+  let ambientSelectorRejected = false
+  try {
+    validateTrialTarget({
+      target: 'trial',
+      confirmation: 'TRIAL',
+      projectRef: 'abcdefghijklmnopqrst',
+      linkedProjectRef: 'abcdefghijklmnopqrst',
+      supabaseProjectId: 'abcdefghijklmnopqrst',
+      ...ambientSelector,
+    })
+  } catch (error) {
+    ambientSelectorRejected =
+      error instanceof Error && error.message === safeTrialTargetError
+  }
+  check(
+    ambientSelectorRejected,
+    'the target gate did not reject a non-empty ambient selector',
+  )
+}
 
 process.stdout.write(
   'Trial deployment baseline checks passed (' + checkCount + ' checks).\n',

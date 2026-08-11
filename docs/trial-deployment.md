@@ -74,8 +74,10 @@ Task 3.9.1 不创建远端项目、不登录外部控制台、不设置 Secret�
 - 要求显式提供符合 stable CLI 规则的 20 位小写字母 Supabase project ref；
 - link 后必须让 `supabase/.temp/project-ref` 与显式 ref 完全一致；
 - 若会覆盖 linked-state 的 `SUPABASE_PROJECT_ID` 已设置，则它也必须格式合法且与显式 ref 完全一致；
-- 对 `production`、`staging`、`local`、缺项、未知参数和 ref 不一致全部 fail closed；
-- 成功与失败输出都不打印 project ref；
+- `SUPABASE_WORKDIR` 必须未设置或为空；任何非空值都会改变 CLI workdir/linked-state 来源，因此 fail closed；
+- `SUPABASE_PROFILE` 必须未设置或为空；包括 `supabase` 在内的任何非空值都 fail closed，防止 profile/API control plane 分叉；
+- 对 `production`、`staging`、`local`、缺项、未知参数、ref 不一致或 ambient selector 不干净全部 fail closed；
+- 成功与失败输出都不打印 project ref、workdir 或 profile 值；
 - 不运行 Supabase CLI，也不执行数据库、Function 或 Vercel mutation。
 
 ### Supabase CLI 2.110.0 linked-state contract
@@ -85,18 +87,31 @@ Task 3.9.1 不创建远端项目、不登录外部控制台、不设置 Secret�
 - stable/legacy `supabase link` 把当前 checkout 的 authoritative ref 写入 `supabase/.temp/project-ref`；
 - stable/legacy `supabase unlink` 读取该 ref，并移除 checkout 的 `supabase/.temp/`；
 - stable/legacy linked commands 按 `SUPABASE_PROJECT_ID`、再按 `supabase/.temp/project-ref` 解析目标，所以 gate 同时核对环境覆盖值；
+- stable/legacy workdir 按 `--workdir`、`SUPABASE_WORKDIR`、从 cwd 向上发现 `supabase/config.toml`、fallback cwd 的顺序解析；linked-state 随该 workdir 变化；
+- stable/legacy profile 可由 `--profile` 或 `SUPABASE_PROFILE` 改变；本 runbook 不使用 CLI profile flag，并拒绝任何非空 profile 环境值；
 - `.supabase/project.json` 属于同版本源码中的 next/alpha shell，其 ref 位于嵌套的 `project.ref`，不是本仓库锁定 stable 二进制的 linked-state，也不能作为 fallback 或覆盖 stable state；
 - 如果以后升级 CLI 版本或切换发布 channel，必须重新审计实际安装二进制与官方对应源码，并先更新 gate 和本 runbook，不能沿用任一旧路径假设。
 
-版本对应的官方证据见 [stable 发布 shell 选择](https://github.com/supabase/cli/blob/v2.110.0/.github/workflows/release.yml)、[stable/legacy link side effects](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/commands/link/SIDE_EFFECTS.md)、[stable ref resolver](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/config/legacy-project-ref.layer.ts) 与 [next/alpha project state schema](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/next/config/project-link-state.service.ts)。
+版本对应的官方证据见 [stable 发布 shell 选择](https://github.com/supabase/cli/blob/v2.110.0/.github/workflows/release.yml)、[stable/legacy link side effects](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/commands/link/SIDE_EFFECTS.md)、[stable ref resolver](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/config/legacy-project-ref.layer.ts)、[legacy workdir/profile resolver](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/config/legacy-cli-config.layer.ts) 与 [next/alpha project state schema](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/next/config/project-link-state.service.ts)。
 
-PowerShell 会话中，project ref 只保存在未提交的会话变量中：
+All Trial commands must run from the current repository checkout; an ambient workdir redirect is forbidden. A non-default Supabase profile is forbidden. Gate 与其后的 CLI command 必须在同一 PowerShell 会话、同一 checkout 依次执行，期间不得设置 `--workdir`、`--profile` 或更改下列环境边界：
+
+- `SUPABASE_PROJECT_ID`：若存在，必须格式合法并与显式 Trial ref 一致；
+- `SUPABASE_WORKDIR`：必须未设置或为空，任何非空值都拒绝；
+- `SUPABASE_PROFILE`：必须未设置或为空，任何非空值（包括 `supabase`）都拒绝。
+
+PowerShell 会话中先清理三个 ambient selector；project ref 只保存在未提交的操作员会话变量中：
 
 ```powershell
 Remove-Item Env:SUPABASE_PROJECT_ID -ErrorAction SilentlyContinue
+Remove-Item Env:SUPABASE_WORKDIR -ErrorAction SilentlyContinue
+Remove-Item Env:SUPABASE_PROFILE -ErrorAction SilentlyContinue
+
 $env:SUPABASE_TRIAL_PROJECT_REF = '<trial-project-ref>'
 npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF --allow-unlinked
 ```
+
+`SUPABASE_TRIAL_PROJECT_REF` 是本项目 runbook 的操作员会话变量，不是 Supabase CLI 自带 target override，也不得把真实值提交仓库。
 
 `--allow-unlinked` 只允许在第一次 `supabase link` 前使用。link 后以及每一条远端命令前都必须去掉该参数：
 
@@ -115,9 +130,10 @@ CI 和公开日志只运行 `npm run trial:baseline:check`，不获得远端凭�
 3. 核对 Auth 公网 URL、受控 Trial 回调地址、公开注册关闭、匿名登录关闭和 Email OTP 到期时间。
 4. Email OTP 到期时间必须与数据库 `workspace_invitation_ttl_seconds()` 和 Edge `APP_INVITE_TTL_SECONDS` 的 3600 秒保持一致。
 5. 按目标项目当前实际可用的官方备份能力启用并核对备份；不对未验证套餐能力作假设。
-6. 在受控终端先运行 pre-link gate，再执行：
+6. 在受控终端保持三个 ambient selector 干净，紧邻 `link` 前运行 pre-link gate，再由操作者核对结果并显式执行：
 
 ```powershell
+npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF --allow-unlinked
 npx supabase link --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
 ```
 
@@ -129,10 +145,13 @@ npx supabase link --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
 
 历史 migration 是唯一 schema 来源。不得修改、squash 或 rewrite 已发布 migration，不得使用 database dump 初始化 Trial，也不得把控制台手工粘贴 SQL 当作唯一部署方法。
 
-在每条 linked 命令前先运行 link 后 target gate，确认 `SUPABASE_PROJECT_ID` 没有改变目标，然后按仓库锁定 CLI 的实际能力执行：
+在每条 linked 命令前先运行 link 后 target gate，确认三个 ambient selector 仍满足门禁，然后由操作者核对 gate 输出并单独执行对应 CLI 命令。gate 不封装或自动触发 remote mutation：
 
 ```powershell
+npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
 npx supabase migration list --linked
+
+npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
 npx supabase db push --dry-run --linked
 ```
 
@@ -144,10 +163,13 @@ npx supabase db push --dry-run --linked
 - migration 顺序与 `supabase/migrations/` 一致；
 - 没有修改历史 migration 的迹象。
 
-只有 dry-run 通过、备份边界确认、操作者再次授权后，Task 3.9.2 才可显式执行：
+只有 dry-run 通过、备份边界确认、操作者再次授权后，Task 3.9.2 才可逐条显式执行：
 
 ```powershell
+npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
 npx supabase db push --linked
+
+npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
 npx supabase migration list --linked
 ```
 
@@ -186,9 +208,10 @@ invite-workspace-member
 - Secret 不进入 Vite、命令参数、公开日志或仓库；
 - `npm run test:edge` 与真实 `index.ts` 的 Deno typecheck 已通过。
 
-通过 link 后 target gate、再次确认 `SUPABASE_PROJECT_ID` 不会覆盖目标后，Task 3.9.2 才可执行：
+保持三个 ambient selector 满足门禁，并在部署前紧邻运行 link 后 target gate；操作者核对结果后，Task 3.9.2 才可显式执行：
 
 ```powershell
+npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
 npx supabase functions deploy invite-workspace-member --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
 ```
 
@@ -329,8 +352,8 @@ Task 3.9.1 明确延期到后续授权任务：
 ```text
 Task 3.9.1
 Trial Deployment Baseline
-AUDIT FIX PUSHED
-READY FOR INDEPENDENT RE-AUDIT
+SECOND AUDIT FIX PUSHED
+READY FOR FINAL INDEPENDENT RE-AUDIT
 ```
 
 而不是 `Production deployed` 或 `Trial deployed`。

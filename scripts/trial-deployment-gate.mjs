@@ -56,10 +56,22 @@ export function validateTrialTarget({
   projectRef,
   linkedProjectRef,
   supabaseProjectId,
+  supabaseWorkdir,
+  supabaseProfile,
   allowUnlinked = false,
 }) {
   if (target !== 'trial' || confirmation !== 'TRIAL') failTargetCheck()
   if (!projectRefPattern.test(projectRef ?? '')) failTargetCheck()
+
+  // Trial commands must run from this repository checkout with the default
+  // Supabase API profile. Any non-empty ambient selector could make the CLI
+  // resolve a different workdir, linked-state file, or control plane.
+  if (supabaseWorkdir !== undefined && supabaseWorkdir !== '') {
+    failTargetCheck()
+  }
+  if (supabaseProfile !== undefined && supabaseProfile !== '') {
+    failTargetCheck()
+  }
 
   // Stable Supabase CLI 2.110.0 resolves linked commands in this order:
   // SUPABASE_PROJECT_ID, then supabase/.temp/project-ref. An environment
@@ -122,6 +134,8 @@ export function runTrialTargetCheck(
     ...parsed,
     linkedProjectRef: readLinkedProjectRef(repositoryRoot),
     supabaseProjectId: environment.SUPABASE_PROJECT_ID,
+    supabaseWorkdir: environment.SUPABASE_WORKDIR,
+    supabaseProfile: environment.SUPABASE_PROFILE,
   })
 }
 

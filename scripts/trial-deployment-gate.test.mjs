@@ -152,6 +152,69 @@ describe('trial deployment target gate', () => {
     ).toThrow(safeTrialTargetError)
   })
 
+  it.each([undefined, ''])(
+    'allows a clean SUPABASE_WORKDIR value: %j',
+    (supabaseWorkdir) => {
+      expect(
+        validateTrialTarget(validInput({ supabaseWorkdir })),
+      ).toMatchObject({ target: 'trial', linked: true })
+    },
+  )
+
+  it.each(['.', 'relative/fictional-checkout', 'C:\\fictional\\checkout'])(
+    'fails closed for a non-empty SUPABASE_WORKDIR: %j',
+    (supabaseWorkdir) => {
+      expect(() =>
+        validateTrialTarget(validInput({ supabaseWorkdir })),
+      ).toThrow(safeTrialTargetError)
+    },
+  )
+
+  it('withholds the rejected SUPABASE_WORKDIR value from failure text', () => {
+    const fictionalWorkdir = 'C:\\FictionalUser\\another-project'
+    let failure = ''
+    try {
+      validateTrialTarget(validInput({ supabaseWorkdir: fictionalWorkdir }))
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error)
+    }
+    expect(failure).toBe(safeTrialTargetError)
+    expect(failure).not.toContain(fictionalWorkdir)
+  })
+
+  it.each([undefined, ''])(
+    'allows a clean SUPABASE_PROFILE value: %j',
+    (supabaseProfile) => {
+      expect(
+        validateTrialTarget(validInput({ supabaseProfile })),
+      ).toMatchObject({ target: 'trial', linked: true })
+    },
+  )
+
+  it.each([
+    'supabase',
+    'supabase-staging',
+    'supabase-local',
+    'snap',
+    'custom-profile-path',
+  ])('fails closed for a non-empty SUPABASE_PROFILE: %j', (supabaseProfile) => {
+    expect(() => validateTrialTarget(validInput({ supabaseProfile }))).toThrow(
+      safeTrialTargetError,
+    )
+  })
+
+  it('withholds the rejected SUPABASE_PROFILE value from failure text', () => {
+    const fictionalProfile = 'C:\\FictionalUser\\custom-profile.yaml'
+    let failure = ''
+    try {
+      validateTrialTarget(validInput({ supabaseProfile: fictionalProfile }))
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error)
+    }
+    expect(failure).toBe(safeTrialTargetError)
+    expect(failure).not.toContain(fictionalProfile)
+  })
+
   it('rejects unknown, duplicate, or incomplete CLI flags', () => {
     expect(() => parseTrialTargetArguments(['--production'])).toThrow(
       safeTrialTargetError,
@@ -275,6 +338,38 @@ describe('trial deployment target gate', () => {
       expect(failure).toBe(safeTrialTargetError)
       expect(failure).not.toContain(trialProjectRef)
       expect(failure).not.toContain(otherProjectRef)
+    } finally {
+      rmSync(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+  it('rejects a workdir redirect even when all project refs match', () => {
+    const repositoryRoot = mkdtempSync(join(tmpdir(), 'trial-gate-'))
+    writeStableLinkedState(repositoryRoot, trialProjectRef)
+
+    try {
+      expect(() =>
+        runTrialTargetCheck(trialArguments, repositoryRoot, {
+          SUPABASE_PROJECT_ID: trialProjectRef,
+          SUPABASE_WORKDIR: 'fictional/other-checkout',
+        }),
+      ).toThrow(safeTrialTargetError)
+    } finally {
+      rmSync(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a non-default profile even when refs match and workdir is clean', () => {
+    const repositoryRoot = mkdtempSync(join(tmpdir(), 'trial-gate-'))
+    writeStableLinkedState(repositoryRoot, trialProjectRef)
+
+    try {
+      expect(() =>
+        runTrialTargetCheck(trialArguments, repositoryRoot, {
+          SUPABASE_PROJECT_ID: trialProjectRef,
+          SUPABASE_WORKDIR: '',
+          SUPABASE_PROFILE: 'supabase-staging',
+        }),
+      ).toThrow(safeTrialTargetError)
     } finally {
       rmSync(repositoryRoot, { recursive: true, force: true })
     }

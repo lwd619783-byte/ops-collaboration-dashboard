@@ -176,7 +176,7 @@ select public.bootstrap_default_workspace(
 
 Task 3.9.1 只建立可重复的部署基线，不登录、不链接或修改任何远端项目。完整环境模型、显式 Trial target gate、CLI 2.110.0 的 `link` / `migration list --linked` / `db push --dry-run --linked` 流程、Edge Function 部署、版本追溯、回滚与备份边界见 [试运行部署基线与环境门禁 V1](trial-deployment.md)。
 
-本仓库实际锁定的是 Supabase CLI `2.110.0` stable channel。该稳定包使用 legacy shell：`supabase link` 的 checkout-local authoritative ref 是 `supabase/.temp/project-ref`，linked commands 还会优先读取 `SUPABASE_PROJECT_ID`，因此 post-link gate 同时要求 ref 文件、环境覆盖值（若存在）与显式 Trial ref 一致。`.supabase/project.json` 是同版本 next/alpha shell 的不同状态模型，不作为 stable linked-state 或 fallback；目录仍由 `.gitignore` 忽略，防止本地工具状态进入仓库。CLI 版本或 channel 变化时必须重新审计，不能猜测或自动迁移状态路径。
+本仓库实际锁定的是 Supabase CLI `2.110.0` stable channel。该稳定包使用 legacy shell：`supabase link` 的 checkout-local authoritative ref 是 `supabase/.temp/project-ref`，linked commands 还会优先读取 `SUPABASE_PROJECT_ID`，因此 post-link gate 同时要求 ref 文件、环境覆盖值（若存在）与显式 Trial ref 一致。`SUPABASE_WORKDIR` 会重定向 CLI 使用的 checkout 与 linked-state 来源，`SUPABASE_PROFILE` 会改变 API profile/control plane；当前 Trial contract 要求两者未设置或为空，并在任一非空值时 fail closed。`.supabase/project.json` 是同版本 next/alpha shell 的不同状态模型，不作为 stable linked-state 或 fallback；目录仍由 `.gitignore` 忽略，防止本地工具状态进入仓库。CLI 版本或 channel 变化时必须重新审计，不能猜测或自动迁移状态路径。
 
 真实 Trial 创建和部署属于 Task 3.9.2，必须由获授权人员在独立 Supabase/Vercel Trial 中执行；真实账号 Smoke/E2E 属于 Task 3.9.3。`db:reset`、pgTAP seed、真实并发夹具和 `db:verify` 只用于本地环境，绝不能指向 Trial 或 Production。任何远端 mutation 前必须重新核对 target gate、备份状态、dry-run 和准确 Git SHA。
 

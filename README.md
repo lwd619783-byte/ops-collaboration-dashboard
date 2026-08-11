@@ -10,7 +10,7 @@
 
 Task 0.1 至 Task 1.4 已建立前端、数据库、统一身份、网页登录与工作空间权限基线。Task 2.1–2.3 已完成项目 CRUD、项目成员/牵头人和有序模块；Task 3.1–3.5 已完成共享任务、只读浏览、受控状态机、每日进展和提交/退回/通过验收闭环。详见 [工作空间与成员权限](docs/workspace-permissions.md)、[项目 CRUD、可见性与归档 V1](docs/project-crud-and-visibility.md)、[项目成员与牵头人 V1](docs/project-membership-and-lead.md)、[项目工作模块 V1](docs/project-modules.md)、[任务数据模型与创建编辑 V1](docs/task-data-model-and-editing.md)、[任务看板与列表 V1](docs/task-board-and-list.md)、[任务状态流转与阻塞 V1](docs/task-status-transitions.md)、[每日任务进展与进度同步 V1](docs/task-daily-progress.md) 和 [任务提交验收、通过与退回 V1](docs/task-review-closure.md)。
 
-Task 3.9.1 的可重复部署基线已完成本轮 linked-state 独立审计修复，等待第二轮独立复核，不视为正式封板。独立 Supabase/Vercel Trial 的创建和真实部署属于 Task 3.9.2；真实账号 Smoke/E2E 与试运行准入属于 Task 3.9.3，均尚未完成。Production Supabase/Vercel 仍未创建或配置。
+Task 3.9.1 的可重复部署基线已完成第二轮 ambient selector 独立审计修复，等待最终独立复核，不视为正式封板。独立 Supabase/Vercel Trial 的创建和真实部署属于 Task 3.9.2；真实账号 Smoke/E2E 与试运行准入属于 Task 3.9.3，均尚未完成。Production Supabase/Vercel 仍未创建或配置。
 
 ## 第一阶段边界
 

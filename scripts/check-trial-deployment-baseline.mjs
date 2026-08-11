@@ -61,6 +61,26 @@ check(
   runbook.includes('non-default Supabase profile is forbidden'),
   'the runbook does not forbid non-default Supabase profiles',
 )
+check(
+  targetGate.includes("supabaseProfile !== 'supabase'"),
+  'the target gate does not require the exact built-in Supabase profile',
+)
+check(
+  runbook.includes('`~/.supabase/profile`'),
+  'the persisted Supabase profile fallback is not documented',
+)
+check(
+  runbook.includes("$env:SUPABASE_PROFILE = 'supabase'"),
+  'the runbook does not pin the built-in Supabase profile',
+)
+check(
+  runbook.includes('不得向 Trial 命令增加 `--profile`'),
+  'the runbook does not forbid profile flag overrides',
+)
+check(
+  runbook.includes('不读取、不删除或修改用户级 `~/.supabase/profile`'),
+  'the runbook does not preserve the user-level profile boundary',
+)
 for (const heading of [
   '## 1. Environment model',
   '## 2. Preconditions',
@@ -224,6 +244,7 @@ try {
     projectRef: 'abcdefghijklmnopqrst',
     linkedProjectRef: 'abcdefghijklmnopqrst',
     supabaseProjectId: 'zyxwvutsrqponmlkjihg',
+    supabaseProfile: 'supabase',
   })
 } catch (error) {
   environmentOverrideRejected =
@@ -233,6 +254,44 @@ check(
   environmentOverrideRejected,
   'the target gate did not reject a conflicting CLI environment override',
 )
+
+let pinnedProfileAccepted
+try {
+  pinnedProfileAccepted =
+    validateTrialTarget({
+      target: 'trial',
+      confirmation: 'TRIAL',
+      projectRef: 'abcdefghijklmnopqrst',
+      linkedProjectRef: 'abcdefghijklmnopqrst',
+      supabaseProfile: 'supabase',
+    }).target === 'trial'
+} catch {
+  pinnedProfileAccepted = false
+}
+check(
+  pinnedProfileAccepted,
+  'the target gate did not accept the exact built-in Supabase profile',
+)
+
+for (const missingProfile of [undefined, '']) {
+  let missingProfileRejected = false
+  try {
+    validateTrialTarget({
+      target: 'trial',
+      confirmation: 'TRIAL',
+      projectRef: 'abcdefghijklmnopqrst',
+      linkedProjectRef: 'abcdefghijklmnopqrst',
+      supabaseProfile: missingProfile,
+    })
+  } catch (error) {
+    missingProfileRejected =
+      error instanceof Error && error.message === safeTrialTargetError
+  }
+  check(
+    missingProfileRejected,
+    'the target gate allowed persisted-profile fallback',
+  )
+}
 
 for (const ambientSelector of [
   { supabaseWorkdir: 'fictional/other-checkout' },
@@ -246,6 +305,7 @@ for (const ambientSelector of [
       projectRef: 'abcdefghijklmnopqrst',
       linkedProjectRef: 'abcdefghijklmnopqrst',
       supabaseProjectId: 'abcdefghijklmnopqrst',
+      supabaseProfile: 'supabase',
       ...ambientSelector,
     })
   } catch (error) {

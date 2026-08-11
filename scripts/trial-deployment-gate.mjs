@@ -63,15 +63,13 @@ export function validateTrialTarget({
   if (target !== 'trial' || confirmation !== 'TRIAL') failTargetCheck()
   if (!projectRefPattern.test(projectRef ?? '')) failTargetCheck()
 
-  // Trial commands must run from this repository checkout with the default
-  // Supabase API profile. Any non-empty ambient selector could make the CLI
-  // resolve a different workdir, linked-state file, or control plane.
+  // Trial commands must run from this repository checkout with the built-in
+  // Supabase API profile. Pinning the exact non-empty environment value stops
+  // legacy CLI resolution before it can fall back to ~/.supabase/profile.
   if (supabaseWorkdir !== undefined && supabaseWorkdir !== '') {
     failTargetCheck()
   }
-  if (supabaseProfile !== undefined && supabaseProfile !== '') {
-    failTargetCheck()
-  }
+  if (supabaseProfile !== 'supabase') failTargetCheck()
 
   // Stable Supabase CLI 2.110.0 resolves linked commands in this order:
   // SUPABASE_PROJECT_ID, then supabase/.temp/project-ref. An environment

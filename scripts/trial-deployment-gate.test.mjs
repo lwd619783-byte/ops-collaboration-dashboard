@@ -65,6 +65,14 @@ function validInput(overrides = {}) {
     confirmation: 'TRIAL',
     projectRef: trialProjectRef,
     linkedProjectRef: trialProjectRef,
+    supabaseProfile: 'supabase',
+    ...overrides,
+  }
+}
+
+function trialEnvironment(overrides = {}) {
+  return {
+    SUPABASE_PROFILE: 'supabase',
     ...overrides,
   }
 }
@@ -182,22 +190,28 @@ describe('trial deployment target gate', () => {
     expect(failure).not.toContain(fictionalWorkdir)
   })
 
-  it.each([undefined, ''])(
-    'allows a clean SUPABASE_PROFILE value: %j',
-    (supabaseProfile) => {
-      expect(
-        validateTrialTarget(validInput({ supabaseProfile })),
-      ).toMatchObject({ target: 'trial', linked: true })
-    },
-  )
+  it('requires explicit supabase profile to suppress persisted-profile fallback', () => {
+    // Undefined or empty values let the legacy resolver continue to the
+    // user-level persisted profile. The exact env pin stops that fallback.
+    expect(() =>
+      validateTrialTarget(validInput({ supabaseProfile: undefined })),
+    ).toThrow(safeTrialTargetError)
+    expect(() =>
+      validateTrialTarget(validInput({ supabaseProfile: '' })),
+    ).toThrow(safeTrialTargetError)
+    expect(
+      validateTrialTarget(validInput({ supabaseProfile: 'supabase' })),
+    ).toMatchObject({ target: 'trial', linked: true })
+  })
 
   it.each([
-    'supabase',
+    undefined,
+    '',
     'supabase-staging',
     'supabase-local',
     'snap',
     'custom-profile-path',
-  ])('fails closed for a non-empty SUPABASE_PROFILE: %j', (supabaseProfile) => {
+  ])('fails closed for an unpinned SUPABASE_PROFILE: %j', (supabaseProfile) => {
     expect(() => validateTrialTarget(validInput({ supabaseProfile }))).toThrow(
       safeTrialTargetError,
     )
@@ -252,7 +266,7 @@ describe('trial deployment target gate', () => {
 
     try {
       expect(
-        runTrialTargetCheck(trialArguments, repositoryRoot, {}),
+        runTrialTargetCheck(trialArguments, repositoryRoot, trialEnvironment()),
       ).toMatchObject({ target: 'trial', linked: true })
     } finally {
       rmSync(repositoryRoot, { recursive: true, force: true })
@@ -269,7 +283,7 @@ describe('trial deployment target gate', () => {
 
     try {
       expect(() =>
-        runTrialTargetCheck(trialArguments, repositoryRoot, {}),
+        runTrialTargetCheck(trialArguments, repositoryRoot, trialEnvironment()),
       ).toThrow(safeTrialTargetError)
     } finally {
       rmSync(repositoryRoot, { recursive: true, force: true })
@@ -281,13 +295,13 @@ describe('trial deployment target gate', () => {
 
     try {
       expect(() =>
-        runTrialTargetCheck(trialArguments, repositoryRoot, {}),
+        runTrialTargetCheck(trialArguments, repositoryRoot, trialEnvironment()),
       ).toThrow(safeTrialTargetError)
       expect(
         runTrialTargetCheck(
           [...trialArguments, '--allow-unlinked'],
           repositoryRoot,
-          {},
+          trialEnvironment(),
         ),
       ).toMatchObject({ target: 'trial', linked: false })
     } finally {
@@ -301,7 +315,7 @@ describe('trial deployment target gate', () => {
 
     try {
       expect(() =>
-        runTrialTargetCheck(trialArguments, repositoryRoot, {}),
+        runTrialTargetCheck(trialArguments, repositoryRoot, trialEnvironment()),
       ).toThrow(safeTrialTargetError)
     } finally {
       rmSync(repositoryRoot, { recursive: true, force: true })
@@ -315,7 +329,7 @@ describe('trial deployment target gate', () => {
 
     try {
       expect(
-        runTrialTargetCheck(trialArguments, repositoryRoot, {}),
+        runTrialTargetCheck(trialArguments, repositoryRoot, trialEnvironment()),
       ).toMatchObject({ target: 'trial', linked: true })
     } finally {
       rmSync(repositoryRoot, { recursive: true, force: true })
@@ -329,9 +343,13 @@ describe('trial deployment target gate', () => {
     try {
       let failure = ''
       try {
-        runTrialTargetCheck(trialArguments, repositoryRoot, {
-          SUPABASE_PROJECT_ID: otherProjectRef,
-        })
+        runTrialTargetCheck(
+          trialArguments,
+          repositoryRoot,
+          trialEnvironment({
+            SUPABASE_PROJECT_ID: otherProjectRef,
+          }),
+        )
       } catch (error) {
         failure = error instanceof Error ? error.message : String(error)
       }
@@ -348,9 +366,49 @@ describe('trial deployment target gate', () => {
 
     try {
       expect(() =>
+        runTrialTargetCheck(
+          trialArguments,
+          repositoryRoot,
+          trialEnvironment({
+            SUPABASE_PROJECT_ID: trialProjectRef,
+            SUPABASE_WORKDIR: 'fictional/other-checkout',
+          }),
+        ),
+      ).toThrow(safeTrialTargetError)
+    } finally {
+      rmSync(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts the fully pinned Trial execution context', () => {
+    const repositoryRoot = mkdtempSync(join(tmpdir(), 'trial-gate-'))
+    writeStableLinkedState(repositoryRoot, trialProjectRef)
+
+    try {
+      expect(
+        runTrialTargetCheck(
+          trialArguments,
+          repositoryRoot,
+          trialEnvironment({
+            SUPABASE_PROJECT_ID: trialProjectRef,
+            SUPABASE_WORKDIR: '',
+          }),
+        ),
+      ).toMatchObject({ target: 'trial', linked: true })
+    } finally {
+      rmSync(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a missing profile even when refs match and workdir is clean', () => {
+    const repositoryRoot = mkdtempSync(join(tmpdir(), 'trial-gate-'))
+    writeStableLinkedState(repositoryRoot, trialProjectRef)
+
+    try {
+      expect(() =>
         runTrialTargetCheck(trialArguments, repositoryRoot, {
           SUPABASE_PROJECT_ID: trialProjectRef,
-          SUPABASE_WORKDIR: 'fictional/other-checkout',
+          SUPABASE_WORKDIR: '',
         }),
       ).toThrow(safeTrialTargetError)
     } finally {

@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto'
-import { readFileSync, readdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import process from 'node:process'
 import {
   safeTrialTargetError,
@@ -8,6 +15,17 @@ import {
   stableSupabaseCliVersion,
   validateTrialTarget,
 } from './trial-deployment-gate.mjs'
+import {
+  forbiddenAmbientPgSelectors,
+  forbiddenMigrationBehaviorEnvironmentKeys,
+  forbiddenPersistentDatabaseEnvironmentKeys,
+  safeTrialDatabaseRouteError,
+  stableDevelopmentProjectEnvRelativePaths,
+  stableLinkedPoolerUrlRelativePath,
+  validateNoMigrationBehaviorEnvironmentOverrides,
+  validateNoPersistentDatabaseRouteSelectors,
+  validateTrialDatabaseRoute,
+} from './trial-database-route-gate.mjs'
 
 const repositoryRoot = process.cwd()
 const projectPlanHash =
@@ -35,6 +53,8 @@ check(
 
 const runbook = read('docs/trial-deployment.md')
 const targetGate = read('scripts/trial-deployment-gate.mjs')
+const routeGate = read('scripts/trial-database-route-gate.mjs')
+const routeGateTest = read('scripts/trial-database-route-gate.test.mjs')
 for (const selector of [
   'SUPABASE_PROJECT_ID',
   'SUPABASE_WORKDIR',
@@ -119,6 +139,69 @@ check(
   runbook.includes('`SUPABASE_PROJECT_ID`'),
   'the stable CLI environment override is not documented',
 )
+check(
+  stableLinkedPoolerUrlRelativePath.join('/') === 'supabase/.temp/pooler-url',
+  'the route gate is not pinned to the stable linked pooler metadata path',
+)
+for (const contract of [
+  'Shared Supavisor Session Pooler',
+  '5432',
+  'SUPABASE_TRIAL_DB_URL',
+  'PGPASSWORD',
+  'passwordless',
+  'sslmode=require',
+  'Transaction Pooler / 6543',
+  'Supabase CLI 2.110.0 stable channel',
+  'SUPABASE_ENV',
+  'SUPABASE_YES',
+  'SUPABASE_DB_MIGRATIONS_ENABLED',
+  '`.env.development.local`',
+  'unrelated `VITE_*`',
+]) {
+  check(
+    runbook.includes(contract),
+    'the database route contract is not documented: ' + contract,
+  )
+}
+for (const behaviorVariable of forbiddenMigrationBehaviorEnvironmentKeys) {
+  check(
+    runbook.includes(
+      `Remove-Item Env:${behaviorVariable} -ErrorAction SilentlyContinue`,
+    ),
+    'the runbook does not clear a migration behavior environment override',
+  )
+}
+check(
+  routeGate.includes('validateTrialTarget') &&
+    routeGate.includes('readLinkedProjectRef'),
+  'the database route gate does not reuse the target identity gate',
+)
+check(
+  routeGate.includes('environment.SUPABASE_TRIAL_DB_URL') &&
+    routeGate.includes('environment.PGPASSWORD') &&
+    routeGate.includes('environment.SUPABASE_DB_PASSWORD'),
+  'the database route gate does not enforce the operator credential contract',
+)
+check(
+  routeGateTest.includes('forbiddenAmbientPgSelectors') &&
+    routeGateTest.includes('fictional-password'),
+  'the database route gate lacks selector and redaction coverage',
+)
+const migrationCommandLines = runbook
+  .split(/\r?\n/u)
+  .map((line) => line.trim())
+  .filter((line) =>
+    /^npx supabase (?:migration list|db push(?:\s|$))/u.test(line),
+  )
+check(
+  migrationCommandLines.length >= 4 &&
+    migrationCommandLines.every(
+      (line) =>
+        line.includes('--db-url $env:SUPABASE_TRIAL_DB_URL') &&
+        !line.includes('--linked'),
+    ),
+  'migration command examples must use the validated Session Pooler db-url',
+)
 
 const environmentExample = read('.env.example')
 const environmentNames = environmentExample
@@ -147,6 +230,16 @@ check(
   ),
   '.env.example contains a forbidden credential shape',
 )
+for (const operatorVariable of [
+  'SUPABASE_TRIAL_DB_URL',
+  'PGPASSWORD',
+  'SUPABASE_DB_PASSWORD',
+]) {
+  check(
+    !environmentNames.includes(operatorVariable),
+    '.env.example contains a server-side operator variable',
+  )
+}
 
 const packageJson = JSON.parse(read('package.json'))
 const packageLock = JSON.parse(read('package-lock.json'))
@@ -164,6 +257,11 @@ check(
   packageJson.scripts['trial:target:check'] ===
     'node scripts/trial-deployment-gate.mjs',
   'trial target script is missing',
+)
+check(
+  packageJson.scripts['trial:db-route:check'] ===
+    'node scripts/trial-database-route-gate.mjs',
+  'trial database route script is missing',
 )
 check(
   packageJson.scripts['trial:baseline:check'] ===
@@ -317,6 +415,191 @@ for (const ambientSelector of [
     'the target gate did not reject a non-empty ambient selector',
   )
 }
+
+check(
+  forbiddenAmbientPgSelectors.join(',') ===
+    [
+      'PGAPPNAME',
+      'PGCONNECT_TIMEOUT',
+      'PGDATABASE',
+      'PGHOST',
+      'PGPASSFILE',
+      'PGPORT',
+      'PGSERVICE',
+      'PGSERVICEFILE',
+      'PGSSLCERT',
+      'PGSSLKEY',
+      'PGSSLMODE',
+      'PGSSLPASSWORD',
+      'PGSSLROOTCERT',
+      'PGUSER',
+    ].join(','),
+  'the audited Supabase CLI 2.110.0 PG selector set changed',
+)
+check(
+  forbiddenPersistentDatabaseEnvironmentKeys.join(',') ===
+    [
+      'SUPABASE_TRIAL_DB_URL',
+      'SUPABASE_DB_PASSWORD',
+      'PGPASSWORD',
+      ...forbiddenMigrationBehaviorEnvironmentKeys,
+      ...forbiddenAmbientPgSelectors,
+    ].join(','),
+  'the persistent database environment selector set changed',
+)
+check(
+  forbiddenMigrationBehaviorEnvironmentKeys.join(',') ===
+    ['SUPABASE_YES', 'SUPABASE_DB_MIGRATIONS_ENABLED'].join(','),
+  'the migration behavior environment selector set changed',
+)
+check(
+  stableDevelopmentProjectEnvRelativePaths
+    .map((parts) => parts.join('/'))
+    .join(',') ===
+    [
+      'supabase/.env.development.local',
+      'supabase/.env.local',
+      'supabase/.env.development',
+      'supabase/.env',
+      '.env.development.local',
+      '.env.local',
+      '.env.development',
+      '.env',
+    ].join(','),
+  'the stable development project environment scan paths changed',
+)
+
+const projectEnvironmentFixture = mkdtempSync(
+  join(tmpdir(), 'trial-route-baseline-'),
+)
+try {
+  writeFileSync(
+    join(projectEnvironmentFixture, '.env'),
+    'VITE_APP_NAME=fixture\nUNRELATED=allowed\n',
+    'utf8',
+  )
+  check(
+    validateNoPersistentDatabaseRouteSelectors(projectEnvironmentFixture, {
+      SUPABASE_ENV: 'development',
+    }),
+    'the project environment gate rejected unrelated assignments',
+  )
+
+  writeFileSync(
+    join(projectEnvironmentFixture, '.env'),
+    'UNRELATED=`fixture\nPGHOST=forbidden\n',
+    'utf8',
+  )
+  let backtickRouteRejected = false
+  try {
+    validateNoPersistentDatabaseRouteSelectors(projectEnvironmentFixture, {
+      SUPABASE_ENV: 'development',
+    })
+  } catch (error) {
+    backtickRouteRejected =
+      error instanceof Error && error.message === safeTrialDatabaseRouteError
+  }
+  check(
+    backtickRouteRejected,
+    'the project environment backtick regression was not rejected',
+  )
+
+  for (const assignment of [
+    'PGPASSWORD=fictional-password',
+    'SUPABASE_TRIAL_DB_URL=fictional-url',
+    'PGSERVICE=fictional-service',
+    'SUPABASE_YES=true',
+    'SUPABASE_DB_MIGRATIONS_ENABLED=false',
+  ]) {
+    writeFileSync(
+      join(projectEnvironmentFixture, '.env'),
+      assignment + '\n',
+      'utf8',
+    )
+    let rejected = false
+    try {
+      validateNoPersistentDatabaseRouteSelectors(projectEnvironmentFixture, {
+        SUPABASE_ENV: 'development',
+      })
+    } catch (error) {
+      rejected =
+        error instanceof Error && error.message === safeTrialDatabaseRouteError
+    }
+    check(rejected, 'the project environment rejection contract failed')
+  }
+
+  writeFileSync(
+    join(projectEnvironmentFixture, '.env'),
+    'UNRELATED=allowed\n',
+    'utf8',
+  )
+  let nonDevelopmentRejected = false
+  try {
+    validateNoPersistentDatabaseRouteSelectors(projectEnvironmentFixture, {
+      SUPABASE_ENV: 'staging',
+    })
+  } catch (error) {
+    nonDevelopmentRejected =
+      error instanceof Error && error.message === safeTrialDatabaseRouteError
+  }
+  check(
+    nonDevelopmentRejected,
+    'the project environment gate allowed a non-development SUPABASE_ENV',
+  )
+} finally {
+  rmSync(projectEnvironmentFixture, { recursive: true, force: true })
+}
+
+const baselineProjectRef = 'abcdefghijklmnopqrst'
+const baselinePoolerHost = 'baseline-fixture.pooler.supabase.com'
+const baselineLinkedPoolerUrl =
+  `postgresql://postgres.${baselineProjectRef}@` +
+  `${baselinePoolerHost}:5432/postgres`
+const baselineRouteEnvironment = {
+  SUPABASE_TRIAL_DB_URL: `${baselineLinkedPoolerUrl}?sslmode=require`,
+  PGPASSWORD: 'baseline-fictional-password',
+}
+check(
+  validateTrialDatabaseRoute({
+    projectRef: baselineProjectRef,
+    linkedPoolerUrl: baselineLinkedPoolerUrl,
+    environment: baselineRouteEnvironment,
+  }).route === 'session-pooler',
+  'the valid Session Pooler baseline route was rejected',
+)
+
+for (const behaviorEnvironment of [
+  { SUPABASE_YES: 'true' },
+  { SUPABASE_DB_MIGRATIONS_ENABLED: 'false' },
+]) {
+  let behaviorOverrideRejected = false
+  try {
+    validateNoMigrationBehaviorEnvironmentOverrides(behaviorEnvironment)
+  } catch (error) {
+    behaviorOverrideRejected =
+      error instanceof Error && error.message === safeTrialDatabaseRouteError
+  }
+  check(
+    behaviorOverrideRejected,
+    'the shell migration behavior override was not rejected',
+  )
+}
+
+let unsafeRouteRejected = false
+try {
+  validateTrialDatabaseRoute({
+    projectRef: baselineProjectRef,
+    linkedPoolerUrl: baselineLinkedPoolerUrl,
+    environment: {
+      ...baselineRouteEnvironment,
+      PGHOST: 'forbidden-fixture',
+    },
+  })
+} catch (error) {
+  unsafeRouteRejected =
+    error instanceof Error && error.message === safeTrialDatabaseRouteError
+}
+check(unsafeRouteRejected, 'the route gate allowed an ambient PG selector')
 
 process.stdout.write(
   'Trial deployment baseline checks passed (' + checkCount + ' checks).\n',

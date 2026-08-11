@@ -17,10 +17,12 @@ import {
 } from './trial-deployment-gate.mjs'
 import {
   forbiddenAmbientPgSelectors,
+  forbiddenMigrationBehaviorEnvironmentKeys,
   forbiddenPersistentDatabaseEnvironmentKeys,
   safeTrialDatabaseRouteError,
   stableDevelopmentProjectEnvRelativePaths,
   stableLinkedPoolerUrlRelativePath,
+  validateNoMigrationBehaviorEnvironmentOverrides,
   validateNoPersistentDatabaseRouteSelectors,
   validateTrialDatabaseRoute,
 } from './trial-database-route-gate.mjs'
@@ -151,12 +153,22 @@ for (const contract of [
   'Transaction Pooler / 6543',
   'Supabase CLI 2.110.0 stable channel',
   'SUPABASE_ENV',
+  'SUPABASE_YES',
+  'SUPABASE_DB_MIGRATIONS_ENABLED',
   '`.env.development.local`',
   'unrelated `VITE_*`',
 ]) {
   check(
     runbook.includes(contract),
     'the database route contract is not documented: ' + contract,
+  )
+}
+for (const behaviorVariable of forbiddenMigrationBehaviorEnvironmentKeys) {
+  check(
+    runbook.includes(
+      `Remove-Item Env:${behaviorVariable} -ErrorAction SilentlyContinue`,
+    ),
+    'the runbook does not clear a migration behavior environment override',
   )
 }
 check(
@@ -430,9 +442,15 @@ check(
       'SUPABASE_TRIAL_DB_URL',
       'SUPABASE_DB_PASSWORD',
       'PGPASSWORD',
+      ...forbiddenMigrationBehaviorEnvironmentKeys,
       ...forbiddenAmbientPgSelectors,
     ].join(','),
   'the persistent database environment selector set changed',
+)
+check(
+  forbiddenMigrationBehaviorEnvironmentKeys.join(',') ===
+    ['SUPABASE_YES', 'SUPABASE_DB_MIGRATIONS_ENABLED'].join(','),
+  'the migration behavior environment selector set changed',
 )
 check(
   stableDevelopmentProjectEnvRelativePaths
@@ -490,6 +508,8 @@ try {
     'PGPASSWORD=fictional-password',
     'SUPABASE_TRIAL_DB_URL=fictional-url',
     'PGSERVICE=fictional-service',
+    'SUPABASE_YES=true',
+    'SUPABASE_DB_MIGRATIONS_ENABLED=false',
   ]) {
     writeFileSync(
       join(projectEnvironmentFixture, '.env'),
@@ -547,6 +567,23 @@ check(
   }).route === 'session-pooler',
   'the valid Session Pooler baseline route was rejected',
 )
+
+for (const behaviorEnvironment of [
+  { SUPABASE_YES: 'true' },
+  { SUPABASE_DB_MIGRATIONS_ENABLED: 'false' },
+]) {
+  let behaviorOverrideRejected = false
+  try {
+    validateNoMigrationBehaviorEnvironmentOverrides(behaviorEnvironment)
+  } catch (error) {
+    behaviorOverrideRejected =
+      error instanceof Error && error.message === safeTrialDatabaseRouteError
+  }
+  check(
+    behaviorOverrideRejected,
+    'the shell migration behavior override was not rejected',
+  )
+}
 
 let unsafeRouteRejected = false
 try {

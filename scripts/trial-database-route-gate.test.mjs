@@ -8,11 +8,13 @@ import {
   canonicalizeTrialPoolerUrl,
   containsForbiddenPersistentDatabaseEnvironmentAssignment,
   forbiddenAmbientPgSelectors,
+  forbiddenMigrationBehaviorEnvironmentKeys,
   forbiddenPersistentDatabaseEnvironmentKeys,
   runTrialDatabaseRouteCheck,
   safeTrialDatabaseRouteError,
   stableDevelopmentProjectEnvRelativePaths,
   stableLinkedPoolerUrlRelativePath,
+  validateNoMigrationBehaviorEnvironmentOverrides,
   validateNoPersistentDatabaseRouteSelectors,
   validateTrialDatabaseRoute,
 } from './trial-database-route-gate.mjs'
@@ -97,6 +99,7 @@ function sanitizedSpawnEnvironment(overrides = {}) {
   const environment = { ...process.env }
   for (const name of [
     ...forbiddenAmbientPgSelectors,
+    ...forbiddenMigrationBehaviorEnvironmentKeys,
     'PGPASSWORD',
     'SUPABASE_DB_PASSWORD',
     'SUPABASE_ENV',
@@ -164,7 +167,15 @@ describe('trial database route gate', () => {
       'SUPABASE_TRIAL_DB_URL',
       'SUPABASE_DB_PASSWORD',
       'PGPASSWORD',
+      ...forbiddenMigrationBehaviorEnvironmentKeys,
       ...forbiddenAmbientPgSelectors,
+    ])
+  })
+
+  it('pins only the audited migration behavior environment keys', () => {
+    expect(forbiddenMigrationBehaviorEnvironmentKeys).toEqual([
+      'SUPABASE_YES',
+      'SUPABASE_DB_MIGRATIONS_ENABLED',
     ])
   })
 
@@ -391,6 +402,45 @@ describe('trial database route gate', () => {
   })
 
   it.each([
+    [['.env'], 'SUPABASE_YES=true'],
+    [['supabase', '.env.local'], 'SUPABASE_YES=true'],
+    [['.env.development'], 'SUPABASE_DB_MIGRATIONS_ENABLED=false'],
+    [
+      ['supabase', '.env.development.local'],
+      'SUPABASE_DB_MIGRATIONS_ENABLED=true',
+    ],
+  ])(
+    'rejects a persistent migration behavior override in %j',
+    (relativePath, line) => {
+      withRepository({}, (repositoryRoot) => {
+        writeProjectEnvironmentFile(repositoryRoot, relativePath, line + '\n')
+        expect(() =>
+          runTrialDatabaseRouteCheck(
+            trialArguments,
+            repositoryRoot,
+            validEnvironment(),
+          ),
+        ).toThrow(safeTrialDatabaseRouteError)
+      })
+    },
+  )
+
+  it.each(forbiddenMigrationBehaviorEnvironmentKeys)(
+    'rejects an empty persistent migration behavior assignment: %s',
+    (key) => {
+      withRepository({}, (repositoryRoot) => {
+        writeProjectEnvironmentFile(repositoryRoot, ['.env'], `${key}=\n`)
+        expect(() =>
+          validateNoPersistentDatabaseRouteSelectors(
+            repositoryRoot,
+            validEnvironment(),
+          ),
+        ).toThrow(safeTrialDatabaseRouteError)
+      })
+    },
+  )
+
+  it.each([
     'PGHOST=fixture',
     'PGHOST = fixture',
     'export PGHOST=fixture',
@@ -545,6 +595,40 @@ describe('trial database route gate', () => {
           ),
         ).toMatchObject({ route: 'session-pooler' })
       })
+    },
+  )
+
+  it.each([
+    ['SUPABASE_YES', 'true'],
+    ['SUPABASE_YES', 'false'],
+    ['SUPABASE_DB_MIGRATIONS_ENABLED', 'true'],
+    ['SUPABASE_DB_MIGRATIONS_ENABLED', 'false'],
+  ])('rejects shell migration behavior override %s=%s', (key, value) => {
+    expect(() =>
+      validateNoMigrationBehaviorEnvironmentOverrides({ [key]: value }),
+    ).toThrow(safeTrialDatabaseRouteError)
+    expect(() =>
+      validate({ environment: validEnvironment({ [key]: value }) }),
+    ).toThrow(safeTrialDatabaseRouteError)
+  })
+
+  it.each(forbiddenMigrationBehaviorEnvironmentKeys)(
+    'allows an absent or empty shell migration behavior selector: %s',
+    (key) => {
+      expect(
+        validateNoMigrationBehaviorEnvironmentOverrides({ [key]: '' }),
+      ).toBe(true)
+      expect(
+        validateNoMigrationBehaviorEnvironmentOverrides({
+          [key]: undefined,
+        }),
+      ).toBe(true)
+      expect(
+        validate({ environment: validEnvironment({ [key]: '' }) }),
+      ).toMatchObject({ route: 'session-pooler' })
+      expect(
+        validate({ environment: validEnvironment({ [key]: undefined }) }),
+      ).toMatchObject({ route: 'session-pooler' })
     },
   )
 
@@ -771,6 +855,51 @@ describe('trial database route gate', () => {
       expect(failure).not.toContain(canary)
     })
   })
+
+  it.each(forbiddenMigrationBehaviorEnvironmentKeys)(
+    'withholds persistent migration behavior value for %s',
+    (key) => {
+      withRepository({}, (repositoryRoot) => {
+        const canary = 'never-print-this-value'
+        writeProjectEnvironmentFile(
+          repositoryRoot,
+          ['.env'],
+          `${key}=${canary}\n`,
+        )
+
+        let failure = ''
+        try {
+          runTrialDatabaseRouteCheck(
+            trialArguments,
+            repositoryRoot,
+            validEnvironment(),
+          )
+        } catch (error) {
+          failure = error instanceof Error ? error.message : String(error)
+        }
+        expect(failure).toBe(safeTrialDatabaseRouteError)
+        expect(failure).not.toContain(canary)
+
+        const result = spawnSync(
+          process.execPath,
+          [
+            join(process.cwd(), 'scripts', 'trial-database-route-gate.mjs'),
+            ...trialArguments,
+          ],
+          {
+            cwd: repositoryRoot,
+            encoding: 'utf8',
+            env: sanitizedSpawnEnvironment(),
+          },
+        )
+        expect(result.status).toBe(1)
+        expect(result.stdout).toBe('')
+        expect(result.stderr).toBe(safeTrialDatabaseRouteError + '\n')
+        expect(result.stdout).not.toContain(canary)
+        expect(result.stderr).not.toContain(canary)
+      })
+    },
+  )
 
   it('keeps CLI stderr redacted for canary target and environment values', () => {
     withRepository({}, (repositoryRoot) => {

@@ -38,10 +38,19 @@ export const forbiddenAmbientPgSelectors = Object.freeze([
   'PGUSER',
 ])
 
+// Supabase CLI 2.110.0 reads these from the shell and nested project dotenv
+// files before db push. They can bypass the prompt or disable migrations, so
+// the reviewed Trial migration workflow requires both to be absent or empty.
+export const forbiddenMigrationBehaviorEnvironmentKeys = Object.freeze([
+  'SUPABASE_YES',
+  'SUPABASE_DB_MIGRATIONS_ENABLED',
+])
+
 export const forbiddenPersistentDatabaseEnvironmentKeys = Object.freeze([
   'SUPABASE_TRIAL_DB_URL',
   'SUPABASE_DB_PASSWORD',
   'PGPASSWORD',
+  ...forbiddenMigrationBehaviorEnvironmentKeys,
   ...forbiddenAmbientPgSelectors,
 ])
 
@@ -130,6 +139,14 @@ export function validateTrialDatabaseProjectEnvironment(environment) {
     projectEnvironment !== 'development'
   ) {
     failRouteCheck()
+  }
+  return true
+}
+
+export function validateNoMigrationBehaviorEnvironmentOverrides(environment) {
+  for (const key of forbiddenMigrationBehaviorEnvironmentKeys) {
+    const value = environment[key]
+    if (value !== undefined && value !== '') failRouteCheck()
   }
   return true
 }
@@ -249,6 +266,7 @@ export function validateTrialDatabaseRoute({
   environment,
 }) {
   validateTrialDatabaseProjectEnvironment(environment)
+  validateNoMigrationBehaviorEnvironmentOverrides(environment)
   const password = environment.PGPASSWORD
   if (password === undefined || password === '') failRouteCheck()
   if (

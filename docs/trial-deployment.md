@@ -90,7 +90,7 @@ target gate 只证明 linked target identity，不证明后续数据库命令将
 
 ### Session Pooler database route gate
 
-`scripts/trial-database-route-gate.mjs` 是第二个非网络、非 mutation、fail-closed 的本地门禁。它复用上述 target gate，并额外要求：
+`scripts/trial-database-route-gate.mjs` 是第二个非网络、非 mutation、fail-closed 的 database route + migration behavior execution-context gate。它复用上述 target gate，并额外要求：
 
 - link 后的 `supabase/.temp/project-ref` 与显式 Trial ref 完全一致；不接受 `--allow-unlinked`；
 - 从当前 checkout 的 `supabase/.temp/pooler-url` 读取 linked CLI 产生的数据库路由锚点；文件缺失、不可读或格式异常时立即停止；
@@ -98,8 +98,9 @@ target gate 只证明 linked target identity，不证明后续数据库命令将
 - hostname 必须属于 linked metadata 提供的 shared pooler 域，端口必须是 `5432`，且操作员 URL 只能带唯一的 `sslmode=require` 查询参数；不得带 fragment、额外 query、嵌入密码或硬编码 region/hostname；
 - `PGPASSWORD` 必须非空，且是唯一允许的数据库 credential source；`SUPABASE_DB_PASSWORD` 必须未设置或为空；
 - Supabase CLI 2.110.0 实际读取的其他连接选择器必须全部未设置或为空：`PGAPPNAME`、`PGCONNECT_TIMEOUT`、`PGDATABASE`、`PGHOST`、`PGPASSFILE`、`PGPORT`、`PGSERVICE`、`PGSERVICEFILE`、`PGSSLCERT`、`PGSSLKEY`、`PGSSLMODE`、`PGSSLPASSWORD`、`PGSSLROOTCERT`、`PGUSER`；
+- `SUPABASE_YES` 与 `SUPABASE_DB_MIGRATIONS_ENABLED` 必须未设置或为空；前者会自动回答 CLI confirmation prompt，后者会覆盖 `[db.migrations].enabled`。正式 migration session 禁止 shell 环境改变 Human Migration Approval 之后仍保留的 CLI 二次确认或 migration enablement；
 - 同时检查 CLI 会从当前 checkout 加载的 8 个项目环境文件，顺序固定为 `supabase/.env.development.local`、`supabase/.env.local`、`supabase/.env.development`、`supabase/.env`、`.env.development.local`、`.env.local`、`.env.development`、`.env`；缺失文件忽略，存在但不可读则 fail closed；
-- 上述文件中不得赋值 `SUPABASE_TRIAL_DB_URL`、`SUPABASE_DB_PASSWORD`、`PGPASSWORD` 或任一 PG selector；识别标准 `KEY=value`、带空格、`export KEY=value` 与 `KEY: value` 形式，空赋值也拒绝；只返回通过/拒绝，不输出变量名、路径或值；
+- 上述文件中不得赋值 `SUPABASE_TRIAL_DB_URL`、`SUPABASE_DB_PASSWORD`、`PGPASSWORD`、`SUPABASE_YES`、`SUPABASE_DB_MIGRATIONS_ENABLED` 或任一 PG selector；识别标准 `KEY=value`、带空格、`export KEY=value` 与 `KEY: value` 形式，空赋值也拒绝；只返回通过/拒绝，不输出变量名、路径或值；
 - migration 会话的 `SUPABASE_ENV` 必须未设置、为空或精确等于 `development`；`test`、`staging`、`production`、custom 或其他值全部拒绝且不回显。它只选择 CLI 加载哪组项目 `.env*`，不是 Supabase 项目 target；
 - 成功与失败输出只给出脱敏状态，不输出 project ref、hostname、username、URL、password 或任何环境变量值。
 
@@ -119,7 +120,7 @@ route gate 只读取 checkout-local linked metadata、当前进程环境与上�
 
 版本对应的官方证据见 [stable 发布 shell 选择](https://github.com/supabase/cli/blob/v2.110.0/.github/workflows/release.yml)、[stable/legacy link side effects](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/commands/link/SIDE_EFFECTS.md)、[stable ref resolver](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/config/legacy-project-ref.layer.ts)、[legacy workdir/profile resolver](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/config/legacy-cli-config.layer.ts) 与 [next/alpha project state schema](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/next/config/project-link-state.service.ts)。
 
-Supabase CLI 2.110.0 stable/legacy 的数据库配置解析还会读取上述 PG 环境变量，并按 `supabase/` 优先于仓库根目录的顺序加载项目 `.env*`；route gate 的拒绝集合与 8 个固定路径以该锁定版本的 [database config parser](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/shared/legacy-db-config.parse.ts)、[project dotenv loader](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/shared/legacy-db-config.toml-read.ts) 和 [dotenv parser](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/shared/legacy-dotenv.ts) 为依据。升级 CLI 或改变 channel 时，必须重新审计实际解析集合、文件集合与顺序，并同步更新 gate、测试和本 runbook。
+Supabase CLI 2.110.0 stable/legacy 的数据库配置解析还会读取上述 PG 环境变量、`SUPABASE_YES` 与 `SUPABASE_DB_MIGRATIONS_ENABLED`，并按 `supabase/` 优先于仓库根目录的顺序加载项目 `.env*`；route gate 的拒绝集合与 8 个固定路径以该锁定版本的 [database config parser](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/shared/legacy-db-config.parse.ts)、[project dotenv/config loader](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/shared/legacy-db-config.toml-read.ts) 和 [dotenv parser](https://github.com/supabase/cli/blob/v2.110.0/apps/cli/src/legacy/shared/legacy-dotenv.ts) 为依据。升级 CLI 或改变 channel 时，必须重新审计实际解析集合、文件集合与顺序，并同步更新 gate、测试和本 runbook。
 
 `supabase link` 成功只确认 control-plane 身份和 linked metadata，不等于当前操作员网络可用默认 Direct TCP 数据库路径。Direct endpoint TCP reachability does not guarantee a usable PostgreSQL session. CLI 2.110.0 在路径可达时仍可能选择 direct connection；Task 3.9.2 当前批准的 migration transport 必须来自 Trial Dashboard / linked pooler metadata，并以 checkout-local metadata 精确给出的 **Shared Supavisor Session Pooler / 5432** 为准。这是 deployment-discovered compatibility boundary，不是对 Supabase 缺陷的判断。**Transaction Pooler / 6543** 不得用于 schema migration，因为 migration 需要完整 PostgreSQL session/transaction 语义。
 
@@ -129,6 +130,8 @@ All Trial commands must run from the current repository checkout; an ambient wor
 - `SUPABASE_WORKDIR`：必须未设置或为空，任何非空值都拒绝；
 - `SUPABASE_PROFILE`：必须精确等于 `supabase`；未设置、空值或任何其他值都拒绝。
 - `SUPABASE_ENV`：数据库 migration 会话必须未设置、为空或精确等于 `development`；它选择项目 dotenv 文件集合，不选择 Trial/Production target。
+- `SUPABASE_YES`：必须未设置或为空，不能让 CLI 自动确认数据库写入 prompt。
+- `SUPABASE_DB_MIGRATIONS_ENABLED`：必须未设置或为空，不能通过环境覆盖 tracked `[db.migrations].enabled`。
 
 `SUPABASE_PROFILE=supabase` 只固定 Supabase CLI 内建的 API/control-plane profile；这里的 `supabase` 不是项目环境名，不代表 Production 项目，也不改变显式 Trial project ref。项目脚本不读取、不删除或修改用户级 `~/.supabase/profile`，而是以会话环境固定值阻断 fallback。
 
@@ -159,6 +162,8 @@ $env:PGPASSWORD = Read-Host 'Trial database password' -MaskInput
 
 Remove-Item Env:SUPABASE_DB_PASSWORD -ErrorAction SilentlyContinue
 Remove-Item Env:SUPABASE_ENV -ErrorAction SilentlyContinue
+Remove-Item Env:SUPABASE_YES -ErrorAction SilentlyContinue
+Remove-Item Env:SUPABASE_DB_MIGRATIONS_ENABLED -ErrorAction SilentlyContinue
 @(
   'PGAPPNAME', 'PGCONNECT_TIMEOUT', 'PGDATABASE', 'PGHOST',
   'PGPASSFILE', 'PGPORT', 'PGSERVICE', 'PGSERVICEFILE',
@@ -169,7 +174,7 @@ Remove-Item Env:SUPABASE_ENV -ErrorAction SilentlyContinue
 npm run trial:db-route:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
 ```
 
-正式 route gate 会在读取 linked metadata 之前后保持同一 fail-closed 边界，并检查 shell selector 与 8 个项目环境候选文件；操作者不需要把文件内容或匹配项复制到终端、日志或报告。若被阻断，只在本机受控编辑器中复核并移除数据库专用 assignment；不得输出值，也不得为通过门禁而删除 unrelated `VITE_*` 等普通应用配置。
+正式 route gate 会在读取 linked metadata 之前后保持同一 fail-closed 边界，并检查 shell route/behavior selector 与 8 个项目环境候选文件；操作者不需要把文件内容或匹配项复制到终端、日志或报告。若被阻断，只在本机受控编辑器中复核并移除数据库路由、credential 或 migration behavior 专用 assignment；不得输出值，也不得为通过门禁而删除 unrelated `VITE_*` 等普通应用配置。
 
 route gate 通过后，目标门禁、路由门禁与对应数据库命令必须紧邻、在同一 checkout 和同一会话中执行；期间不得更改相关环境变量或项目 `.env*`。操作结束后清除 `SUPABASE_TRIAL_DB_URL` 与 `PGPASSWORD`。
 
@@ -200,7 +205,7 @@ npx supabase link --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
 
 历史 migration 是唯一 schema 来源。不得修改、squash 或 rewrite 已发布 migration，不得使用 database dump 初始化 Trial，也不得把控制台手工粘贴 SQL 当作唯一部署方法。
 
-每一条数据库命令前依次运行 link 后 target gate 与 route gate：前者确认 Trial identity，后者确认 `--db-url` 精确对应 linked Session Pooler metadata，并统一确认 shell credential/selector、项目 `.env*` 持久化 assignment 与 `SUPABASE_ENV` 边界。操作者核对两个 gate 的脱敏输出后，再单独执行对应 CLI 命令。两个 gate 都不封装或自动触发 remote mutation：
+每一条数据库命令前依次运行 link 后 target gate 与 route gate：前者确认 Trial identity，后者确认 `--db-url` 精确对应 linked Session Pooler metadata，并统一确认 shell credential/route/behavior selector、项目 `.env*` 持久化 assignment 与 `SUPABASE_ENV` 边界。操作者核对两个 gate 的脱敏输出后，再单独执行对应 CLI 命令。`SUPABASE_YES` 被禁止，所以 CLI confirmation prompt 继续作为 explicit Human Migration Approval 之后的 secondary safety barrier；route gate PASS 仍绝不等于 db push 已授权。两个 gate 都不封装或自动触发 remote mutation：
 
 ```powershell
 npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF

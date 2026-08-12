@@ -331,6 +331,8 @@ Task 3.9.2 由已授权人员在 Vercel 发起 Trial 部署。Task 3.9.1 不登�
 Task 3.9.3 必须在真实 Trial 和真实浏览器中完成，并明确区分人工与自动化证据：
 
 - owner/admin 登录、会话恢复和重新登录；
+- 邀请调用必须验证一次真实浏览器预检：浏览器请求头至少包含 `authorization`、`apikey`、`content-type`、`x-client-info`，响应必须使用准确 allow-origin、只允许 `POST` / `OPTIONS`、显式允许上述四个头并保留正确的 `Vary` / cache 语义；不得使用通配符或反射任意请求头；
+- 仅看到 `OPTIONS -> 204` 不代表 CORS 通过；还必须证明 SDK/header 契约兼容、预检不调用认证或业务处理，并且允许来源的预检之后确实发出正常 `POST`；
 - 邀请/激活受控测试成员；
 - 创建项目、成员、模块和任务；
 - `todo -> in_progress`；
@@ -369,16 +371,43 @@ Task 3.9.1 不声称完成上述远端 Smoke/E2E。
 
 ## 13. Backup and recovery boundary
 
-进入 Trial 前：
+本节只定义下一次**单独授权**的恢复演练；本仓库分支不执行备份、restore、远端 reset 或数据库写入。依据 Supabase 当前官方的 [Database Backups](https://supabase.com/docs/guides/platform/backups)、[Restore to a new project](https://supabase.com/docs/guides/platform/clone-project)、[CLI backup/restore](https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore)、[`db dump` reference](https://supabase.com/docs/reference/cli/v1/supabase-db) 与 [Auth users migration](https://supabase.com/docs/guides/troubleshooting/migrating-auth-users-between-projects)，先按实际 Trial 套餐和项目状态选择下列路径；不得按套餐名称猜测能力。
 
-- 按目标 Supabase 项目当前实际可用的官方备份能力执行；
-- 在 migration 前核对最近备份状态、保留范围和责任人；
-- 记录恢复入口和授权链，不在公开文档记录内部账号；
-- 数据恢复一律视为高风险人工动作；
-- 恢复演练使用独立 Trial/演练环境，不覆盖 Production；
-- Stage 6 前必须完成正式 Production backup/restore 演练。
+### A. Managed backup available
 
-如果当前计划不支持某项托管备份能力，应如实记录限制并决定是否阻断试运行，不得编造能力。
+1. 由授权操作者在受控平台核对可恢复备份的状态、带时区时间戳、最早/最晚恢复点、保留期和可能的数据丢失窗口（RPO），只在非公开记录中保存项目和操作者信息。
+2. 记录平台提供的受控恢复入口。优先使用官方“restore to a new project”把物理备份复制到新项目；该能力要求付费计划和已启用的 physical backups，并且仍需人工重新配置 Edge Functions、Auth settings/API keys 等非数据库配置。
+3. 恢复目标必须是另行授权的 disposable Trial/recovery 项目，不得是 active Trial，更不得是 Production。禁止为了证明恢复而 destructive-reset active Trial。
+4. 平台物理恢复可包含数据库 schema/data、roles/permissions 和 `auth` identity data，但仍须以实际恢复结果逐项验证，不得把“平台显示可恢复”当成演练成功。
+
+### B. Managed backup unavailable
+
+1. 在任何高风险 Trial 写入、migration 或 E2E 前（适用时）由授权操作者使用仓库锁定的 Supabase CLI 和官方 CLI backup sequence 生成 manual logical backup。连接信息只存在于受控会话，不写入命令文件、artifact 名、文档、日志或 shell history。
+2. 备份集至少分别覆盖 roles、application schema 和 application data；需要延续 CLI migration state 时，按官方流程单独保存 `supabase_migrations` schema/data。记录 CLI 版本、每个 artifact 的 UTC/带时区时间戳、明确包含/排除的 schema、文件大小和 SHA-256（例如在受控终端使用 `Get-FileHash -Algorithm SHA256`）。
+3. artifact 与 manifest 必须保存于公开仓库之外的受控位置；绝不提交 Git，不使用含 credential、项目 ref、真实 URL、真实账号或业务数据的文件名，也不把内容复制进公开日志、报告或聊天。
+4. standard `supabase db dump` 会排除 `auth`、`storage` 和 extension-owned 等 Supabase-managed schemas；普通 schema/data dump 不是完整应用恢复备份。migration history 也必须按官方流程显式处理。
+5. 本应用的可恢复集合必须同时覆盖：application schema、application data、需要的 migration history、roles/privileges/ACL/RLS 语义，以及与 `app_users` / `user_identities` / memberships 引用一致的 Supabase Auth identity state，或一个已经验证为安全的重建流程。
+6. 不得编造 Auth SQL，不得直接 INSERT/UPDATE `auth.users` 作为捷径。Supabase 官方说明 Auth 用户迁移可使用完整 Dashboard backup，或按其 general migration guide 执行经过验证的 SQL export/import；在目标计划、CLI 版本和隔离恢复项目上未证明安全步骤前，manual logical backup 只能视为部分保护，恢复准入继续阻断。
+
+### Isolated restore drill and evidence
+
+未来演练必须获得单独授权，并只在 disposable Trial/recovery 项目或等价隔离环境执行。恢复前再次确认目标既不是 active Trial 也不是 Production；不得使用远端 `db reset` 掩盖失败。至少保留以下脱敏证据：
+
+- backup artifact 存在、可读，时间戳/hash 与 manifest 一致，并能证明来自预期 Trial；
+- roles、application schema/data 和需要的 migration/version state 恢复成功；
+- 核心 table privileges、column privileges、RLS/RPC、拒绝路径与白名单路径通过仓库验证；
+- Auth identity 已通过官方支持路径恢复，或安全 reconstruction procedure 已被实际验证；新项目 key/签名边界变化时，受控用户能够按预期重新认证；
+- 应用能读取恢复后的低风险 smoke state，且 active Trial / Production 未被改变；
+- artifact、仓库、命令历史和公开日志中没有 Secret、连接信息、真实账号或业务数据；
+- 记录恢复结果、RPO/保留限制、未恢复的平台配置、失败与后续责任人。
+
+只有上述真实 restore drill 完成并经独立复核后，`TRIAL-RECOVERY-001` 才可考虑关闭。文档更新、backup artifact 单独存在或本地测试通过均不是恢复证据。当前状态固定为：
+
+```text
+RECOVERY BLOCKER NOT YET CLOSED
+```
+
+Stage 6 前仍必须完成独立的 Production backup/restore 演练；Trial 演练不能替代 Production 恢复证据。
 
 ## 14. Incident handling
 

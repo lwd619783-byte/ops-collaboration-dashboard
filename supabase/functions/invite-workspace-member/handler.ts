@@ -131,6 +131,12 @@ const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u
 const maxBodyBytes = 8192
+const corsAllowedHeaders = [
+  'authorization',
+  'apikey',
+  'content-type',
+  'x-client-info',
+] as const
 
 function responseHeaders(origin?: string): Headers {
   const headers = new Headers({
@@ -140,10 +146,7 @@ function responseHeaders(origin?: string): Headers {
   })
   if (origin) {
     headers.set('Access-Control-Allow-Origin', origin)
-    headers.set(
-      'Access-Control-Allow-Headers',
-      'authorization, apikey, content-type',
-    )
+    headers.set('Access-Control-Allow-Headers', corsAllowedHeaders.join(', '))
     headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS')
     headers.set('Access-Control-Max-Age', '600')
     headers.set('Vary', 'Origin')

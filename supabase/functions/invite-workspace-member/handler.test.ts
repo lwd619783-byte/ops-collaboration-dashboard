@@ -37,6 +37,8 @@ function request(
     origin?: string
     authorization?: string | null
     rawBody?: string
+    accessControlRequestMethod?: string
+    accessControlRequestHeaders?: string
   } = {},
 ) {
   const headers = new Headers({
@@ -45,6 +47,18 @@ function request(
   })
   if (options.authorization !== null) {
     headers.set('Authorization', options.authorization ?? authorization)
+  }
+  if (options.accessControlRequestMethod) {
+    headers.set(
+      'Access-Control-Request-Method',
+      options.accessControlRequestMethod,
+    )
+  }
+  if (options.accessControlRequestHeaders) {
+    headers.set(
+      'Access-Control-Request-Headers',
+      options.accessControlRequestHeaders,
+    )
   }
   return new Request(
     'http://127.0.0.1:54321/functions/v1/invite-workspace-member',
@@ -92,6 +106,15 @@ function dependencies(): InviteWorkspaceMemberDependencies {
 
 async function json(response: Response) {
   return (await response.json()) as Record<string, unknown>
+}
+
+function commaSeparatedTokens(value: string | null): Set<string> {
+  return new Set(
+    (value ?? '')
+      .split(',')
+      .map((token) => token.trim().toLowerCase())
+      .filter((token) => token !== ''),
+  )
 }
 
 function fictionalVerifiedToken(subject: string, issuer: string) {
@@ -166,15 +189,88 @@ describe('invite-workspace-member Edge Function handler', () => {
     deps = dependencies()
   })
 
-  it('accepts a preflight only for an allowed origin', async () => {
+  it('returns the explicit SDK-compatible contract for a realistic preflight', async () => {
     const handler = createInviteWorkspaceMemberHandler(deps)
-    const response = await handler(request(undefined, { method: 'OPTIONS' }))
+    const response = await handler(
+      request(undefined, {
+        method: 'OPTIONS',
+        authorization: null,
+        accessControlRequestMethod: 'POST',
+        accessControlRequestHeaders:
+          'authorization, apikey, content-type, x-client-info',
+      }),
+    )
 
     expect(response.status).toBe(204)
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(
       allowedOrigin,
     )
+    expect(
+      commaSeparatedTokens(
+        response.headers.get('Access-Control-Allow-Methods'),
+      ),
+    ).toEqual(new Set(['post', 'options']))
+    expect(
+      commaSeparatedTokens(
+        response.headers.get('Access-Control-Allow-Headers'),
+      ),
+    ).toEqual(
+      new Set(['authorization', 'apikey', 'content-type', 'x-client-info']),
+    )
+    expect(commaSeparatedTokens(response.headers.get('Vary'))).toEqual(
+      new Set(['origin']),
+    )
+    expect(response.headers.get('Access-Control-Max-Age')).toBe('600')
+    expect(response.headers.get('Cache-Control')).toBe('no-store')
     expect(deps.authenticate).not.toHaveBeenCalled()
+    expect(deps.prepareInvitation).not.toHaveBeenCalled()
+    expect(deps.inviteAuthUser).not.toHaveBeenCalled()
+    expect(deps.confirmInvitation).not.toHaveBeenCalled()
+    expect(deps.markInvitationFailed).not.toHaveBeenCalled()
+  })
+
+  it('rejects a preflight from a disallowed origin before business handling', async () => {
+    const handler = createInviteWorkspaceMemberHandler(deps)
+    const response = await handler(
+      request(undefined, {
+        method: 'OPTIONS',
+        origin: 'https://untrusted.invalid',
+        authorization: null,
+        accessControlRequestMethod: 'POST',
+        accessControlRequestHeaders:
+          'authorization, apikey, content-type, x-client-info',
+      }),
+    )
+
+    expect(response.status).toBe(403)
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull()
+    expect(response.headers.get('Access-Control-Allow-Headers')).toBeNull()
+    expect(deps.authenticate).not.toHaveBeenCalled()
+    expect(deps.prepareInvitation).not.toHaveBeenCalled()
+  })
+
+  it('does not reflect an attacker-controlled requested header', async () => {
+    const handler = createInviteWorkspaceMemberHandler(deps)
+    const response = await handler(
+      request(undefined, {
+        method: 'OPTIONS',
+        authorization: null,
+        accessControlRequestMethod: 'POST',
+        accessControlRequestHeaders:
+          'authorization, apikey, content-type, x-client-info, x-attacker-controlled',
+      }),
+    )
+
+    expect(response.status).toBe(204)
+    expect(
+      commaSeparatedTokens(
+        response.headers.get('Access-Control-Allow-Headers'),
+      ),
+    ).toEqual(
+      new Set(['authorization', 'apikey', 'content-type', 'x-client-info']),
+    )
+    expect(deps.authenticate).not.toHaveBeenCalled()
+    expect(deps.prepareInvitation).not.toHaveBeenCalled()
   })
 
   it('rejects a non-allowed origin before processing credentials', async () => {

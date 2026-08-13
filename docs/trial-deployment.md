@@ -409,6 +409,205 @@ RECOVERY BLOCKER NOT YET CLOSED
 
 Stage 6 前仍必须完成独立的 Production backup/restore 演练；Trial 演练不能替代 Production 恢复证据。
 
+### Recovery Identity Domain Rebind V1
+
+Supabase Auth 用户随数据库恢复到另一个 Supabase 项目后，`auth.users.id`
+和密码哈希可以保持不变，但新项目会签发新的会话。新会话 JWT 的 `sub`
+仍是恢复后的 Auth UUID，`iss` 则是 Recovery 项目的 Auth issuer。应用的
+`current_app_user_id()` 故意按精确的
+`(provider='supabase_auth', provider_tenant=iss, provider_subject=sub)`
+解析；因此只恢复 `auth.users` 不会让新的 Recovery issuer 自动继承旧 Trial
+身份域的授权。
+
+本仓库提供 `scripts/recovery/recovery-auth-tenant-rebind.mjs`，只用于经过验证的
+Supabase 项目到项目灾难恢复。它是离线 operator procedure，不创建 migration、
+数据库函数、public RPC、Edge Function、浏览器入口或日常 Trial 功能。V1 只支持：
+
+- source 与 target 都是 canonical Supabase hosted Auth issuer；
+- `provider = supabase_auth`；
+- 恢复后的 `auth.users.id` 与 source `provider_subject` 完全相同；
+- 把 target issuer + 同一 subject 追加到同一现有 `app_user`；
+- 不做邮箱匹配、账号合并、跨 provider 绑定、微信迁移或任意 tenant federation。
+
+旧身份行必须保留：它是历史外部身份事实，绑定字段由数据库触发器强制不可变。
+Recovery 绑定使用 INSERT 追加；不得 UPDATE source `provider_tenant` /
+`provider_subject` / `user_id`，不得 DELETE 或仅因发生恢复而 revoke source 行。
+
+#### Execution authorization boundary
+
+仓库实现、测试、功能分支 push、CI、独立审计、PR 和 merge 都不授权执行 APPLY。
+只有上述代码交付完成后，在一个**新的、单独授权的 Recovery operation** 中，
+操作者才可使用本节。当前 coding task 禁止对 active Trial、hosted Recovery 或
+Production 运行 PLAN/APPLY；本节出现命令不表示它们已经执行。
+
+在任何 Recovery 连接前，受控恢复记录必须已经证明：
+
+1. target 是隔离 Recovery 项目，不是 active Trial 或 Production；
+2. linked project ref 与 linked Session Pooler metadata 来自当前 Recovery checkout；
+3. source issuer 来自 active Trial inventory，target issuer 来自实际 Recovery Auth；
+4. source 和 target issuer 都是精确 canonical `https://<ref>.supabase.co/auth/v1`，且不相等；
+5. Recovery database cluster system identifier 已在受控记录中建立，不能在执行时猜测；
+6. migration count / latest version 与已审阅恢复结果一致；本次 R3 已知恢复前提是 22 项、latest `20260812124927`，执行时仍需重新核对实际值；
+7. source identity 已验证且未撤销、内部用户 active；
+8. Recovery `auth.users.id::text` 与 source subject UUID 完全相同；
+9. 该恢复 subject 已在 Recovery Auth 成功完成一次新会话认证；
+10. active Trial / Production inventory 已明确填写；若 Production 尚未配置，只能使用固定值 `NOT_CONFIGURED`，不能留空。
+
+`verified_at` 的含义不在本任务中全局放宽。新 target identity 之所以可标记为已验证，
+必须同时依赖上述四段证据：source identity 原本已验证且 live、subject UUID 在
+Recovery `auth.users` 中精确恢复、该 subject 已由 Recovery Auth 成功认证、操作者
+正处于显式授权的灾难恢复流程。程序能在数据库中复核前三项中的持久化部分；
+“成功的新 Recovery Auth 会话”和“人工恢复授权”由受控恢复记录与固定确认值作为
+执行前提。缺少任一项即停止，不得为了通过测试设置 `verified_at`。
+
+#### Target and route evidence
+
+该过程复用 stable CLI linked-state / Session Pooler route 约束，并增加 Recovery
+专用证据。它不只依赖项目名称：linked ref、linked pooler route、canonical target
+issuer、数据库 cluster system identifier、migration count/latest 必须同时一致。
+端口只允许 Session Pooler `5432`，不允许 Transaction Pooler `6543`；URL 不得嵌入
+密码，`PGPASSWORD` 是唯一密码来源。`SUPABASE_PROFILE` 必须精确为 `supabase`，
+`SUPABASE_WORKDIR`、PG route selectors、migration behavior overrides，以及 active
+Trial 的 route/project session variables 均必须为空。
+
+所有值只放在当前受控 PowerShell 进程，不写 `.env*`、脚本、Markdown、命令字面量、
+聊天、截图或 shell history。操作器会 fail closed 检查 CLI 会读取的 8 个项目
+dotenv 候选文件；任何 `RECOVERY_*`、数据库 route/password 或 Supabase selector
+持久化 assignment 都会拒绝。以下 helper 兼容 Windows PowerShell 5.1，读取期间隐藏输入；
+不得把它替换为真实值字面量：
+
+```powershell
+function Read-RecoveryValue {
+  param([Parameter(Mandatory = $true)][string]$Prompt)
+  $secureValue = Read-Host $Prompt -AsSecureString
+  try {
+    return [System.Net.NetworkCredential]::new('', $secureValue).Password
+  } finally {
+    $secureValue.Dispose()
+  }
+}
+
+Remove-Item Env:SUPABASE_PROJECT_ID -ErrorAction SilentlyContinue
+Remove-Item Env:SUPABASE_WORKDIR -ErrorAction SilentlyContinue
+Remove-Item Env:SUPABASE_ENV -ErrorAction SilentlyContinue
+Remove-Item Env:SUPABASE_YES -ErrorAction SilentlyContinue
+Remove-Item Env:SUPABASE_DB_MIGRATIONS_ENABLED -ErrorAction SilentlyContinue
+Remove-Item Env:SUPABASE_DB_PASSWORD -ErrorAction SilentlyContinue
+Remove-Item Env:SUPABASE_TRIAL_DB_URL -ErrorAction SilentlyContinue
+Remove-Item Env:SUPABASE_TRIAL_PROJECT_REF -ErrorAction SilentlyContinue
+@(
+  'PGAPPNAME', 'PGCONNECT_TIMEOUT', 'PGDATABASE', 'PGHOST',
+  'PGPASSFILE', 'PGPORT', 'PGSERVICE', 'PGSERVICEFILE',
+  'PGSSLCERT', 'PGSSLKEY', 'PGSSLMODE', 'PGSSLPASSWORD',
+  'PGSSLROOTCERT', 'PGUSER'
+) | ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
+
+$env:SUPABASE_PROFILE = 'supabase'
+$env:RECOVERY_TARGET_CLASSIFICATION = 'ISOLATED_RECOVERY_TARGET'
+$env:RECOVERY_OPERATOR_AUTHORIZATION = 'AUTHORIZED_RECOVERY_REBIND_V1'
+$env:RECOVERY_AUTHENTICATION_EVIDENCE = 'AUTHENTICATED_RECOVERY_SESSION_VERIFIED'
+$env:RECOVERY_TARGET_PROJECT_REF = Read-RecoveryValue 'Recovery project ref'
+$env:RECOVERY_ACTIVE_TRIAL_PROJECT_REF = Read-RecoveryValue 'Active Trial project ref'
+$env:RECOVERY_PRODUCTION_PROJECT_REF = Read-RecoveryValue 'Production project ref or NOT_CONFIGURED'
+$env:RECOVERY_SOURCE_ISSUER = Read-RecoveryValue 'Exact source issuer'
+$env:RECOVERY_TARGET_ISSUER = Read-RecoveryValue 'Exact Recovery issuer'
+$env:RECOVERY_AUTH_SUBJECT = Read-RecoveryValue 'Restored Auth subject UUID'
+$env:RECOVERY_EXPECTED_SYSTEM_IDENTIFIER = Read-RecoveryValue 'Recovery database system identifier'
+$env:RECOVERY_EXPECTED_MIGRATION_COUNT = Read-RecoveryValue 'Expected migration count'
+$env:RECOVERY_EXPECTED_LATEST_MIGRATION = Read-RecoveryValue 'Expected latest migration'
+$env:RECOVERY_DB_URL = Read-RecoveryValue 'Passwordless Recovery Session Pooler URL'
+$env:PGPASSWORD = Read-RecoveryValue 'Recovery database password'
+```
+
+在设置这些变量前，当前 checkout 必须已经由另一个明确授权步骤 link 到 Recovery；
+`supabase/.temp/project-ref` 和 `supabase/.temp/pooler-url` 缺失或与输入不一致时，
+PLAN 与 APPLY 都会拒绝。不得复制 active Trial checkout 的 linked metadata，也不得
+为通过门禁手工编造 pooler hostname、system identifier 或 migration evidence。
+
+#### Phase A — PLAN / DRY RUN
+
+PLAN 是只读的 repeatable-read transaction。它验证 Recovery target、source identity、
+active app user、恢复后的 Auth UUID、全 subject ownership、target conflict 及当前精确
+解析结果。输出只有 counts、booleans 和 SHA-256 `plan_digest`；不输出 issuer、subject、
+identity/app user ID、JWT、邮箱、URL、project ref、连接信息或凭据：
+
+```powershell
+node scripts/recovery/recovery-auth-tenant-rebind.mjs --mode plan --confirm RECOVERY
+```
+
+对于本次单 subject V1，首次安全计划必须明确满足：
+
+- `status = PASS`；
+- `safe_rebind_count = 1`；
+- `idempotent_noop_count = 0`；
+- source verified/live、app user active、Auth subject present、subject owner count = 1；
+- target conflict count = 0、source/target distinct、Recovery target verified；
+- `mutation_performed = false`。
+
+如果 exact target identity 已存在、live 且指向同一 `app_user`，PLAN 应为
+`safe_rebind_count = 0`、`idempotent_noop_count = 1`；这属于安全幂等状态。任何其他
+count、失败码或不确定证据都必须停止。操作者将 `plan_digest` 记录在受控操作记录中，
+完成人工复核；PLAN 绝不会自动继续 APPLY。
+
+#### Phase B — APPLY
+
+APPLY 必须是新的、单独命令，并同时携带已审阅 digest 与第二确认值。digest 是非秘密
+审阅指纹，但仍只进入受控操作记录：
+
+```powershell
+$reviewedPlanDigest = Read-Host 'Reviewed PLAN digest'
+node scripts/recovery/recovery-auth-tenant-rebind.mjs --mode apply --confirm RECOVERY --plan-digest $reviewedPlanDigest --confirm-apply APPLY_RECOVERY_IDENTITY_REBIND
+```
+
+APPLY 在一个 serializable transaction 内重新执行全部 target / route / identity guard，
+锁定 `user_identities`、source `app_users` 与恢复后的 `auth.users`，并重新计算 digest。
+digest 不一致或任一 guard 失败时事务 rollback，不产生部分绑定。成功路径只执行一条
+`user_identities` INSERT：
+
+- `provider = supabase_auth`；
+- `provider_tenant =` exact Recovery issuer；
+- `provider_subject =` restored Auth UUID；
+- `user_id =` source identity 的同一内部用户；
+- `verified_at =` 当前受控恢复验证时间；
+- `last_used_at = null`，不伪造应用使用历史。
+
+事务提交前再次证明 source 行完全未变，target 行 live，source 与 target 的 exact
+issuer + subject 都经未修改的 `current_app_user_id()` 解析到同一 `app_user`。重复 APPLY
+对同一 live mapping 返回 idempotent NO-OP，不创建 duplicate。
+
+#### Post-apply verification and incident behavior
+
+APPLY 的本地/终端 PASS 不是恢复闭环。提交后必须：
+
+1. 清除当前 PowerShell 中全部 `RECOVERY_*`、`PGPASSWORD` 和 Recovery route 变量；
+2. 对 Recovery Auth 明确退出并重新登录，取得新的 Recovery session；不得复用 Trial token；
+3. 通过正常应用/RLS 路径证明 `current_app_user_id()`、Owner workspace state 和低风险 smoke state 正常；
+4. 验证 source 历史 identity 仍存在且未变、target identity 恰一条；
+5. 证明 active Trial 与 Production 未发生 mutation；
+6. 由独立复核者检查脱敏 PLAN/APPLY、版本链和真实浏览器证据。
+
+完成或中止操作后，在同一进程清除操作上下文；不得把这些值导出到 profile 或
+dotenv：
+
+```powershell
+Get-ChildItem Env:RECOVERY_* | Remove-Item -ErrorAction SilentlyContinue
+Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+Remove-Item Env:SUPABASE_PROJECT_ID -ErrorAction SilentlyContinue
+```
+
+任一 guard 在 commit 前失败会自动 rollback。成功 commit 后没有自动 DELETE/UPDATE
+“回滚”，因为身份历史是 append-only。若 mapping、target 或恢复证据出现任何疑问：
+
+- 立即停止 Recovery 登录与业务写入；
+- 不修改、删除或撤销 source identity，不自行 UPDATE/DELETE target identity；
+- 保存不含 subject、issuer、账号或连接信息的失败分类和影响范围；
+- 由授权人员选择恢复到 APPLY 前的隔离 Recovery 备份，或设计单独审阅的 forward remediation；
+- 重新执行完整恢复验证与独立复核后才恢复使用。
+
+本过程的 repository implementation、测试或一次 APPLY 都不能单独关闭
+`TRIAL-RECOVERY-001`。只有真实 Recovery re-authentication、应用解析、权限/业务 smoke、
+active Trial/Production 未修改和独立复核全部成立后，才可另行评估 blocker。
+
 ## 14. Incident handling
 
 发现以下任一情况立即停止部署或试运行：

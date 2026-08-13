@@ -234,6 +234,27 @@ async function identitySnapshot(client, issuer, subject) {
   return result.rows
 }
 
+// Local, verifier-only helper: reproduce the exact JWT boundary the real
+// Recovery drill exercised. It sets synthetic request.jwt.claims and calls the
+// production boundary public.current_app_user_id(), returning only the resolved
+// synthetic app_user id (or null). It mirrors the operator's existing
+// currentAppUserForClaims behavior and is test/verifier-only: it does not
+// create an RPC, migration, Edge endpoint, or any frontend surface.
+//
+// NOTE: set_config(..., true) is transaction-local, so this helper must be
+// invoked inside an explicit transaction so the GUC survives the
+// set_config -> select round-trip.
+async function currentAppUserForClaims(client, issuer, subject) {
+  await client.query('select set_config($1, $2, true)', [
+    'request.jwt.claims',
+    JSON.stringify({ iss: issuer, sub: subject, role: 'authenticated' }),
+  ])
+  const result = await client.query(
+    'select public.current_app_user_id()::text as user_id',
+  )
+  return result.rows[0]?.user_id ?? null
+}
+
 const status = localStatus()
 requireLoopbackUrl(status.API_URL, ['http:', 'https:'])
 requireLoopbackUrl(status.DB_URL, ['postgres:', 'postgresql:'])
@@ -248,6 +269,37 @@ try {
   const happy = await createSourceFixture(client)
   const happyInput = recoveryInput(evidence, happy.subject)
   const oldBefore = await identitySnapshot(client, sourceIssuer, happy.subject)
+
+  // R3 acceptance regression: reproduce the exact current_app_user_id() JWT
+  // boundary that failed during the real Recovery drill. Before the Recovery
+  // tenant identity is appended:
+  //   - a Recovery-style JWT (target issuer + restored subject) must NOT resolve
+  //     through the production boundary public.current_app_user_id();
+  //   - the existing source issuer + same subject must still resolve to the
+  //     original app_user through the same boundary.
+  let preRebindResolution
+  await withRolledBackTransaction(client, async () => {
+    const recoveryJwtUserId = await currentAppUserForClaims(
+      client,
+      targetIssuer,
+      happy.subject,
+    )
+    const sourceJwtUserId = await currentAppUserForClaims(
+      client,
+      sourceIssuer,
+      happy.subject,
+    )
+    preRebindResolution = { recoveryJwtUserId, sourceJwtUserId }
+  })
+  check(
+    'before rebind the Recovery issuer and restored subject do not resolve through current_app_user_id()',
+    preRebindResolution.recoveryJwtUserId === null,
+  )
+  check(
+    'before rebind the source issuer and subject still resolve through current_app_user_id()',
+    preRebindResolution.sourceJwtUserId === happy.userId,
+  )
+
   const targetBefore = await client.query(
     'select public.resolve_app_user_id($1, $2, $3)::text as user_id',
     ['supabase_auth', targetIssuer, happy.subject],
@@ -297,6 +349,32 @@ try {
     'source and target exact issuer plus subject resolve to the same app_user',
     apply.source_resolution_preserved === true &&
       apply.target_resolution_verified === true,
+  )
+
+  // After APPLY, explicitly prove through the same production boundary that
+  // both the source issuer and the newly rebound Recovery issuer + subject
+  // resolve to the same existing app_user.
+  let postRebindResolution
+  await withRolledBackTransaction(client, async () => {
+    const sourceAfter = await currentAppUserForClaims(
+      client,
+      sourceIssuer,
+      happy.subject,
+    )
+    const targetAfter = await currentAppUserForClaims(
+      client,
+      targetIssuer,
+      happy.subject,
+    )
+    postRebindResolution = { sourceAfter, targetAfter }
+  })
+  check(
+    'after rebind the source issuer and subject resolve through current_app_user_id()',
+    postRebindResolution.sourceAfter === happy.userId,
+  )
+  check(
+    'after rebind the Recovery issuer and subject resolve through current_app_user_id() to the same app_user',
+    postRebindResolution.targetAfter === happy.userId,
   )
 
   const repeatPlan = await planRecoveryAuthTenantRebind(client, happyInput)

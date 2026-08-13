@@ -33,10 +33,13 @@ npm run db:types:check
 npm run db:membership:verify
 npm run db:modules:verify
 npm run db:tasks:verify
+npm run db:recovery-rebind:verify
 npm run db:verify
 ```
 
-`db:verify` 会依次重建本地数据库、执行 pgTAP、运行 Task 2.2 成员并发验证、Task 2.3 模块并发验证与 Task 3.1/3.3 任务并发验证、以 warning 为失败门槛运行数据库 lint，并检查已提交类型是否与本地 migration 漂移。并发脚本只创建随机虚构本地夹具，不连接远端，输出不含 DB URL、JWT 或密钥。
+`db:verify` 会依次重建本地数据库、执行 pgTAP、运行 Recovery Auth tenant rebind 的离线 PLAN/APPLY 本地回归、Task 2.2 成员并发验证、Task 2.3 模块并发验证与 Task 3.1/3.3 任务并发验证、以 warning 为失败门槛运行数据库 lint，并检查已提交类型是否与本地 migration 漂移。Recovery 与并发脚本只创建随机虚构本地夹具，Recovery 验证还强制数据库/API 都是 loopback；它们不连接远端，输出不含 DB URL、JWT、issuer、subject 或密钥。
+
+Recovery Auth Tenant Rebind V1 是 `scripts/recovery/recovery-auth-tenant-rebind.mjs` 提供的 operator-only 离线 procedure，不是 migration、数据库 RPC、Edge Function 或浏览器功能。完整授权、target/route evidence、PLAN/APPLY 分离、append-only 语义与事故边界只以 [试运行部署 runbook](trial-deployment.md#recovery-identity-domain-rebind-v1) 为准。`npm run db:recovery-rebind:verify` 仅在本地 loopback Supabase 中使用 synthetic identities 证明代码行为，不授权或执行 hosted Recovery mutation。
 
 Task 2.2 的成员写 RPC 通过内部 `public.lock_membership_participants(p_project_id, p_participant_ids)`（`SECURITY DEFINER`、固定空 `search_path`、不授予 API 角色执行权）统一消除跨表 TOCTOU：每个 RPC 先锁定 `projects` 行，再按「`app_users` 按 id → `workspace_members` 按 user_id（项目所在工作空间）」的稳定顺序锁定 actor 与参与方，最后在锁内重新校验 actor 仍为 active 工作空间成员与 active app user（否则 `42501`）。持锁至事务结束，使并发撤销 / 停用 / 转让在单一锁边界上线性化。`list_project_members` 同时返回 `active_member_count` 与 `inactive_historical_member_count` 两个窗口计数，区分当前在用与停用历史成员。
 

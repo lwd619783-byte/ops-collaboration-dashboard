@@ -71,7 +71,7 @@ npm run check
 npm run trial:baseline:check
 ```
 
-`npm run check` 按格式、Lint、类型、测试、Trial 部署基线静态门禁、前端凭据构建门禁和生产构建的顺序执行。`npm run security:audit` 单独阻断高危和严重依赖漏洞，CI 会在项目检查前运行该命令。Edge Function 另有明确的两个测试文件（`npm run test:edge` 运行 `handler.test.ts` 与 `entry.test.ts`）与真实入口类型检查（`deno check supabase/functions/invite-workspace-member/index.ts`，CI 使用固定版本 Deno 2.2.12）。真实本地 Auth 重发集成验证由 `npm run db:reissue:verify` 执行；真实项目成员、项目模块和项目任务并发验证分别由 `npm run db:membership:verify`、`npm run db:modules:verify` 和 `npm run db:tasks:verify` 执行。三类项目并发脚本都已纳入 `db:verify`，且只使用本地 Supabase 与随机虚构夹具。
+`npm run check` 按格式、Lint、类型、测试、Trial 部署基线静态门禁、前端凭据构建门禁和生产构建的顺序执行。`npm run security:audit` 单独阻断高危和严重依赖漏洞，CI 会在项目检查前运行该命令。Edge Function 另有明确的两个测试文件（`npm run test:edge` 运行 `handler.test.ts` 与 `entry.test.ts`）与真实入口类型检查（`deno check supabase/functions/invite-workspace-member/index.ts`，CI 使用固定版本 Deno 2.2.12）。真实本地 Auth 重发集成验证由 `npm run db:reissue:verify` 执行；Recovery Auth tenant rebind 的离线 PLAN/APPLY 回归由 `npm run db:recovery-rebind:verify` 执行；真实项目成员、项目模块和项目任务并发验证分别由 `npm run db:membership:verify`、`npm run db:modules:verify` 和 `npm run db:tasks:verify` 执行。Recovery 与三类项目并发脚本都已纳入 `db:verify`，且只使用 loopback 本地 Supabase 与随机虚构夹具。
 
 ## 环境变量
 

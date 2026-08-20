@@ -29,7 +29,7 @@ import {
 
 const repositoryRoot = process.cwd()
 const projectPlanHash =
-  '67dfa19c72092db95a2fdaab5b0ea506d16167ef2a9096907c53da4f13e3d7c5'
+  '11046d72e4edde941f1221ed0db1537600e2fa3328b6020f01a243ec5618b441'
 let checkCount = 0
 
 function read(path) {
@@ -55,6 +55,10 @@ const runbook = read('docs/trial-deployment.md')
 const targetGate = read('scripts/trial-deployment-gate.mjs')
 const routeGate = read('scripts/trial-database-route-gate.mjs')
 const routeGateTest = read('scripts/trial-database-route-gate.test.mjs')
+const operatorCommon = read('scripts/operator/OpsDbCredential.Common.ps1')
+const operatorInitializer = read(
+  'scripts/operator/Initialize-OpsDbCredentialStore.ps1',
+)
 for (const selector of [
   'SUPABASE_PROJECT_ID',
   'SUPABASE_WORKDIR',
@@ -165,12 +169,29 @@ for (const contract of [
 }
 for (const behaviorVariable of forbiddenMigrationBehaviorEnvironmentKeys) {
   check(
-    runbook.includes(
-      `Remove-Item Env:${behaviorVariable} -ErrorAction SilentlyContinue`,
-    ),
-    'the runbook does not clear a migration behavior environment override',
+    runbook.includes(behaviorVariable) &&
+      operatorCommon.includes(`'${behaviorVariable}'`),
+    'the credential bootstrap does not clear a migration behavior environment override',
   )
 }
+for (const contract of [
+  'Local Database Credential Bootstrap V1',
+  'CurrentUser + CurrentMachine DPAPI',
+  'OPS_DB_PRODUCTION_AUTOLOAD_DENIED',
+  'OPS DATABASE SESSION CLEARED',
+  'WRITE AUTH   : NOT GRANTED',
+  'APPLY AUTH   : NOT GRANTED',
+]) {
+  check(
+    runbook.includes(contract) || operatorCommon.includes(contract),
+    'the local credential bootstrap contract is missing: ' + contract,
+  )
+}
+check(
+  operatorInitializer.includes('-AsSecureString') &&
+    operatorInitializer.includes('Export-OpsDbSecureString'),
+  'the credential initializer does not use the native SecureString DPAPI path',
+)
 check(
   routeGate.includes('validateTrialTarget') &&
     routeGate.includes('readLinkedProjectRef'),
@@ -267,6 +288,11 @@ check(
   packageJson.scripts['trial:baseline:check'] ===
     'node scripts/check-trial-deployment-baseline.mjs',
   'trial baseline script is missing',
+)
+check(
+  packageJson.scripts['operator:db-credentials:verify'] ===
+    'vitest run scripts/operator/ops-db-credential-bootstrap.test.mjs',
+  'operator credential bootstrap verification script is missing',
 )
 check(
   packageJson.scripts.check.includes('npm run trial:baseline:check'),

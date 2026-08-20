@@ -1288,6 +1288,17 @@ CloudBase 首发不负责：
 - 明确 GitHub Actions、Vercel、Supabase 控制台日志中不得输出真实密钥、真实业务数据或敏感身份信息；
 - 不在该任务中创建通知、工作台、小程序、CloudBase、飞书或其他 Stage 4+ 功能。
 
+#### 本机操作者数据库凭据管理
+
+- Trial / Recovery 数据库密码不得反复通过聊天、剪贴板或命令字面量传递；
+- Windows 本机允许使用 CurrentUser + CurrentMachine DPAPI 加密保存数据库密码，真实 secret 只能位于仓库外；
+- 仓库只保存不含真实凭据的通用初始化、加载、路由核对与清理 helper；
+- Production 默认禁止自动加载数据库凭据，未知 target 必须 fail closed；
+- credential ready 只表示当前进程连接上下文已准备，不代表 write、migration、PLAN 或 APPLY 获得授权；
+- Recovery 官方 CA 与 TLS trust 属于 operator environment hardening，不能通过关闭 TLS verification 绕过；
+- 凭据自动化不得执行或绕过 Recovery PLAN/APPLY、migration、部署、reset、restore 或其人工确认；
+- 本机 config 只保存受控非密码元数据，Session Pooler linked-state 仍以当前 checkout 的 `supabase/.temp/` 为权威来源。
+
 验收：
 
 - 本地、试运行、未来生产三类环境边界明确；
@@ -2161,6 +2172,7 @@ Codex 最终报告必须提供：
 - 阶段 4 改为“网页工作台和试运行反馈增强”，不再作为进入试运行的前置门槛；
 - 更新总体优先级、上线顺序、测试、里程碑和当前推荐下一步；
 - 保持阶段 5 微信小程序和阶段 6 双端正式上线的安全、身份桥接、隐私、备份与发布门槛不变。
+- 在 Stage 3.9 增补 Windows 本机 DPAPI Trial / Recovery 数据库凭据管理、Recovery CA/TLS trust 与“凭据准备不等于 mutation 授权”的受控运维边界，不改变产品路线。
 
 ### V1.2｜2026-08-01
 

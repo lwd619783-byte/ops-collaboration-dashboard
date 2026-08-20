@@ -8,6 +8,7 @@ $commonPath = Join-Path $PSScriptRoot 'OpsDbCredential.Common.ps1'
 . $commonPath
 
 try {
+  Assert-OpsDbWindows
   $repositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
   $currentDirectory = [System.IO.Path]::GetFullPath((Get-Location).Path)
   if ($currentDirectory -ne [System.IO.Path]::GetFullPath($repositoryRoot)) {

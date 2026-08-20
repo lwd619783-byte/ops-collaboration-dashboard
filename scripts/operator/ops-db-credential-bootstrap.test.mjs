@@ -73,6 +73,7 @@ function cleanWindowsPowerShellEnvironment(engineName) {
 describe('Local Database Credential Bootstrap V1', () => {
   it('keeps production scripts on native DPAPI and out of portable plaintext storage', () => {
     const contents = productionScripts.map(scriptText).join('\n')
+    const entry = scriptText('Enter-OpsDbSession.ps1')
     expect(contents).toContain('Export-Clixml')
     expect(contents).toContain('Import-Clixml')
     expect(contents).toContain(
@@ -86,6 +87,9 @@ describe('Local Database Credential Bootstrap V1', () => {
     expect(contents).not.toContain('NODE_TLS_REJECT_UNAUTHORIZED=0')
     expect(contents).not.toContain('rejectUnauthorized=false')
     expect(contents).not.toContain('sslmode=disable')
+    expect(entry.indexOf('Assert-OpsDbWindows')).toBeLessThan(
+      entry.indexOf('Get-OpsDbOperatorRoot'),
+    )
   })
 
   it('does not add mutation, deployment, PLAN, or APPLY execution to session entry', () => {

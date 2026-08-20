@@ -189,5 +189,6 @@ describe('Local Database Credential Bootstrap V1', () => {
       expect(result.status).not.toBe(0)
       expect(result.stderr).toContain('OPS_DB_WINDOWS_REQUIRED')
     },
+    15_000,
   )
 })

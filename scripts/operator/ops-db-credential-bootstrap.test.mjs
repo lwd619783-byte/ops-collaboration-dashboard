@@ -155,6 +155,7 @@ describe('Local Database Credential Bootstrap V1', () => {
         })
       }
     },
+    60_000,
   )
 
   it.runIf(process.platform !== 'win32')(

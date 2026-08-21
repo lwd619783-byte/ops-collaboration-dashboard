@@ -1,13 +1,31 @@
 # 试运行部署基线与环境门禁 V1
 
-本文件是 Task 3.9.1 的部署 runbook。最高级路线与范围约束见
+本文件是 Stage 3.9 网页受控试运行准备与部署的 runbook。最高级路线与范围约束见
 [《运维协同看板第一版建设方案 V1.3（受控试运行版）》](project-construction-plan-v1.3.md)。
 
-本轮状态仅为 **Trial deployment baseline ready**。文档、脚本和本地验证不代表远端环境已经创建或部署：
+## 当前状态
 
-> Remote Trial deployment has not been executed because credentials and an authorized environment are intentionally not available in Task 3.9.1.
+```text
+TRIAL DEPLOYMENT COMPLETE
+RECOVERY DRILL COMPLETE
+FINAL TRIAL SMOKE/E2E NOT YET EXECUTED
+TRIAL ADMISSION NOT YET EVALUATED
+PRODUCTION NOT CONFIGURED
+```
 
-Task 3.9.2-R1 是一次 deployment-discovered repository remediation：它只加固数据库部署路由的本地门禁与操作说明，不重新执行 Trial 远端部署，也不改变 Task 3.9.1 的历史结论。
+- Trial deployment：已完成（独立 Supabase Trial 与 Vercel Trial 已建立并部署）；
+- Recovery Drill：已完成（`TRIAL-RECOVERY-001` 关闭条件已建立，见第 13 节）；
+- Final Task 3.9.3 Trial Smoke/E2E：尚未执行；
+- Trial Admission：NOT YET EVALUATED；
+- Production：NOT CONFIGURED。
+
+> Task 3.9.1 historical baseline statement：Task 3.9.1 完成时仅建立
+> local / trial / production 边界、部署门禁与 runbook，当时的交付状态为
+> Trial deployment baseline ready，远端 Trial 尚未创建或部署。该陈述只描述
+> Task 3.9.1 当时的状态，不是本 runbook 的当前状态；Trial 部署与 Recovery Drill
+> 已由后续授权任务完成。
+
+Task 3.9.2-R1 是一次 deployment-discovered repository remediation：它只加固数据库部署路由的本地门禁与操作说明，不重新执行 Trial 远端部署，也不改变历史结论。
 
 ## 1. Environment model
 
@@ -30,13 +48,13 @@ Task 3.9.2-R1 是一次 deployment-discovered repository remediation：它只加
 1. 使用已经审计并封板的准确 `main` 提交；记录完整 Git SHA。
 2. 当前工作树干净，未跟踪文件中没有待提交的真实环境配置。
 3. `npm ci`、`npm run security:audit`、`npm run check`、`npm run db:verify`、Edge Function 测试与类型检查均在准确 SHA 上通过。
-4. Supabase CLI 使用仓库锁定版本；Task 3.9.1 核对版本为 `2.110.0`，实际执行时再次运行 `npx supabase --version`。
+4. Supabase CLI 使用仓库锁定版本；本 runbook 基线核对版本为 `2.110.0`，实际执行时再次运行 `npx supabase --version`。
 5. Trial Supabase 和 Trial Vercel 均已由有权限的操作者创建，且明确不是 Production。
 6. 操作者拥有本次 Trial 动作的明确授权；没有授权或凭据时停止，不把缺少凭据视为失败。
 7. 不在公开 Actions、Issue、PR、聊天、截图或文档中记录项目 ref、真实 URL、key、数据库连接串、用户邮箱或邀请链接。
 8. 迁移前核对 Trial 当前备份能力、迁移历史、当前用户规模和回滚责任人。
 
-Task 3.9.1 不创建远端项目、不登录外部控制台、不设置 Secret、不发送真实邀请，也不运行任何远端 mutation。
+> Task 3.9.1 historical baseline statement：Task 3.9.1 不创建远端项目、不登录外部控制台、不设置 Secret、不发送真实邀请，也不运行任何远端 mutation。
 
 ## 3. Secret boundaries
 
@@ -53,15 +71,27 @@ Task 3.9.1 不创建远端项目、不登录外部控制台、不设置 Secret�
 
 ### Server-only
 
-以下内容只能存在于 Supabase、Vercel 或其他受控服务端 Secret 系统：
+应用运行时 / browser / Edge / CI 使用的高权限 secret 只能存在于 Supabase、Vercel 或其他受控服务端 Secret 系统：
 
 - Supabase secret/service-role key；
-- 数据库密码和连接串；
+- 应用运行时 / browser / Edge / CI 使用的数据库密码和连接串；
 - JWT signing secret；
 - Vercel、GitHub 或第三方平台 token；
 - SMTP credential；
 - Edge Function privileged secret；
 - Session、Cookie、access token、refresh token 和 Authorization header。
+
+### Operator-only（仓库外本机保险库）
+
+人工 operator 在 Trial / Recovery 操作中使用的 PostgreSQL 数据库密码，允许按下方
+Local Database Credential Bootstrap V1 存放在仓库外 Windows 本机保险库
+（CurrentUser + CurrentMachine DPAPI），不进入平台 Secret 系统。它是
+operator-only 边界：不属于应用运行时 / browser / Edge / CI 配置，也不得进入
+Git、聊天、日志、`.env*` 或浏览器。
+
+两类 secret 的存放位置不同，但泄露边界相同：应用运行时高权限 secret 与人工
+operator 的数据库密码均不得进入 Git、聊天、日志、`.env*` 或浏览器；
+service_role / JWT secret 等边界不因本机保险库而放宽。
 
 `invite-workspace-member` 继续由 Supabase 托管环境提供服务器变量。`SUPABASE_SECRET_KEY` 或兼容旧变量只供服务端管理客户端使用，绝不能改成 `VITE_*`。错误、响应和公开日志不得回显环境值、邮箱、邀请链接、Auth 原始响应或内部连接信息。
 
@@ -205,7 +235,7 @@ CI 和公开日志只运行 `npm run trial:baseline:check`，不获得远端凭�
 
 ## 5. Supabase Trial setup
 
-本节只在 Task 3.9.2、且操作者已经获得 Trial 授权后执行。
+本节适用于建立或重建 Trial 项目的受控流程。现有 Trial 已由 Task 3.9.2 建立并部署；本节在重建、审计或后续同等授权场景中仍适用，并由已获得 Trial 授权且明确持有授权记录的操作者执行。
 
 1. 在 Supabase 平台创建独立 Trial 项目；不得复用未来 Production 数据库。
 2. 核对 PostgreSQL major version 与 `supabase/config.toml` 的仓库要求兼容。
@@ -252,7 +282,7 @@ npx supabase db push --dry-run --db-url $env:SUPABASE_TRIAL_DB_URL
 - migration 顺序与 `supabase/migrations/` 一致；
 - 没有修改历史 migration 的迹象。
 
-只有 dry-run 通过、备份边界确认、操作者再次授权后，Task 3.9.2 才可逐条显式执行：
+只有 dry-run 通过、备份边界确认、操作者再次授权后，才可逐条显式执行：
 
 ```powershell
 npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
@@ -305,7 +335,7 @@ invite-workspace-member
 - Secret 不进入 Vite、命令参数、公开日志或仓库；
 - `npm run test:edge` 与真实 `index.ts` 的 Deno typecheck 已通过。
 
-保持 project ID/workdir 与 profile 三项环境边界满足门禁，并在部署前紧邻运行 link 后 target gate；操作者核对结果后，Task 3.9.2 才可显式执行：
+保持 project ID/workdir 与 profile 三项环境边界满足门禁，并在部署前紧邻运行 link 后 target gate；操作者核对结果后，才可显式执行：
 
 ```powershell
 npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
@@ -331,7 +361,9 @@ Trial Vercel 必须是与 Production 分离的项目或受控环境。当前工�
 
 Vercel Trial 环境变量只通过平台配置，不提交 `.vercel/`、真实 URL、key、项目 ID、组织 ID或 token。构建失败时使用脱敏日志定位，不输出完整环境。
 
-Task 3.9.2 由已授权人员在 Vercel 发起 Trial 部署。Task 3.9.1 不登录 Vercel、不创建项目、不修改域名，也不建立 `push main -> production` 自动部署。
+Trial Vercel 部署已由 Task 3.9.2 的已授权人员在 Vercel 完成。
+
+> Task 3.9.1 historical baseline statement：Task 3.9.1 不登录 Vercel、不创建项目、不修改域名，也不建立 `push main -> production` 自动部署。
 
 ## 10. Deployment version traceability
 
@@ -368,7 +400,7 @@ Task 3.9.3 必须在真实 Trial 和真实浏览器中完成，并明确区分�
 - migration、Function 和 Vercel 版本可追溯；
 - Blocker 为 0，Major 原则上关闭。
 
-Task 3.9.1 不声称完成上述远端 Smoke/E2E。
+Task 3.9.1 historical baseline statement：Task 3.9.1 不声称完成上述远端 Smoke/E2E；最终全量 Smoke/E2E Rerun 至今仍未执行。
 
 ## 12. Rollback
 
@@ -530,6 +562,17 @@ $env:RECOVERY_EXPECTED_LATEST_MIGRATION = Read-RecoveryValue 'Expected latest mi
 
 bootstrap 不设置 classification、operator authorization、authentication evidence、active Trial/Production inventory、issuer、subject、system identifier 或 migration evidence；这些值继续由独立 Recovery operation 人工建立。`NODE_EXTRA_CA_CERTS` 只指向本机受控的官方 Recovery CA，TLS verification 保持开启。
 
+进入 Recovery credential session 前，bootstrap 会清除上一轮由本工具管理的 session
+state，然后对当前进程环境中的所有非空 `RECOVERY_*` 变量做 fail-closed 检查：只要
+仍存在任何非本工具管理的 `RECOVERY_*`（例如上一轮 Recovery operation 遗留的
+operator authorization / authentication evidence / target classification / issuer /
+subject / system identifier / migration evidence），立即以
+`OPS_DB_AMBIENT_CONTEXT_CONFLICT` 拒绝进入，且不删除、不修改这些遗留值。因此每次
+Recovery operation 必须从干净的人工授权上下文开始：先 Enter Recovery credential
+session，再独立建立本次 operation evidence，再取得本次 PLAN/APPLY 人工授权，不能
+复用上一轮环境中的授权。上一轮操作遗留的 `RECOVERY_*` 需要在进入前由操作者按
+下方收尾流程显式清除。
+
 在设置这些变量前，当前 checkout 必须已经由另一个明确授权步骤 link 到 Recovery；
 `supabase/.temp/project-ref` 和 `supabase/.temp/pooler-url` 缺失或与输入不一致时，
 PLAN 与 APPLY 都会拒绝。不得复制 active Trial checkout 的 linked metadata，也不得
@@ -650,16 +693,19 @@ active Trial/Production 未修改和独立复核全部成立后，才可另行�
 
 ## 16. Explicitly deferred actions
 
-Task 3.9.1 明确延期到后续授权任务：
+> Task 3.9.1 historical baseline statement：以下延期清单描述 Task 3.9.1 完成时的
+> 范围边界。其中 Trial Supabase/Vercel 创建与部署已由 Task 3.9.2 完成，Recovery
+> Drill 已由 Task 3.9.3 完成；其余项目仍未执行并继续延期到后续授权任务：
 
-- Task 3.9.2：创建独立 Supabase/Vercel Trial，设置平台配置，执行 migration、Function 和前端真实部署；
-- Task 3.9.3：真实账号、桌面/手机浏览器 Smoke/E2E 与准入结论；
+- Task 3.9.3（剩余部分）：最终全量 Trial Smoke/E2E 与准入结论；
 - Production Supabase/Vercel 创建、配置、迁移、域名和正式数据；
 - Stage 4 工作台、通知、提醒、通用日志、回收站；
 - 微信小程序、CloudBase、微信身份桥接、订阅消息和飞书；
 - 生产 SMTP、附件、评论、Realtime、已完成重开和归档恢复。
 
-没有 Trial 凭据或环境是本任务的预期边界，不是失败。正确交付状态是：
+> Task 3.9.1 historical baseline statement：Task 3.9.1 当时的正确交付状态是
+> Trial deployment baseline（如下），不是 `Production deployed` 或 `Trial deployed`；
+> 该状态已由后续授权任务推进，不再是当前状态：
 
 ```text
 Task 3.9.1
@@ -667,5 +713,3 @@ Trial Deployment Baseline
 FINAL AUDIT FIX PUSHED
 READY FOR FINAL PASS REVIEW
 ```
-
-而不是 `Production deployed` 或 `Trial deployed`。

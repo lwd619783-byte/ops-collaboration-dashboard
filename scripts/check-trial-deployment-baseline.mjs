@@ -125,9 +125,21 @@ for (const heading of [
 ]) {
   check(runbook.includes(heading), 'runbook heading is missing: ' + heading)
 }
+for (const statusContract of [
+  'TRIAL DEPLOYMENT COMPLETE',
+  'RECOVERY DRILL COMPLETE',
+  'FINAL TRIAL SMOKE/E2E NOT YET EXECUTED',
+  'TRIAL ADMISSION NOT YET EVALUATED',
+  'PRODUCTION NOT CONFIGURED',
+]) {
+  check(
+    runbook.includes(statusContract),
+    'the current runbook status contract is missing: ' + statusContract,
+  )
+}
 check(
-  runbook.includes('Remote Trial deployment has not been executed'),
-  'the remote-deployment deferral is not explicit',
+  runbook.includes('Task 3.9.1 historical baseline statement'),
+  'the Task 3.9.1 historical baseline statement is not marked as historical',
 )
 check(
   runbook.includes('Supabase CLI 2.110.0 stable channel'),

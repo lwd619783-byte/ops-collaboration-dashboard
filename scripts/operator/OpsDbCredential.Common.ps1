@@ -383,6 +383,14 @@ function Test-OpsDbProcessEnvironmentValuePresent {
   )
 }
 
+function Test-OpsDbAmbientRecoveryContextPresent {
+  $ambientRecoveryContext = @(
+    Get-ChildItem Env:RECOVERY_* -ErrorAction SilentlyContinue |
+      Where-Object { -not [string]::IsNullOrEmpty($_.Value) }
+  )
+  return $ambientRecoveryContext.Count -gt 0
+}
+
 function Select-OpsDbTarget {
   param(
     [Parameter(Mandatory = $true)][ValidateSet('Auto', 'Trial', 'Recovery')][string]$RequestedTarget,
@@ -459,20 +467,12 @@ function Enter-OpsDbControlledSession {
     }
 
     Clear-OpsDbManagedSessionState
-    if ($selectedTarget -eq 'Trial') {
-      $ambientRecoveryContext = @(
-        Get-ChildItem Env:RECOVERY_* -ErrorAction SilentlyContinue |
-          Where-Object { -not [string]::IsNullOrEmpty($_.Value) }
-      )
-      if ($ambientRecoveryContext.Count -gt 0) {
-        Throw-OpsDbError 'OPS_DB_AMBIENT_CONTEXT_CONFLICT'
-      }
-    } else {
-      foreach ($key in @('RECOVERY_TARGET_PROJECT_REF', 'RECOVERY_DB_URL', 'NODE_EXTRA_CA_CERTS')) {
-        if (Test-OpsDbProcessEnvironmentValuePresent -Name $key) {
-          Throw-OpsDbError 'OPS_DB_AMBIENT_CONTEXT_CONFLICT'
-        }
-      }
+    if (Test-OpsDbAmbientRecoveryContextPresent) {
+      Throw-OpsDbError 'OPS_DB_AMBIENT_CONTEXT_CONFLICT'
+    }
+    if ($selectedTarget -eq 'Recovery' -and
+        (Test-OpsDbProcessEnvironmentValuePresent -Name 'NODE_EXTRA_CA_CERTS')) {
+      Throw-OpsDbError 'OPS_DB_AMBIENT_CONTEXT_CONFLICT'
     }
     Clear-OpsDbAmbientRouteSelectors
     $injectionStarted = $true

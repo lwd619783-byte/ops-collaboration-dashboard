@@ -183,6 +183,16 @@ $environmentKeys = @(
   'RECOVERY_TARGET_PROJECT_REF',
   'RECOVERY_DB_URL',
   'RECOVERY_OPERATOR_AUTHORIZATION',
+  'RECOVERY_AUTHENTICATION_EVIDENCE',
+  'RECOVERY_TARGET_CLASSIFICATION',
+  'RECOVERY_ACTIVE_TRIAL_PROJECT_REF',
+  'RECOVERY_PRODUCTION_PROJECT_REF',
+  'RECOVERY_SOURCE_ISSUER',
+  'RECOVERY_TARGET_ISSUER',
+  'RECOVERY_AUTH_SUBJECT',
+  'RECOVERY_EXPECTED_SYSTEM_IDENTIFIER',
+  'RECOVERY_EXPECTED_MIGRATION_COUNT',
+  'RECOVERY_EXPECTED_LATEST_MIGRATION',
   'NODE_EXTRA_CA_CERTS',
   'NODE_TLS_REJECT_UNAUTHORIZED',
   'OPS_DB_SESSION_TARGET',
@@ -271,6 +281,37 @@ try {
     -RepositoryRoot $repositoryRoot `
     -ProjectRef $recoveryRef `
     -PoolerHost 'synthetic-recovery.pooler.supabase.com'
+
+  $env:RECOVERY_OPERATOR_AUTHORIZATION = 'user-owned-authorization-canary'
+  Assert-OpsThrowsCode `
+    -Code 'OPS_DB_AMBIENT_CONTEXT_CONFLICT' `
+    -Action { Enter-OpsDbControlledSession -Target Recovery -RepositoryRoot $repositoryRoot -OperatorRoot $operatorRoot }
+  Assert-OpsTest `
+    -Condition ($env:RECOVERY_OPERATOR_AUTHORIZATION -eq 'user-owned-authorization-canary') `
+    -Message 'An unmanaged Recovery authorization variable was deleted.'
+  Assert-OpsTest `
+    -Condition ([string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable('PGPASSWORD'))) `
+    -Message 'PGPASSWORD was injected before conflict rejection.'
+  Assert-OpsTest `
+    -Condition ([string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable('RECOVERY_DB_URL'))) `
+    -Message 'RECOVERY_DB_URL was injected before conflict rejection.'
+  Assert-OpsTest `
+    -Condition ([string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable('NODE_EXTRA_CA_CERTS'))) `
+    -Message 'NODE_EXTRA_CA_CERTS was injected before conflict rejection.'
+  Assert-OpsTest `
+    -Condition ([string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable('OPS_DB_SESSION_MARKER'))) `
+    -Message 'Session marker was created before conflict rejection.'
+  Remove-OpsDbProcessEnvironmentValue -Name 'RECOVERY_OPERATOR_AUTHORIZATION'
+
+  $env:RECOVERY_AUTHENTICATION_EVIDENCE = 'user-owned-evidence-canary'
+  Assert-OpsThrowsCode `
+    -Code 'OPS_DB_AMBIENT_CONTEXT_CONFLICT' `
+    -Action { Enter-OpsDbControlledSession -Target Recovery -RepositoryRoot $repositoryRoot -OperatorRoot $operatorRoot }
+  Assert-OpsTest `
+    -Condition ($env:RECOVERY_AUTHENTICATION_EVIDENCE -eq 'user-owned-evidence-canary') `
+    -Message 'An unmanaged Recovery evidence variable was deleted.'
+  Remove-OpsDbProcessEnvironmentValue -Name 'RECOVERY_AUTHENTICATION_EVIDENCE'
+
   $env:NODE_EXTRA_CA_CERTS = 'user-owned-ca-canary'
   Assert-OpsThrowsCode `
     -Code 'OPS_DB_AMBIENT_CONTEXT_CONFLICT' `
@@ -289,7 +330,15 @@ try {
   Assert-OpsTest -Condition ($env:OPS_DB_SESSION_TARGET -eq 'RECOVERY') -Message 'Recovery target was not selected.'
   Assert-OpsTest -Condition ($env:NODE_EXTRA_CA_CERTS -eq $caPath) -Message 'Recovery CA was not loaded.'
   Assert-OpsTest -Condition ([string]::IsNullOrEmpty($env:SUPABASE_TRIAL_DB_URL)) -Message 'Trial route survived Recovery entry.'
-  Assert-OpsTest -Condition ([string]::IsNullOrEmpty($env:RECOVERY_OPERATOR_AUTHORIZATION)) -Message 'Recovery authorization was fabricated.'
+  foreach ($fabricatedKey in @(
+      'RECOVERY_OPERATOR_AUTHORIZATION',
+      'RECOVERY_AUTHENTICATION_EVIDENCE',
+      'RECOVERY_TARGET_CLASSIFICATION'
+    )) {
+    Assert-OpsTest `
+      -Condition ([string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable($fabricatedKey))) `
+      -Message "Recovery authorization was fabricated: $fabricatedKey"
+  }
   foreach ($canary in @($recoverySecret, $recoveryRef, 'synthetic-recovery.pooler.supabase.com', $caPath)) {
     Assert-OpsTest -Condition (-not $recoveryOutput.Contains($canary)) -Message 'Recovery output exposed a protected value.'
   }

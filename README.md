@@ -1,6 +1,6 @@
 # 运维协同看板
 
-> Task 0.1–3.5 已完成远端独立审计、PR CI 和 Squash 合并，Stage 3 Web Core MVP 已封板。当前进入 Stage 3.9 网页受控试运行准备与部署；Task 3.9.1 只建立 local / trial / production 边界、部署门禁和 runbook，不代表 Trial 或 Production 已部署。业务身份仍只通过 `current_app_user_id()` 解析，浏览器不持有高权限凭据。
+> Task 0.1–3.5 已完成远端独立审计、PR CI 和 Squash 合并，Stage 3 Web Core MVP 已封板。当前处于 Stage 3.9 网页受控试运行准备与部署：Trial Supabase / Vercel 已建立并部署，Recovery Drill 已完成；最终全量 Trial Smoke/E2E Rerun 尚未执行，Trial Admission 尚未评估，Production 尚未配置。Task 3.9.1 historical baseline statement：该任务当时只建立 local / trial / production 边界、部署门禁和 runbook，不代表当时已有 Trial 或 Production 部署。业务身份仍只通过 `current_app_user_id()` 解析，浏览器不持有高权限凭据。
 
 一个面向互联网部署的轻量化运维协同看板前端工程。
 
@@ -10,7 +10,7 @@
 
 Task 0.1 至 Task 1.4 已建立前端、数据库、统一身份、网页登录与工作空间权限基线。Task 2.1–2.3 已完成项目 CRUD、项目成员/牵头人和有序模块；Task 3.1–3.5 已完成共享任务、只读浏览、受控状态机、每日进展和提交/退回/通过验收闭环。详见 [工作空间与成员权限](docs/workspace-permissions.md)、[项目 CRUD、可见性与归档 V1](docs/project-crud-and-visibility.md)、[项目成员与牵头人 V1](docs/project-membership-and-lead.md)、[项目工作模块 V1](docs/project-modules.md)、[任务数据模型与创建编辑 V1](docs/task-data-model-and-editing.md)、[任务看板与列表 V1](docs/task-board-and-list.md)、[任务状态流转与阻塞 V1](docs/task-status-transitions.md)、[每日任务进展与进度同步 V1](docs/task-daily-progress.md) 和 [任务提交验收、通过与退回 V1](docs/task-review-closure.md)。
 
-Task 3.9.1 的可重复部署基线已完成第二轮 ambient selector 独立审计修复，等待最终独立复核，不视为正式封板。独立 Supabase/Vercel Trial 的创建和真实部署属于 Task 3.9.2；真实账号 Smoke/E2E 与试运行准入属于 Task 3.9.3，均尚未完成。Production Supabase/Vercel 仍未创建或配置。
+当前仍处于 Stage 3.9。Trial Supabase / Vercel 已建立并部署；Task 3.9.3 的真实 Recovery Drill 已完成并建立 `TRIAL-RECOVERY-001` 关闭条件，但最终全量 Trial Smoke/E2E Rerun 尚未执行，Trial Admission 仍未评估。仓库提供的 Local Database Credential Bootstrap V1 仅是 Windows 本机 operator tooling：它用 CurrentUser + CurrentMachine DPAPI 在仓库外保护 Trial/Recovery 数据库密码并准备 Recovery CA/TLS 上下文，不授予 write、migration、PLAN 或 APPLY 权限。Production Supabase/Vercel 仍未创建或配置。
 
 ## 第一阶段边界
 
@@ -69,9 +69,10 @@ npm run test
 npm run build
 npm run check
 npm run trial:baseline:check
+npm run operator:db-credentials:verify
 ```
 
-`npm run check` 按格式、Lint、类型、测试、Trial 部署基线静态门禁、前端凭据构建门禁和生产构建的顺序执行。`npm run security:audit` 单独阻断高危和严重依赖漏洞，CI 会在项目检查前运行该命令。Edge Function 另有明确的两个测试文件（`npm run test:edge` 运行 `handler.test.ts` 与 `entry.test.ts`）与真实入口类型检查（`deno check supabase/functions/invite-workspace-member/index.ts`，CI 使用固定版本 Deno 2.2.12）。真实本地 Auth 重发集成验证由 `npm run db:reissue:verify` 执行；Recovery Auth tenant rebind 的离线 PLAN/APPLY 回归由 `npm run db:recovery-rebind:verify` 执行；真实项目成员、项目模块和项目任务并发验证分别由 `npm run db:membership:verify`、`npm run db:modules:verify` 和 `npm run db:tasks:verify` 执行。Recovery 与三类项目并发脚本都已纳入 `db:verify`，且只使用 loopback 本地 Supabase 与随机虚构夹具。
+`npm run check` 按格式、Lint、类型、测试、Trial 部署基线静态门禁、前端凭据构建门禁和生产构建的顺序执行。`npm run operator:db-credentials:verify` 在 Windows 上同时使用 Windows PowerShell 5.1 与已安装 PowerShell 7 执行 synthetic DPAPI、target、redaction、CA 与 cleanup 回归；不读取或写入真实 Trial/Recovery 凭据。`npm run security:audit` 单独阻断高危和严重依赖漏洞，CI 会在项目检查前运行该命令。Edge Function 另有明确的两个测试文件（`npm run test:edge` 运行 `handler.test.ts` 与 `entry.test.ts`）与真实入口类型检查（`deno check supabase/functions/invite-workspace-member/index.ts`，CI 使用固定版本 Deno 2.2.12）。真实本地 Auth 重发集成验证由 `npm run db:reissue:verify` 执行；Recovery Auth tenant rebind 的离线 PLAN/APPLY 回归由 `npm run db:recovery-rebind:verify` 执行；真实项目成员、项目模块和项目任务并发验证分别由 `npm run db:membership:verify`、`npm run db:modules:verify` 和 `npm run db:tasks:verify` 执行。Recovery 与三类项目并发脚本都已纳入 `db:verify`，且只使用 loopback 本地 Supabase 与随机虚构夹具。
 
 ## 环境变量
 
@@ -79,7 +80,7 @@ npm run trial:baseline:check
 
 Vite 会在构建阶段把使用到的 `VITE_*` 值写入客户端包，因此生产环境只能配置 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_PUBLISHABLE_KEY`。部分配置、无效 URL、secret key、service-role JWT 或高权限数据库变量会让 Vite 在启动或构建前直接失败，错误不会输出变量值。客户端工厂不接受调用方传入的 URL 或 key，只能读取并使用通过共享验证器的环境配置。
 
-数据库 migration 已撤销未来 `public` schema 函数的默认执行权限；每个需要公开的 RPC 都必须在创建后显式、审阅并授予目标角色。工作空间邀请的 Auth Admin 调用只存在于 Edge Function，读取 Supabase 托管的服务端环境变量；secret key、service-role key、数据库连接串均不进入 `VITE_*`、浏览器包或仓库。当前仍未连接或修改远端 Supabase，也未配置生产 Vercel。
+数据库 migration 已撤销未来 `public` schema 函数的默认执行权限；每个需要公开的 RPC 都必须在创建后显式、审阅并授予目标角色。工作空间邀请的 Auth Admin 调用只存在于 Edge Function，读取 Supabase 托管的服务端环境变量；secret key、service-role key、数据库连接串均不进入 `VITE_*`、浏览器包或仓库。Trial Supabase / Vercel 已建立并部署；Production Supabase / Vercel 尚未配置。
 
 ## 目录结构
 
@@ -102,8 +103,8 @@ src/
 
 ## Vercel 部署
 
-Trial Vercel 必须与未来 Production 分离。构建命令为 `npm run build`，输出目录为 `dist`；`vercel.json` 为 React Router 的直接访问提供 SPA 回退。Vercel 只允许配置 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_PUBLISHABLE_KEY` 两项 browser-safe 变量。真实 Trial 部署由 Task 3.9.2 的已授权人员按 [runbook](docs/trial-deployment.md) 发起；本任务未创建 Vercel 项目、未配置远端变量，也未部署 Production。
+Trial Vercel 必须与未来 Production 分离。构建命令为 `npm run build`，输出目录为 `dist`；`vercel.json` 为 React Router 的直接访问提供 SPA 回退。Vercel 只允许配置 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_PUBLISHABLE_KEY` 两项 browser-safe 变量。Trial 部署已由 Task 3.9.2 的已授权人员按 [runbook](docs/trial-deployment.md) 发起并完成；本仓库不执行部署，也不为当前状态配置 Production Vercel。Task 3.9.1 historical baseline statement：该任务当时未创建 Vercel 项目、未配置远端变量，也未部署 Production。
 
 ## 当前未实现功能
 
-本仓库已实现身份、认证、工作空间成员权限 V1、项目 CRUD / 可见性 / 归档 V1、项目成员 / 牵头人 V1、项目工作模块 V1，以及 Task 3.1–3.5 的任务创建、浏览、状态、进展和验收闭环；但**尚未实现或执行**远端 Trial 创建/部署、真实账号 Smoke/E2E、公开注册、项目邀请 / 审批、拖拽状态修改、已完成重开、通知 / 提醒、Stage 4 workspace / 全局“我的任务”工作台、私人任务 / 个人空间、归档恢复或物理删除、工作空间所有权转移 / 删除、成员永久删除、批量项目成员操作、完整邀请撤销 / 重发界面、确认 Auth 用户跨工作空间自动加入、微信小程序、CloudBase 业务桥接、飞书、通用审计日志、生产 SMTP、Vercel Production 配置或 Production Supabase 部署。这些能力只能在新的、明确授权的任务中增加。
+本仓库已实现身份、认证、工作空间成员权限 V1、项目 CRUD / 可见性 / 归档 V1、项目成员 / 牵头人 V1、项目工作模块 V1，以及 Task 3.1–3.5 的任务创建、浏览、状态、进展和验收闭环；但**尚未实现或执行**最终全量 Trial Smoke/E2E Rerun（Trial 环境已建立并部署，Recovery Drill 已完成；剩余 Smoke/E2E 与准入尚未执行）、公开注册、项目邀请 / 审批、拖拽状态修改、已完成重开、通知 / 提醒、Stage 4 workspace / 全局“我的任务”工作台、私人任务 / 个人空间、归档恢复或物理删除、工作空间所有权转移 / 删除、成员永久删除、批量项目成员操作、完整邀请撤销 / 重发界面、确认 Auth 用户跨工作空间自动加入、微信小程序、CloudBase 业务桥接、飞书、通用审计日志、生产 SMTP、Vercel Production 配置或 Production Supabase 部署。这些能力只能在新的、明确授权的任务中增加。

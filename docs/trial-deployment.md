@@ -1,13 +1,31 @@
 # 试运行部署基线与环境门禁 V1
 
-本文件是 Task 3.9.1 的部署 runbook。最高级路线与范围约束见
+本文件是 Stage 3.9 网页受控试运行准备与部署的 runbook。最高级路线与范围约束见
 [《运维协同看板第一版建设方案 V1.3（受控试运行版）》](project-construction-plan-v1.3.md)。
 
-本轮状态仅为 **Trial deployment baseline ready**。文档、脚本和本地验证不代表远端环境已经创建或部署：
+## 当前状态
 
-> Remote Trial deployment has not been executed because credentials and an authorized environment are intentionally not available in Task 3.9.1.
+```text
+TRIAL DEPLOYMENT COMPLETE
+RECOVERY DRILL COMPLETE
+FINAL TRIAL SMOKE/E2E NOT YET EXECUTED
+TRIAL ADMISSION NOT YET EVALUATED
+PRODUCTION NOT CONFIGURED
+```
 
-Task 3.9.2-R1 是一次 deployment-discovered repository remediation：它只加固数据库部署路由的本地门禁与操作说明，不重新执行 Trial 远端部署，也不改变 Task 3.9.1 的历史结论。
+- Trial deployment：已完成（独立 Supabase Trial 与 Vercel Trial 已建立并部署）；
+- Recovery Drill：已完成（`TRIAL-RECOVERY-001` 关闭条件已建立，见第 13 节）；
+- Final Task 3.9.3 Trial Smoke/E2E：尚未执行；
+- Trial Admission：NOT YET EVALUATED；
+- Production：NOT CONFIGURED。
+
+> Task 3.9.1 historical baseline statement：Task 3.9.1 完成时仅建立
+> local / trial / production 边界、部署门禁与 runbook，当时的交付状态为
+> Trial deployment baseline ready，远端 Trial 尚未创建或部署。该陈述只描述
+> Task 3.9.1 当时的状态，不是本 runbook 的当前状态；Trial 部署与 Recovery Drill
+> 已由后续授权任务完成。
+
+Task 3.9.2-R1 是一次 deployment-discovered repository remediation：它只加固数据库部署路由的本地门禁与操作说明，不重新执行 Trial 远端部署，也不改变历史结论。
 
 ## 1. Environment model
 
@@ -30,13 +48,13 @@ Task 3.9.2-R1 是一次 deployment-discovered repository remediation：它只加
 1. 使用已经审计并封板的准确 `main` 提交；记录完整 Git SHA。
 2. 当前工作树干净，未跟踪文件中没有待提交的真实环境配置。
 3. `npm ci`、`npm run security:audit`、`npm run check`、`npm run db:verify`、Edge Function 测试与类型检查均在准确 SHA 上通过。
-4. Supabase CLI 使用仓库锁定版本；Task 3.9.1 核对版本为 `2.110.0`，实际执行时再次运行 `npx supabase --version`。
+4. Supabase CLI 使用仓库锁定版本；本 runbook 基线核对版本为 `2.110.0`，实际执行时再次运行 `npx supabase --version`。
 5. Trial Supabase 和 Trial Vercel 均已由有权限的操作者创建，且明确不是 Production。
 6. 操作者拥有本次 Trial 动作的明确授权；没有授权或凭据时停止，不把缺少凭据视为失败。
 7. 不在公开 Actions、Issue、PR、聊天、截图或文档中记录项目 ref、真实 URL、key、数据库连接串、用户邮箱或邀请链接。
 8. 迁移前核对 Trial 当前备份能力、迁移历史、当前用户规模和回滚责任人。
 
-Task 3.9.1 不创建远端项目、不登录外部控制台、不设置 Secret、不发送真实邀请，也不运行任何远端 mutation。
+> Task 3.9.1 historical baseline statement：Task 3.9.1 不创建远端项目、不登录外部控制台、不设置 Secret、不发送真实邀请，也不运行任何远端 mutation。
 
 ## 3. Secret boundaries
 
@@ -53,15 +71,27 @@ Task 3.9.1 不创建远端项目、不登录外部控制台、不设置 Secret�
 
 ### Server-only
 
-以下内容只能存在于 Supabase、Vercel 或其他受控服务端 Secret 系统：
+应用运行时 / browser / Edge / CI 使用的高权限 secret 只能存在于 Supabase、Vercel 或其他受控服务端 Secret 系统：
 
 - Supabase secret/service-role key；
-- 数据库密码和连接串；
+- 应用运行时 / browser / Edge / CI 使用的数据库密码和连接串；
 - JWT signing secret；
 - Vercel、GitHub 或第三方平台 token；
 - SMTP credential；
 - Edge Function privileged secret；
 - Session、Cookie、access token、refresh token 和 Authorization header。
+
+### Operator-only（仓库外本机保险库）
+
+人工 operator 在 Trial / Recovery 操作中使用的 PostgreSQL 数据库密码，允许按下方
+Local Database Credential Bootstrap V1 存放在仓库外 Windows 本机保险库
+（CurrentUser + CurrentMachine DPAPI），不进入平台 Secret 系统。它是
+operator-only 边界：不属于应用运行时 / browser / Edge / CI 配置，也不得进入
+Git、聊天、日志、`.env*` 或浏览器。
+
+两类 secret 的存放位置不同，但泄露边界相同：应用运行时高权限 secret 与人工
+operator 的数据库密码均不得进入 Git、聊天、日志、`.env*` 或浏览器；
+service_role / JWT secret 等边界不因本机保险库而放宽。
 
 `invite-workspace-member` 继续由 Supabase 托管环境提供服务器变量。`SUPABASE_SECRET_KEY` 或兼容旧变量只供服务端管理客户端使用，绝不能改成 `VITE_*`。错误、响应和公开日志不得回显环境值、邮箱、邀请链接、Auth 原始响应或内部连接信息。
 
@@ -70,6 +100,42 @@ Task 3.9.1 不创建远端项目、不登录外部控制台、不设置 Secret�
 数据库部署使用的 `SUPABASE_TRIAL_DB_URL` 与 `PGPASSWORD` 是受控操作员会话变量，不是应用配置。前者必须是 passwordless 连接 URL，后者是唯一允许的数据库密码来源；两者均不得写入仓库、`.env*`、脚本、Markdown、shell history、日志、报告、聊天或截图。会话结束后必须清除。
 
 这一边界不禁止或删除全部项目 `.env*` 文件；unrelated `VITE_*`、`UNRELATED` 等非数据库应用配置可以保留。禁止的是下文 8 个 CLI 候选文件中出现任何数据库路由或 credential 专用变量赋值，即使赋值为空也不允许。
+
+### Local Database Credential Bootstrap V1
+
+Windows 本机操作者使用 `scripts/operator/` 下的通用 helper，避免每次把 Trial / Recovery 数据库密码传入聊天、剪贴板、命令字面量或项目 `.env*`。真实 operator state 只位于运行时由 `%LOCALAPPDATA%` 构造的仓库外目录；仓库、文档和测试只保存通用代码与 synthetic fixture。
+
+一次性初始化在该实现完成远端独立审计、PR CI 与 Squash Merge 后，由操作者本人在受控 PowerShell 中执行。本轮开发与测试不得录入真实密码：
+
+```powershell
+.\scripts\operator\Initialize-OpsDbCredentialStore.ps1 -Target Both
+```
+
+也可用 `-Target Trial` 或 `-Target Recovery` 单独初始化/重新录入。密码只能通过 `Read-Host -AsSecureString` 读取；已有 target state 被覆盖前必须输入大小写敏感的 `OVERWRITE`。Windows PowerShell 使用 CurrentUser + CurrentMachine DPAPI 保护 CLIXML，换用户、换机器、缺失文件或解密失败均 fail closed，不存在明文、Base64、旁置 AES key 或非 Windows fallback。
+
+本机 `config.json` 只保存 schema version、Trial / Recovery project ref、DPAPI secret 相对路径、Recovery CA 相对路径和 `productionConfigured=false`。它不保存密码、带密码 URL、token、key 或授权证据。Session Pooler URL 不成为本机 config 的长期副本；每次进入会话仍以当前 checkout 的 `supabase/.temp/project-ref` 与 `supabase/.temp/pooler-url` 为 linked-state 权威来源。
+
+当前 checkout link 到对应项目后，可显式进入 Trial、Recovery，或让 `Auto`（默认）按本机 config 与 linked ref 精确匹配：
+
+```powershell
+.\scripts\operator\Enter-OpsDbSession.ps1 -Target Trial
+.\scripts\operator\Enter-OpsDbSession.ps1 -Target Recovery
+.\scripts\operator\Enter-OpsDbSession.ps1
+```
+
+helper 只在当前 PowerShell 进程注入受控 `PGPASSWORD`、passwordless Session Pooler URL、target marker 与必要的 profile/route context；Recovery 还要求仓库外的官方 Server root certificate 存在且格式安全，并设置受控 `NODE_EXTRA_CA_CERTS`。它不设置 `NODE_TLS_REJECT_UNAUTHORIZED=0`、不使用 `rejectUnauthorized=false` 或 `sslmode=disable`，检测到 TLS verification 被关闭时拒绝进入。
+
+Trial 与 Recovery 会话互斥。未知 linked target 使用 `OPS_DB_TARGET_UNKNOWN` 拒绝；显式 target 与 linked-state 不符使用 `OPS_DB_TARGET_MISMATCH` 拒绝；Production 配置或识别使用 `OPS_DB_PRODUCTION_AUTOLOAD_DENIED` 拒绝。缺少 config、secret 或 Recovery CA 时同样 fail closed。READY 输出只包含 target 分类与 PASS/LOADED/NOT GRANTED 状态，不输出 password、URL、hostname、username、project ref、CA path、系统标识或身份信息。
+
+结束数据库操作后，在同一 PowerShell 进程执行：
+
+```powershell
+.\scripts\operator\Exit-OpsDbSession.ps1
+```
+
+Exit 只按 `OPS_DB_SESSION_MANAGED_KEYS` allowlist 清除本工具注入的 `PGPASSWORD`、Trial/Recovery route、Recovery CA 和 session marker，不粗暴删除无法证明由本工具创建的其他 `RECOVERY_*` 或用户环境。输出固定为 `OPS DATABASE SESSION CLEARED`。
+
+`CREDENTIAL: LOADED`、target/route PASS 或 CA PASS 只表示连接上下文 ready。helper 不执行 `db push`、migration、reset、restore、Edge/Vercel deploy、Recovery PLAN/APPLY 或任何业务写入，也不创建这些动作的授权。reviewed PLAN digest、Recovery evidence、Human Migration Approval、CLI 二次确认与 Production authorization 继续保持独立人工门禁。
 
 ## 4. Trial target gate
 
@@ -154,35 +220,22 @@ npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:
 npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
 ```
 
-link 后，在同一 PowerShell 会话中由受控交互设置 passwordless route 与数据库密码，清除所有会改变 CLI 2.110.0 连接选择的 ambient variable，再运行 route gate。下面的 `Read-Host` 输入不会把值写进命令历史；不得把真实值改写成命令字面量：
+link 后，在同一 PowerShell 会话中使用已审计的本机 credential bootstrap 加载 passwordless route 与数据库密码。helper 会核对 linked-state、清除所有会改变 CLI 2.110.0 连接选择的 ambient variable，并只在当前进程建立 Trial context；不得把真实值改写成命令字面量：
 
 ```powershell
-$env:SUPABASE_TRIAL_DB_URL = Read-Host 'Passwordless Trial Session Pooler URL' -MaskInput
-$env:PGPASSWORD = Read-Host 'Trial database password' -MaskInput
-
-Remove-Item Env:SUPABASE_DB_PASSWORD -ErrorAction SilentlyContinue
-Remove-Item Env:SUPABASE_ENV -ErrorAction SilentlyContinue
-Remove-Item Env:SUPABASE_YES -ErrorAction SilentlyContinue
-Remove-Item Env:SUPABASE_DB_MIGRATIONS_ENABLED -ErrorAction SilentlyContinue
-@(
-  'PGAPPNAME', 'PGCONNECT_TIMEOUT', 'PGDATABASE', 'PGHOST',
-  'PGPASSFILE', 'PGPORT', 'PGSERVICE', 'PGSERVICEFILE',
-  'PGSSLCERT', 'PGSSLKEY', 'PGSSLMODE', 'PGSSLPASSWORD',
-  'PGSSLROOTCERT', 'PGUSER'
-) | ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
-
+.\scripts\operator\Enter-OpsDbSession.ps1 -Target Trial
 npm run trial:db-route:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
 ```
 
 正式 route gate 会在读取 linked metadata 之前后保持同一 fail-closed 边界，并检查 shell route/behavior selector 与 8 个项目环境候选文件；操作者不需要把文件内容或匹配项复制到终端、日志或报告。若被阻断，只在本机受控编辑器中复核并移除数据库路由、credential 或 migration behavior 专用 assignment；不得输出值，也不得为通过门禁而删除 unrelated `VITE_*` 等普通应用配置。
 
-route gate 通过后，目标门禁、路由门禁与对应数据库命令必须紧邻、在同一 checkout 和同一会话中执行；期间不得更改相关环境变量或项目 `.env*`。操作结束后清除 `SUPABASE_TRIAL_DB_URL` 与 `PGPASSWORD`。
+route gate 通过后，目标门禁、路由门禁与对应数据库命令必须紧邻、在同一 checkout 和同一会话中执行；期间不得更改相关环境变量或项目 `.env*`。操作结束后必须运行 `.\scripts\operator\Exit-OpsDbSession.ps1`，清除本工具管理的 `SUPABASE_TRIAL_DB_URL`、`PGPASSWORD` 与 session marker。
 
 CI 和公开日志只运行 `npm run trial:baseline:check`，不获得远端凭据，也不执行部署。真实远端部署保持受控、显式、人工发起。
 
 ## 5. Supabase Trial setup
 
-本节只在 Task 3.9.2、且操作者已经获得 Trial 授权后执行。
+本节适用于建立或重建 Trial 项目的受控流程。现有 Trial 已由 Task 3.9.2 建立并部署；本节在重建、审计或后续同等授权场景中仍适用，并由已获得 Trial 授权且明确持有授权记录的操作者执行。
 
 1. 在 Supabase 平台创建独立 Trial 项目；不得复用未来 Production 数据库。
 2. 核对 PostgreSQL major version 与 `supabase/config.toml` 的仓库要求兼容。
@@ -229,7 +282,7 @@ npx supabase db push --dry-run --db-url $env:SUPABASE_TRIAL_DB_URL
 - migration 顺序与 `supabase/migrations/` 一致；
 - 没有修改历史 migration 的迹象。
 
-只有 dry-run 通过、备份边界确认、操作者再次授权后，Task 3.9.2 才可逐条显式执行：
+只有 dry-run 通过、备份边界确认、操作者再次授权后，才可逐条显式执行：
 
 ```powershell
 npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
@@ -282,7 +335,7 @@ invite-workspace-member
 - Secret 不进入 Vite、命令参数、公开日志或仓库；
 - `npm run test:edge` 与真实 `index.ts` 的 Deno typecheck 已通过。
 
-保持 project ID/workdir 与 profile 三项环境边界满足门禁，并在部署前紧邻运行 link 后 target gate；操作者核对结果后，Task 3.9.2 才可显式执行：
+保持 project ID/workdir 与 profile 三项环境边界满足门禁，并在部署前紧邻运行 link 后 target gate；操作者核对结果后，才可显式执行：
 
 ```powershell
 npm run trial:target:check -- --target trial --confirm TRIAL --project-ref $env:SUPABASE_TRIAL_PROJECT_REF
@@ -308,7 +361,9 @@ Trial Vercel 必须是与 Production 分离的项目或受控环境。当前工�
 
 Vercel Trial 环境变量只通过平台配置，不提交 `.vercel/`、真实 URL、key、项目 ID、组织 ID或 token。构建失败时使用脱敏日志定位，不输出完整环境。
 
-Task 3.9.2 由已授权人员在 Vercel 发起 Trial 部署。Task 3.9.1 不登录 Vercel、不创建项目、不修改域名，也不建立 `push main -> production` 自动部署。
+Trial Vercel 部署已由 Task 3.9.2 的已授权人员在 Vercel 完成。
+
+> Task 3.9.1 historical baseline statement：Task 3.9.1 不登录 Vercel、不创建项目、不修改域名，也不建立 `push main -> production` 自动部署。
 
 ## 10. Deployment version traceability
 
@@ -345,7 +400,7 @@ Task 3.9.3 必须在真实 Trial 和真实浏览器中完成，并明确区分�
 - migration、Function 和 Vercel 版本可追溯；
 - Blocker 为 0，Major 原则上关闭。
 
-Task 3.9.1 不声称完成上述远端 Smoke/E2E。
+Task 3.9.1 historical baseline statement：Task 3.9.1 不声称完成上述远端 Smoke/E2E；最终全量 Smoke/E2E Rerun 至今仍未执行。
 
 ## 12. Rollback
 
@@ -401,10 +456,12 @@ Task 3.9.1 不声称完成上述远端 Smoke/E2E。
 - artifact、仓库、命令历史和公开日志中没有 Secret、连接信息、真实账号或业务数据；
 - 记录恢复结果、RPO/保留限制、未恢复的平台配置、失败与后续责任人。
 
-只有上述真实 restore drill 完成并经独立复核后，`TRIAL-RECOVERY-001` 才可考虑关闭。文档更新、backup artifact 单独存在或本地测试通过均不是恢复证据。当前状态固定为：
+只有上述真实 restore drill 完成并经独立复核后，`TRIAL-RECOVERY-001` 才可考虑关闭。文档更新、backup artifact 单独存在或本地测试通过均不是恢复证据。Task 3.9.3 的真实 Recovery Drill 已完成 PLAN、APPLY、Recovery Auth 新登录、issuer identity 追加、`current_app_user_id()`、Owner/workspace 与 Trial/Production 未修改核验，已建立 blocker 关闭条件；这仍不等于最终 Trial Admission 已通过。当前状态为：
 
 ```text
-RECOVERY BLOCKER NOT YET CLOSED
+RECOVERY DRILL COMPLETE
+TRIAL-RECOVERY-001 CLOSURE CONDITIONS ESTABLISHED
+FINAL TRIAL RERUN NOT YET EXECUTED
 ```
 
 Stage 6 前仍必须完成独立的 Production backup/restore 演练；Trial 演练不能替代 Production 恢复证据。
@@ -473,10 +530,13 @@ Trial 的 route/project session variables 均必须为空。
 所有值只放在当前受控 PowerShell 进程，不写 `.env*`、脚本、Markdown、命令字面量、
 聊天、截图或 shell history。操作器会 fail closed 检查 CLI 会读取的 8 个项目
 dotenv 候选文件；任何 `RECOVERY_*`、数据库 route/password 或 Supabase selector
-持久化 assignment 都会拒绝。以下 helper 兼容 Windows PowerShell 5.1，读取期间隐藏输入；
-不得把它替换为真实值字面量：
+持久化 assignment 都会拒绝。先由已审计的 credential bootstrap 加载 Recovery target、
+passwordless Session Pooler route、DPAPI password 与官方 CA，再使用兼容 Windows PowerShell
+5.1 的 hidden-input helper 建立仍需人工提供的 Recovery operation evidence：
 
 ```powershell
+.\scripts\operator\Enter-OpsDbSession.ps1 -Target Recovery
+
 function Read-RecoveryValue {
   param([Parameter(Mandatory = $true)][string]$Prompt)
   $secureValue = Read-Host $Prompt -AsSecureString
@@ -487,26 +547,9 @@ function Read-RecoveryValue {
   }
 }
 
-Remove-Item Env:SUPABASE_PROJECT_ID -ErrorAction SilentlyContinue
-Remove-Item Env:SUPABASE_WORKDIR -ErrorAction SilentlyContinue
-Remove-Item Env:SUPABASE_ENV -ErrorAction SilentlyContinue
-Remove-Item Env:SUPABASE_YES -ErrorAction SilentlyContinue
-Remove-Item Env:SUPABASE_DB_MIGRATIONS_ENABLED -ErrorAction SilentlyContinue
-Remove-Item Env:SUPABASE_DB_PASSWORD -ErrorAction SilentlyContinue
-Remove-Item Env:SUPABASE_TRIAL_DB_URL -ErrorAction SilentlyContinue
-Remove-Item Env:SUPABASE_TRIAL_PROJECT_REF -ErrorAction SilentlyContinue
-@(
-  'PGAPPNAME', 'PGCONNECT_TIMEOUT', 'PGDATABASE', 'PGHOST',
-  'PGPASSFILE', 'PGPORT', 'PGSERVICE', 'PGSERVICEFILE',
-  'PGSSLCERT', 'PGSSLKEY', 'PGSSLMODE', 'PGSSLPASSWORD',
-  'PGSSLROOTCERT', 'PGUSER'
-) | ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
-
-$env:SUPABASE_PROFILE = 'supabase'
 $env:RECOVERY_TARGET_CLASSIFICATION = 'ISOLATED_RECOVERY_TARGET'
 $env:RECOVERY_OPERATOR_AUTHORIZATION = 'AUTHORIZED_RECOVERY_REBIND_V1'
 $env:RECOVERY_AUTHENTICATION_EVIDENCE = 'AUTHENTICATED_RECOVERY_SESSION_VERIFIED'
-$env:RECOVERY_TARGET_PROJECT_REF = Read-RecoveryValue 'Recovery project ref'
 $env:RECOVERY_ACTIVE_TRIAL_PROJECT_REF = Read-RecoveryValue 'Active Trial project ref'
 $env:RECOVERY_PRODUCTION_PROJECT_REF = Read-RecoveryValue 'Production project ref or NOT_CONFIGURED'
 $env:RECOVERY_SOURCE_ISSUER = Read-RecoveryValue 'Exact source issuer'
@@ -515,9 +558,20 @@ $env:RECOVERY_AUTH_SUBJECT = Read-RecoveryValue 'Restored Auth subject UUID'
 $env:RECOVERY_EXPECTED_SYSTEM_IDENTIFIER = Read-RecoveryValue 'Recovery database system identifier'
 $env:RECOVERY_EXPECTED_MIGRATION_COUNT = Read-RecoveryValue 'Expected migration count'
 $env:RECOVERY_EXPECTED_LATEST_MIGRATION = Read-RecoveryValue 'Expected latest migration'
-$env:RECOVERY_DB_URL = Read-RecoveryValue 'Passwordless Recovery Session Pooler URL'
-$env:PGPASSWORD = Read-RecoveryValue 'Recovery database password'
 ```
+
+bootstrap 不设置 classification、operator authorization、authentication evidence、active Trial/Production inventory、issuer、subject、system identifier 或 migration evidence；这些值继续由独立 Recovery operation 人工建立。`NODE_EXTRA_CA_CERTS` 只指向本机受控的官方 Recovery CA，TLS verification 保持开启。
+
+进入 Recovery credential session 前，bootstrap 会清除上一轮由本工具管理的 session
+state，然后对当前进程环境中的所有非空 `RECOVERY_*` 变量做 fail-closed 检查：只要
+仍存在任何非本工具管理的 `RECOVERY_*`（例如上一轮 Recovery operation 遗留的
+operator authorization / authentication evidence / target classification / issuer /
+subject / system identifier / migration evidence），立即以
+`OPS_DB_AMBIENT_CONTEXT_CONFLICT` 拒绝进入，且不删除、不修改这些遗留值。因此每次
+Recovery operation 必须从干净的人工授权上下文开始：先 Enter Recovery credential
+session，再独立建立本次 operation evidence，再取得本次 PLAN/APPLY 人工授权，不能
+复用上一轮环境中的授权。上一轮操作遗留的 `RECOVERY_*` 需要在进入前由操作者按
+下方收尾流程显式清除。
 
 在设置这些变量前，当前 checkout 必须已经由另一个明确授权步骤 link 到 Recovery；
 `supabase/.temp/project-ref` 和 `supabase/.temp/pooler-url` 缺失或与输入不一致时，
@@ -579,7 +633,7 @@ issuer + subject 都经未修改的 `current_app_user_id()` 解析到同一 `app
 
 APPLY 的本地/终端 PASS 不是恢复闭环。提交后必须：
 
-1. 清除当前 PowerShell 中全部 `RECOVERY_*`、`PGPASSWORD` 和 Recovery route 变量；
+1. 运行 `.\scripts\operator\Exit-OpsDbSession.ps1` 清除 bootstrap 管理的 password、route 与 CA，再清除本次人工建立的其余 Recovery evidence；
 2. 对 Recovery Auth 明确退出并重新登录，取得新的 Recovery session；不得复用 Trial token；
 3. 通过正常应用/RLS 路径证明 `current_app_user_id()`、Owner workspace state 和低风险 smoke state 正常；
 4. 验证 source 历史 identity 仍存在且未变、target identity 恰一条；
@@ -590,9 +644,8 @@ APPLY 的本地/终端 PASS 不是恢复闭环。提交后必须：
 dotenv：
 
 ```powershell
+.\scripts\operator\Exit-OpsDbSession.ps1
 Get-ChildItem Env:RECOVERY_* | Remove-Item -ErrorAction SilentlyContinue
-Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
-Remove-Item Env:SUPABASE_PROJECT_ID -ErrorAction SilentlyContinue
 ```
 
 任一 guard 在 commit 前失败会自动 rollback。成功 commit 后没有自动 DELETE/UPDATE
@@ -640,16 +693,19 @@ active Trial/Production 未修改和独立复核全部成立后，才可另行�
 
 ## 16. Explicitly deferred actions
 
-Task 3.9.1 明确延期到后续授权任务：
+> Task 3.9.1 historical baseline statement：以下延期清单描述 Task 3.9.1 完成时的
+> 范围边界。其中 Trial Supabase/Vercel 创建与部署已由 Task 3.9.2 完成，Recovery
+> Drill 已由 Task 3.9.3 完成；其余项目仍未执行并继续延期到后续授权任务：
 
-- Task 3.9.2：创建独立 Supabase/Vercel Trial，设置平台配置，执行 migration、Function 和前端真实部署；
-- Task 3.9.3：真实账号、桌面/手机浏览器 Smoke/E2E 与准入结论；
+- Task 3.9.3（剩余部分）：最终全量 Trial Smoke/E2E 与准入结论；
 - Production Supabase/Vercel 创建、配置、迁移、域名和正式数据；
 - Stage 4 工作台、通知、提醒、通用日志、回收站；
 - 微信小程序、CloudBase、微信身份桥接、订阅消息和飞书；
 - 生产 SMTP、附件、评论、Realtime、已完成重开和归档恢复。
 
-没有 Trial 凭据或环境是本任务的预期边界，不是失败。正确交付状态是：
+> Task 3.9.1 historical baseline statement：Task 3.9.1 当时的正确交付状态是
+> Trial deployment baseline（如下），不是 `Production deployed` 或 `Trial deployed`；
+> 该状态已由后续授权任务推进，不再是当前状态：
 
 ```text
 Task 3.9.1
@@ -657,5 +713,3 @@ Trial Deployment Baseline
 FINAL AUDIT FIX PUSHED
 READY FOR FINAL PASS REVIEW
 ```
-
-而不是 `Production deployed` 或 `Trial deployed`。

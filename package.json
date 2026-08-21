@@ -36,6 +36,7 @@
     "trial:target:check": "node scripts/trial-deployment-gate.mjs",
     "trial:db-route:check": "node scripts/trial-database-route-gate.mjs",
     "trial:baseline:check": "node scripts/check-trial-deployment-baseline.mjs",
+    "operator:db-credentials:verify": "vitest run scripts/operator/ops-db-credential-bootstrap.test.mjs",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run trial:baseline:check && npm run security:build && npm run build",
     "db:reissue:verify": "node scripts/verify-invitation-reissue.mjs"
   },

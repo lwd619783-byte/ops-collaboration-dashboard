@@ -29,7 +29,7 @@ import {
 
 const repositoryRoot = process.cwd()
 const projectPlanHash =
-  '11046d72e4edde941f1221ed0db1537600e2fa3328b6020f01a243ec5618b441'
+  'ea6c353fe83b48d4241def9ed3651be49f9cf5dda6c6e043066a431d8ccb1722'
 let checkCount = 0
 
 function read(path) {

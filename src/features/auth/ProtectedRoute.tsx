@@ -30,11 +30,18 @@ export function ProtectedRoute() {
   const location = useLocation()
 
   if (location.pathname === '/activate-account' && invitationCallbackError) {
+    const hasSessionConflict = invitationCallbackError === 'session_conflict'
     return (
       <div className="route-loading">
         <ErrorState
-          title="邀请链接无效或已过期"
-          description="该邀请无法继续使用，请联系工作空间管理员重新获取邀请。"
+          title={
+            hasSessionConflict ? '当前登录账号与邀请不一致' : '邀请链接无法使用'
+          }
+          description={
+            hasSessionConflict
+              ? '当前浏览器已登录其他账号。请先退出当前账号，再从邀请邮件重新进入。'
+              : '该邀请无法继续使用，请联系工作空间管理员重新获取邀请。'
+          }
         />
       </div>
     )

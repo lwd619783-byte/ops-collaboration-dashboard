@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { createClientMock } = vi.hoisted(() => ({
-  createClientMock: vi.fn(() => ({ rpc: vi.fn() })),
+  createClientMock: vi.fn(),
 }))
 
 vi.mock('@supabase/supabase-js', () => ({
@@ -40,7 +40,14 @@ describe('Supabase 客户端工厂安全边界', () => {
     window.history.replaceState(null, '', '/')
     stubSupabaseEnvironment()
     resetSupabaseClientForTests()
-    createClientMock.mockClear()
+    createClientMock.mockReset()
+    createClientMock.mockImplementation(() => ({
+      auth: {
+        initialize: vi.fn(async () => ({ error: null })),
+        dispose: vi.fn(async () => undefined),
+      },
+      rpc: vi.fn(),
+    }))
   })
 
   afterEach(() => {
@@ -146,7 +153,7 @@ describe('Supabase 客户端工厂安全边界', () => {
     }
   })
 
-  it('仅 exact activation route 的完整 invite fragment 选择 implicit 并立即清理地址栏', () => {
+  it('exact invitation fragment 仅进入隔离内存 implicit client，正常 client 始终 PKCE', () => {
     stubSupabaseEnvironment({
       VITE_SUPABASE_URL: 'http://127.0.0.1:54321',
       VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_client-fixture',
@@ -159,8 +166,8 @@ describe('Supabase 客户端工厂安全边界', () => {
 
     const result = getSupabaseClient()
     // StrictMode/remount-equivalent resolution happens after the factory has
-    // already removed the fragment. It must reuse the callback client and its
-    // lifecycle instead of creating a competing PKCE client.
+    // removed the fragment. It must reuse both the pending lifecycle and the
+    // one normal persistent PKCE client.
     const repeatedResult = getSupabaseClient()
 
     expect(result.status).toBe('ready')
@@ -171,8 +178,24 @@ describe('Supabase 客户端工厂安全边界', () => {
       expect(repeatedResult.client).toBe(result.client)
       expect(repeatedResult.invitationCallback).toBe(result.invitationCallback)
     }
-    expect(createClientMock).toHaveBeenCalledTimes(1)
-    expect(createClientMock).toHaveBeenCalledWith(
+    expect(createClientMock).toHaveBeenCalledTimes(2)
+    expect(createClientMock).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:54321',
+      'sb_publishable_client-fixture',
+      {
+        auth: {
+          autoRefreshToken: false,
+          detectSessionInUrl: true,
+          persistSession: false,
+          flowType: 'implicit',
+          storageKey: 'ops-invitation-callback-ephemeral',
+          skipAutoInitialize: true,
+        },
+      },
+    )
+    expect(createClientMock).toHaveBeenNthCalledWith(
+      2,
       'http://127.0.0.1:54321',
       'sb_publishable_client-fixture',
       {
@@ -180,10 +203,13 @@ describe('Supabase 客户端工厂安全边界', () => {
           autoRefreshToken: true,
           detectSessionInUrl: true,
           persistSession: true,
-          flowType: 'implicit',
+          flowType: 'pkce',
         },
       },
     )
+    expect(
+      createClientMock.mock.results[0].value.auth.initialize,
+    ).toHaveBeenCalledTimes(1)
     expect(window.location.pathname).toBe('/activate-account')
     expect(window.location.hash).toBe('')
     expect(window.location.search).toBe('')

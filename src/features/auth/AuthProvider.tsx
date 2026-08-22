@@ -90,7 +90,8 @@ export function AuthProvider({
   const [isRecoverySession, setIsRecoverySession] = useState(
     () => recoveryStorage.getItem(RECOVERY_SESSION_STORAGE_KEY) === '1',
   )
-  const [invitationCallbackError, setInvitationCallbackError] = useState(false)
+  const [invitationCallbackError, setInvitationCallbackError] =
+    useState<AuthContextValue['invitationCallbackError']>(false)
   const [activationPasswordSet, setActivationPasswordSet] = useState(
     () => recoveryStorage.getItem(ACTIVATION_PHASE_STORAGE_KEY) === '1',
   )
@@ -381,26 +382,24 @@ export function AuthProvider({
       status: 'none' as const,
     }
 
+    // A callback flow owns the route until it reaches a terminal reload or
+    // safe error. Ignore every normal-client auth event during this window so
+    // neither the existing nor incoming identity can flash business content.
+    callbackReloadPendingRef.current = invitationCallback.status === 'pending'
+
     void (async () => {
       if (invitationCallback.status === 'pending') {
-        // Read the exact initialization result: getSession() alone would hide
-        // a failed URL login by returning a previously persisted owner session.
-        const initialization = await client.auth.initialize()
+        const handoff = await invitationCallback.authenticateAndHandoff()
         if (disposedRef.current) return
-        if (initialization.error) {
-          setInvitationCallbackError(true)
-        } else {
-          const { data } = await client.auth.getSession()
-          if (disposedRef.current) return
-          if (data.session) {
-            callbackReloadPendingRef.current = true
-            invitationCallback.reloadWithPkce()
-            return
-          }
-          setInvitationCallbackError(true)
+        if (handoff.status === 'error') {
+          setInvitationCallbackError(handoff.reason)
+          return
         }
+        invitationCallback.reloadWithPkce()
+        return
       } else if (invitationCallback.status === 'invalid') {
-        setInvitationCallbackError(true)
+        setInvitationCallbackError('malformed_or_expired')
+        return
       }
 
       return client.auth.getSession()
@@ -428,9 +427,8 @@ export function AuthProvider({
       })
       .catch(() => {
         if (!disposedRef.current) {
-          if (invitationCallback.status === 'pending') {
-            setInvitationCallbackError(true)
-          }
+          if (invitationCallback.status === 'pending')
+            setInvitationCallbackError('callback_auth_failed')
           transitionToUnauthenticated()
         }
       })

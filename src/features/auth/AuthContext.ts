@@ -10,6 +10,7 @@ import type {
   Profile,
 } from '@/features/auth/authService'
 import type { SafeAuthError } from '@/features/auth/errors'
+import type { InvitationCallbackErrorReason } from '@/features/auth/invitationCallback'
 
 export type AuthStatus =
   | 'initializing'
@@ -47,7 +48,7 @@ export type AuthContextValue = {
   configState: AuthConfigState
   isRecoverySession: boolean
   /** Safe, route-scoped result for an invalid/failed invitation callback. */
-  invitationCallbackError: boolean
+  invitationCallbackError: false | InvitationCallbackErrorReason
   /**
    * True while the FIRST-ACTIVATION phase has set the initial password and is
    * waiting to accept the workspace invitation. It survives USER_UPDATED

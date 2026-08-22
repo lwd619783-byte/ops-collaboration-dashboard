@@ -498,29 +498,41 @@ F2 从准确 `origin/main` 基线 `29fd9258714386d5cbbb258a8f4ac74fd4a63802` 开
 
 锁定依赖与精确版本源码审计：
 
-| Evidence field                         | Result            |
-| -------------------------------------- | ----------------- |
-| `LOCKED_SUPABASE_JS_VERSION`           | `2.111.0`         |
-| `LOCKED_AUTH_JS_VERSION`               | `2.111.0`         |
-| `CALLBACK_SESSION_CREATED_ON_MAIN`     | `NO`              |
-| `EXISTING_SESSION_BEHAVIOR_ON_MAIN`    | `OWNER_PRESERVED` |
-| `INVALID_CALLBACK_OWNER_SESSION`       | `PRESERVED`       |
-| `INVALID_CALLBACK_FRAGMENT_ON_MAIN`    | `NOT CLEANED`     |
-| `PKCE_RECOVERY_BASELINE`               | `PASS`            |
-| `DATABASE_INVITED_IDENTITY_RESOLVABLE` | `YES`             |
-| `DATABASE_MEMBERSHIP_PRE_ACCEPTANCE`   | `INVITED`         |
+| Evidence field                          | Result                                        |
+| --------------------------------------- | --------------------------------------------- |
+| `LOCKED_SUPABASE_JS_VERSION`            | `2.111.0`                                     |
+| `LOCKED_AUTH_JS_VERSION`                | `2.111.0`                                     |
+| `CALLBACK_SESSION_CREATED_ON_MAIN`      | `NO`                                          |
+| `EXISTING_SESSION_BEHAVIOR_ON_MAIN`     | `OWNER_PRESERVED`                             |
+| `INVALID_CALLBACK_OWNER_SESSION`        | `PRESERVED`                                   |
+| `INVALID_CALLBACK_FRAGMENT_ON_MAIN`     | `NOT CLEANED`                                 |
+| `PKCE_RECOVERY_BASELINE`                | `PASS`                                        |
+| `DATABASE_INVITED_IDENTITY_RESOLVABLE`  | `YES`                                         |
+| `DATABASE_MEMBERSHIP_PRE_ACCEPTANCE`    | `INVITED`                                     |
+| `CALLBACK_TYPE_IS_AUTHORITY`            | `NO`                                          |
+| `INVITATION_ELIGIBILITY_AUTHORITY`      | `SERVER_RESOLVED_PENDING_INVITATION`          |
+| `PERSISTENCE_BEFORE_ELIGIBILITY`        | `DENIED`                                      |
+| `DIFFERENT_EXISTING_SESSION`            | `FAIL_CLOSED`                                 |
+| `FORGED_VALID_SESSION_WITH_TYPE_INVITE` | `REJECTED`                                    |
+| `CALLBACK_CLIENT_STORAGE`               | `ISOLATED_IN_MEMORY`                          |
+| `CALLBACK_CLIENT_BROADCAST_CHANNEL`     | `DISABLED`                                    |
+| `AUTHORIZED_PERSISTENT_HANDOFF_API`     | `auth.setSession(access_token,refresh_token)` |
 
 `ROOT_CAUSE_CLASSIFICATION: F (A + D)`。精确安装的 Auth SDK 会把 Hosted admin invitation 视为 implicit callback；全局 `flowType = pkce` 因 flow mismatch 拒绝建立 invitee session，失败语义保留既有 session。干净浏览器因此无 session 并进入登录页；已有 owner session 时则可能继续解析 owner。与此同时，受保护路由原先允许把 `/activate-account` 的 fragment 拼入 `returnTo`，使失败回调的敏感 fragment 存在被编码进登录 query 的路径。数据库不是根因：Auth user insert trigger 同步创建 active app user、verified issuer/subject identity、invited membership 和 sent invitation；`current_app_user_id()` 可据 invitee JWT 解析身份，接受 RPC 再按该身份校验 invitation ownership。
 
-最小修复采用一次性 flow-aware 初始化：只有 exact `/activate-account` 且严格匹配 Supabase invitation fragment shape、无错误或额外字段时，该页面生命周期的唯一客户端才使用 implicit；query、其它路径、其它 callback type、重复/缺失字段均不能切换 flow。客户端构造后立即以 `history.replaceState` 清除当前 fragment；SDK 验证并持久化 invitee session 后执行一次整页 reload，新页面创建正常 PKCE singleton 并继续既有 activation flow。这样没有两个客户端同时管理同一 storage，也不会让 callback-specific mode 留到 password recovery、普通登录或后续 SPA 操作。
+F2 初始提交采用一次性 flow-aware persistent 初始化，但独立终局审计确认 `type=invite` 只是 URL 中的非可信提示：锁定 auth-js 的 implicit 解析只验证 token 对应真实 Auth user，不验证 invitation provenance；因此“valid-shaped callback 自动替换 owner”可形成 session-swapping / confused-login。该提交未通过独立审计，R1 不沿用这一交接语义。
 
-失效、过期或畸形 callback 在客户端构造前即清理 fragment，继续用 PKCE 恢复既有 owner session，但 `/activate-account` 优先显示固定、脱敏的邀请错误，不展示 owner protected content、不静默继续 owner 操作，也不永久退出 owner。`returnTo` 另有独立敏感 Auth 参数拒绝门禁；callback material 不进入 query、日志、错误文案、telemetry、文档或跨账号暂存。有效 callback 是显式新认证动作：锁定 SDK regression 证明它会用已验证 invitee session 替换 owner session，随后才进入 invitee activation。
+R1 改为分阶段、默认拒绝的交接：exact `/activate-account` 严格 fragment shape 只允许创建一个 callback-only implicit client；该 client 使用 `persistSession: false`、固定独立 `storageKey`、关闭自动刷新并手动初始化。auth-js 2.111.0 因此只写实例私有内存且不创建 BroadcastChannel。初始化开始并同步捕获 fragment 后，应用立即以 `history.replaceState` 清除 URL；正常 application client 随后始终以 persistent PKCE 构造，callback identity 不进入普通 AuthContext 或业务授权状态。
 
-本地 deterministic regression 以明显虚构的固定 fixture 覆盖：锁定版本 implicit/PKCE mismatch、干净浏览器 session 建立、owner → invitee 替换、invalid callback 保留 owner、PKCE recovery、fragment 清理、returnTo 拒绝、无 owner 内容 flash、固定错误、StrictMode/singleton、`SIGNED_IN`/`USER_UPDATED`/`TOKEN_REFRESHED`/`SIGNED_OUT`、激活密码阶段刷新、邀请接受与本地退出。最终 `npm run check` 与 feature-branch exact-SHA CI 结果在交付报告中绑定，不用本节替代远端 CI 或真实 Trial 浏览器验证。
+临时 access token 的 Auth user 验证成功后，应用先在同一 memory-only client 中通过公开 `refreshSession()` 让 Auth 服务器验证并旋转 callback refresh token，且要求旋转后的 user 与 access token identity 相同；随后才用该 ephemeral authenticated client 调用既有无参数 `list_my_pending_workspace_invitations()`。数据库用 `current_app_user_id()` 解析 caller，仅返回 `sent` 且未过期的邀请。只有服务器 eligibility 成功且正常 PKCE client 不存在不同 user session 时，才调用公开 `auth.setSession({ access_token, refresh_token })` 持久化服务器返回的新 token pair；成功返回的 user/session 再次匹配 incoming identity 后销毁临时 client 引用并 reload。不同账号一律 fail closed，保留 owner persistent session 并显示固定脱敏冲突提示；同一 invitee 已持久化时确定性执行同身份 handoff。失效、非 eligible、冲突和 Auth 失败分别进入内部 `malformed_or_expired`、`invitation_not_eligible`、`session_conflict`、`callback_auth_failed`，期间 ProtectedRoute 不渲染 owner 或 incoming 业务内容。
+
+本地 deterministic regression 使用明显虚构 fixture 覆盖 ATTACK A–E：A（owner + forged ordinary user、无 pending）拒绝且 owner 不变；B（clean + forged ordinary user、无 pending）不持久化；C（owner + 真实 eligible 不同 invitee）显式 conflict 且无身份内容 flash；D（clean + eligible invitee）完成 ephemeral Auth、服务器 eligibility、公开 API handoff 与 reload gate；E（同 invitee persistent + pending）确定性同身份 handoff。锁定 SDK regression 另证明 callback-only client 不写正常 storage、不创建/发布 BroadcastChannel，只有正式 handoff 才产生正常持久化与 `SIGNED_IN` 传播。原 F2 的 implicit/PKCE mismatch、invalid owner preservation、PKCE recovery、fragment 清理、returnTo 拒绝、StrictMode、auth event、激活密码、邀请接受与 local sign-out 回归继续保留；删除“owner 自动替换”为成功标准。
 
 ```text
+F2 CALLBACK AUTHENTICITY: PASS
 AUTH CALLBACK TOKEN HANDLING: PASS
 OWNER / INVITEE SESSION ISOLATION: PASS
+FORGED INVITATION SESSION SWAP: REJECTED
 
 F2 INVITATION CALLBACK SESSION REPAIR: IMPLEMENTED — PENDING TRIAL VALIDATION
 TRIAL AUTH ACTIVATION REDIRECT BLOCKER: NOT REMEDIATED

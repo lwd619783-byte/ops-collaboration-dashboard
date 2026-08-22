@@ -63,12 +63,19 @@ describe('AuthProvider 状态机', () => {
   it('有效 invitation callback 初始化成功后只触发一次 PKCE reload，期间不解析 owner 身份', async () => {
     const supabase = createSupabaseClientMock({ hasSession: true })
     const reloadWithPkce = vi.fn()
+    const authenticateAndHandoff = vi.fn(async () => ({
+      status: 'persistent_handoff_completed' as const,
+    }))
     const wrapper = ({ children }: { children: ReactNode }) => (
       <AuthProvider
         resolveClient={() => ({
           status: 'ready',
           client: supabase.client,
-          invitationCallback: { status: 'pending', reloadWithPkce },
+          invitationCallback: {
+            status: 'pending',
+            authenticateAndHandoff,
+            reloadWithPkce,
+          },
         })}
       >
         {children}
@@ -78,7 +85,8 @@ describe('AuthProvider 状态机', () => {
     const { result } = renderHook(() => useAuth(), { wrapper })
 
     await waitFor(() => expect(reloadWithPkce).toHaveBeenCalledTimes(1))
-    expect(supabase.initialize).toHaveBeenCalledTimes(1)
+    expect(authenticateAndHandoff).toHaveBeenCalledTimes(1)
+    expect(supabase.initialize).not.toHaveBeenCalled()
     expect(result.current.status).toBe('initializing')
     expect(result.current.invitationCallbackError).toBe(false)
     expect(supabase.rpc).not.toHaveBeenCalled()
@@ -88,11 +96,8 @@ describe('AuthProvider 状态机', () => {
     expect(supabase.rpc).not.toHaveBeenCalled()
   })
 
-  it('invitation callback 初始化失败时保留 owner session 但发布安全 callback error', async () => {
-    const supabase = createSupabaseClientMock({
-      hasSession: true,
-      initializationError: { name: 'AuthApiError', message: 'fixture only' },
-    })
+  it('invitation callback 认证失败时保留 owner session、阻断 owner 解析并发布确定性安全错误', async () => {
+    const supabase = createSupabaseClientMock({ hasSession: true })
     const wrapper = ({ children }: { children: ReactNode }) => (
       <AuthProvider
         resolveClient={() => ({
@@ -100,6 +105,10 @@ describe('AuthProvider 状态机', () => {
           client: supabase.client,
           invitationCallback: {
             status: 'pending',
+            authenticateAndHandoff: vi.fn(async () => ({
+              status: 'error' as const,
+              reason: 'callback_auth_failed' as const,
+            })),
             reloadWithPkce: vi.fn(),
           },
         })}
@@ -111,20 +120,22 @@ describe('AuthProvider 状态机', () => {
     const { result } = renderHook(() => useAuth(), { wrapper })
 
     await waitFor(() =>
-      expect(result.current.status).toBe('authenticated_authorized'),
+      expect(result.current.invitationCallbackError).toBe(
+        'callback_auth_failed',
+      ),
     )
-    expect(result.current.invitationCallbackError).toBe(true)
+    expect(result.current.status).toBe('initializing')
     expect(supabase.signOut).not.toHaveBeenCalled()
-    expect(supabase.rpc).toHaveBeenCalledWith('current_app_user_id')
+    expect(supabase.rpc).not.toHaveBeenCalled()
 
     // A recovered owner session may emit SIGNED_IN during SDK restoration;
     // that must not erase the route-scoped invitation error and expose owner
     // content on the activation route.
     act(() => supabase.emitAuthEvent('SIGNED_IN'))
-    await waitFor(() =>
-      expect(result.current.status).toBe('authenticated_authorized'),
-    )
-    expect(result.current.invitationCallbackError).toBe(true)
+    await act(async () => Promise.resolve())
+    expect(result.current.status).toBe('initializing')
+    expect(result.current.invitationCallbackError).toBe('callback_auth_failed')
+    expect(supabase.rpc).not.toHaveBeenCalled()
   })
 
   it('登录成功但内部身份不存在时不可用并安全退出', async () => {

@@ -116,6 +116,7 @@ describe('锁定 Auth SDK 的 invitation callback 回归基线', () => {
 
   afterEach(() => {
     window.history.replaceState(null, '', '/')
+    vi.unstubAllGlobals()
   })
 
   it('根因契约: PKCE 客户端拒绝 implicit invitation callback', async () => {
@@ -136,8 +137,8 @@ describe('锁定 Auth SDK 的 invitation callback 回归基线', () => {
     expect(window.location.hash).toContain('access_token=')
   })
 
-  it('CASE A: 受控 implicit 初始化在干净浏览器中建立 invitee session 并清理 fragment', async () => {
-    const storageKey = `${STORAGE_KEY_PREFIX}-clean`
+  it('隔离 implicit client 在内存认证 incoming session，不写传入 storage', async () => {
+    const storageKey = `${STORAGE_KEY_PREFIX}-ephemeral`
     const storage = createMemoryStorage(storageKey)
     const fetch = createAuthFetch()
     window.history.replaceState(
@@ -146,41 +147,219 @@ describe('锁定 Auth SDK 的 invitation callback 回归基线', () => {
       `/activate-account#${invitationHash()}`,
     )
 
-    const client = createFixtureClient(storage, fetch, storageKey, 'implicit')
-    // The app replaces the history entry immediately after createClient().
-    // auth-js 2.111.0 has already captured the parameters for initialization.
+    const client = createClient(AUTH_URL, PUBLISHABLE_KEY, {
+      auth: {
+        autoRefreshToken: false,
+        detectSessionInUrl: true,
+        flowType: 'implicit',
+        persistSession: false,
+        storage,
+        storageKey,
+        skipAutoInitialize: true,
+      },
+      global: { fetch },
+    })
+    const initializationPromise = client.auth.initialize()
+    // initialize() has captured the fragment before its Auth request await.
     window.history.replaceState(null, '', '/activate-account')
-    const initialization = await client.auth.initialize()
+    const initialization = await initializationPromise
     const { data } = await client.auth.getSession()
 
     expect(initialization.error).toBeNull()
     expect(data.session?.user.id).toBe(inviteeUser.id)
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(window.location.hash).toBe('')
-    expect(storage.setItem.mock.calls.map(([key]) => key)).toContain(storageKey)
+    expect(storage.getItem).not.toHaveBeenCalled()
+    expect(storage.setItem).not.toHaveBeenCalled()
+    expect(storage.removeItem).not.toHaveBeenCalled()
+    await client.auth.dispose()
   })
 
-  it('CASE B: 有效 invitation callback 将 owner session 替换为 invitee session', async () => {
-    const storageKey = `${STORAGE_KEY_PREFIX}-owner-switch`
+  it('ephemeral authenticated identity 可调用无 user-id 参数的 pending-invitation RPC', async () => {
+    const storageKey = `${STORAGE_KEY_PREFIX}-eligibility-rpc`
+    const storage = createMemoryStorage(storageKey)
+    const session = createSession(inviteeUser, 'eligibility')
+    const refreshedSession = {
+      ...createSession(inviteeUser, 'eligibility-rotated'),
+      refresh_token: 'eligibility-rotated-refresh-fixture',
+    }
+    let rpcAuthorization: string | null = null
+    let rpcBody = ''
+    let refreshBody = ''
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init)
+        if (request.url.endsWith('/auth/v1/user')) {
+          return new Response(JSON.stringify(inviteeUser), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        if (request.url.endsWith('/auth/v1/token?grant_type=refresh_token')) {
+          refreshBody = await request.text()
+          return new Response(JSON.stringify(refreshedSession), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        if (
+          request.url.endsWith(
+            '/rest/v1/rpc/list_my_pending_workspace_invitations',
+          )
+        ) {
+          rpcAuthorization = request.headers.get('Authorization')
+          rpcBody = await request.text()
+          return new Response(
+            JSON.stringify([
+              {
+                invitation_id: '33333333-3333-4333-8333-333333333333',
+                workspace_id: '44444444-4444-4444-8444-444444444444',
+                workspace_name: 'Synthetic Workspace',
+                role: 'member',
+                status: 'sent',
+                expires_at: '2099-01-01T00:00:00.000Z',
+              },
+            ]),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            },
+          )
+        }
+        throw new Error(`Unexpected synthetic request: ${request.url}`)
+      },
+    )
+    window.history.replaceState(
+      null,
+      '',
+      `/activate-account#${invitationHash(session)}`,
+    )
+    const client = createClient(AUTH_URL, PUBLISHABLE_KEY, {
+      auth: {
+        autoRefreshToken: false,
+        detectSessionInUrl: true,
+        flowType: 'implicit',
+        persistSession: false,
+        storage,
+        storageKey,
+        skipAutoInitialize: true,
+      },
+      global: { fetch },
+    })
+    const initialization = client.auth.initialize()
+    window.history.replaceState(null, '', '/activate-account')
+    await initialization
+    const refreshed = await client.auth.refreshSession({
+      refresh_token: session.refresh_token,
+    })
+
+    const eligibility = await client.rpc(
+      'list_my_pending_workspace_invitations',
+    )
+
+    expect(refreshed.error).toBeNull()
+    expect(refreshed.data.session?.refresh_token).toBe(
+      refreshedSession.refresh_token,
+    )
+    expect(refreshBody).toContain(session.refresh_token)
+    expect(eligibility.error).toBeNull()
+    expect(eligibility.data).toHaveLength(1)
+    expect(rpcAuthorization).toBe(`Bearer ${refreshedSession.access_token}`)
+    expect(rpcBody).not.toContain(inviteeUser.id)
+    expect(storage.setItem).not.toHaveBeenCalled()
+    await client.auth.dispose()
+  })
+
+  it('隔离 callback 初始化不覆盖 owner storage，也不创建或发布共享 BroadcastChannel', async () => {
+    const storageKey = `${STORAGE_KEY_PREFIX}-owner-isolation`
+    const callbackStorageKey = `${STORAGE_KEY_PREFIX}-callback-only`
     const ownerSession = createSession(ownerUser, 'owner')
     const storage = createMemoryStorage(storageKey, ownerSession)
+    const callbackStorage = createMemoryStorage(callbackStorageKey)
     const fetch = createAuthFetch()
+    const channels: Array<{
+      name: string
+      postMessage: ReturnType<typeof vi.fn>
+    }> = []
+    class BroadcastChannelProbe {
+      name: string
+      postMessage = vi.fn()
+      addEventListener = vi.fn()
+      close = vi.fn()
+
+      constructor(name: string) {
+        this.name = name
+        channels.push(this)
+      }
+    }
+    vi.stubGlobal('BroadcastChannel', BroadcastChannelProbe)
+
+    const ownerClient = createFixtureClient(storage, fetch, storageKey, 'pkce')
+    await ownerClient.auth.initialize()
+    for (const channel of channels) channel.postMessage.mockClear()
     window.history.replaceState(
       null,
       '',
       `/activate-account#${invitationHash()}`,
     )
 
-    const client = createFixtureClient(storage, fetch, storageKey, 'implicit')
+    const callbackClient = createClient(AUTH_URL, PUBLISHABLE_KEY, {
+      auth: {
+        autoRefreshToken: false,
+        detectSessionInUrl: true,
+        flowType: 'implicit',
+        persistSession: false,
+        storage: callbackStorage,
+        storageKey: callbackStorageKey,
+        skipAutoInitialize: true,
+      },
+      global: { fetch },
+    })
+    const callbackInitialization = callbackClient.auth.initialize()
     window.history.replaceState(null, '', '/activate-account')
-    const initialization = await client.auth.initialize()
-    const { data } = await client.auth.getSession()
+    const initialization = await callbackInitialization
+    const callbackSession = await callbackClient.auth.getSession()
+    const ownerAfterCallback = await ownerClient.auth.getSession()
 
     expect(initialization.error).toBeNull()
-    expect(data.session?.user.id).toBe(inviteeUser.id)
-    expect(data.session?.user.id).not.toBe(ownerUser.id)
+    expect(callbackSession.data.session?.user.id).toBe(inviteeUser.id)
+    expect(ownerAfterCallback.data.session?.user.id).toBe(ownerUser.id)
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(window.location.hash).toBe('')
+    expect(callbackStorage.setItem).not.toHaveBeenCalled()
+    expect(channels.map(({ name }) => name)).toEqual([storageKey])
+    expect(channels[0].postMessage).not.toHaveBeenCalled()
+    await callbackClient.auth.dispose()
+    await ownerClient.auth.dispose()
+  })
+
+  it('正式 setSession handoff 才写正常 storage 并发布正常 SIGNED_IN', async () => {
+    const storageKey = `${STORAGE_KEY_PREFIX}-authorized-handoff`
+    const storage = createMemoryStorage(storageKey)
+    const fetch = createAuthFetch()
+    const postMessage = vi.fn()
+    class BroadcastChannelProbe {
+      postMessage = postMessage
+      addEventListener = vi.fn()
+      close = vi.fn()
+    }
+    vi.stubGlobal('BroadcastChannel', BroadcastChannelProbe)
+    const client = createFixtureClient(storage, fetch, storageKey, 'pkce')
+    await client.auth.initialize()
+    postMessage.mockClear()
+    const incomingSession = createSession(inviteeUser, 'invitee')
+
+    const result = await client.auth.setSession({
+      access_token: incomingSession.access_token,
+      refresh_token: incomingSession.refresh_token,
+    })
+
+    expect(result.error).toBeNull()
+    expect(result.data.session?.user.id).toBe(inviteeUser.id)
+    expect(storage.setItem.mock.calls.map(([key]) => key)).toContain(storageKey)
+    expect(postMessage).toHaveBeenCalledTimes(1)
+    expect(postMessage.mock.calls[0][0].event).toBe('SIGNED_IN')
+    await client.auth.dispose()
   })
 
   it('CASE C: app 先清理 invalid callback，PKCE client 安全保留 owner session', async () => {

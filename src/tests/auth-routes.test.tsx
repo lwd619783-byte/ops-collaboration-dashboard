@@ -190,7 +190,7 @@ describe('受保护路由', () => {
       expect(
         await screen.findByRole('heading', {
           level: 2,
-          name: '邀请链接无效或已过期',
+          name: '邀请链接无法使用',
         }),
       ).toBeInTheDocument()
       expect(document.body).not.toHaveTextContent('otp_expired')
@@ -207,13 +207,20 @@ describe('受保护路由', () => {
   it('valid invitation callback 等待 PKCE reload 时不展示 owner 内容', async () => {
     const supabase = createSupabaseClientMock({ hasSession: true })
     const reloadWithPkce = vi.fn()
+    const authenticateAndHandoff = vi.fn(async () => ({
+      status: 'persistent_handoff_completed' as const,
+    }))
     render(
       <MemoryRouter initialEntries={['/activate-account']}>
         <AppRouter
           resolveClient={() => ({
             status: 'ready',
             client: supabase.client,
-            invitationCallback: { status: 'pending', reloadWithPkce },
+            invitationCallback: {
+              status: 'pending',
+              authenticateAndHandoff,
+              reloadWithPkce,
+            },
           })}
         />
       </MemoryRouter>,
@@ -225,6 +232,47 @@ describe('受保护路由', () => {
       screen.queryByRole('navigation', { name: '主导航' }),
     ).not.toBeInTheDocument()
     expect(supabase.rpc).not.toHaveBeenCalled()
+  })
+
+  it('不同账号的 invitation callback 显示显式冲突且不展示任一业务身份', async () => {
+    const supabase = createSupabaseClientMock({ hasSession: true })
+    render(
+      <MemoryRouter initialEntries={['/activate-account']}>
+        <AppRouter
+          resolveClient={() => ({
+            status: 'ready',
+            client: supabase.client,
+            invitationCallback: {
+              status: 'pending',
+              authenticateAndHandoff: vi.fn(async () => ({
+                status: 'error' as const,
+                reason: 'session_conflict' as const,
+              })),
+              reloadWithPkce: vi.fn(),
+            },
+          })}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(
+      await screen.findByRole('heading', {
+        level: 2,
+        name: '当前登录账号与邀请不一致',
+      }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '当前浏览器已登录其他账号。请先退出当前账号，再从邀请邮件重新进入。',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: '主导航' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '工作台' })).toBeNull()
+    expect(
+      screen.queryByRole('heading', { name: '激活工作空间账号' }),
+    ).toBeNull()
+    expect(supabase.rpc).not.toHaveBeenCalled()
+    expect(supabase.signOut).not.toHaveBeenCalled()
   })
 
   it('不可用用户被集中退出并显示安全提示（不在渲染中触发 signOut）', async () => {

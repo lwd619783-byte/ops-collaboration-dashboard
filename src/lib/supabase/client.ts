@@ -4,6 +4,16 @@ import {
   getSupabaseConfig,
   type SupabaseClientConfig,
 } from '@/lib/supabase/config'
+import {
+  createPendingInvitationCallbackLifecycle,
+  type InvitationCallbackLifecycle,
+} from '@/features/auth/invitationCallback'
+
+export type {
+  InvitationCallbackErrorReason,
+  InvitationCallbackHandoffResult,
+  InvitationCallbackLifecycle,
+} from '@/features/auth/invitationCallback'
 
 export type SupabaseClientResolution =
   | {
@@ -21,19 +31,12 @@ export type SupabaseClientResolution =
       reason: 'unconfigured' | 'invalid'
     }
 
-export type InvitationCallbackLifecycle =
-  | { status: 'none' }
-  | { status: 'invalid' }
-  | {
-      status: 'pending'
-      /** Reload once after auth-js persisted the invitee session. */
-      reloadWithPkce: () => void
-    }
-
 type InvitationCallbackClassification =
   { status: 'none' } | { status: 'invalid' } | { status: 'valid' }
 
 const ACTIVATION_CALLBACK_PATH = '/activate-account'
+const INVITATION_CALLBACK_EPHEMERAL_STORAGE_KEY =
+  'ops-invitation-callback-ephemeral'
 const invitationCallbackParameterNames = new Set([
   'access_token',
   'refresh_token',
@@ -139,28 +142,19 @@ function removeVisibleCallbackParameters() {
   )
 }
 
-function createInvitationCallbackLifecycle(
-  classification: InvitationCallbackClassification,
-): InvitationCallbackLifecycle {
-  if (classification.status === 'none') return { status: 'none' }
-  if (classification.status === 'invalid') return { status: 'invalid' }
-
+function createReloadWithPkce() {
   let reloadStarted = false
-  return {
-    status: 'pending',
-    reloadWithPkce: () => {
-      if (reloadStarted || typeof window === 'undefined') return
-      reloadStarted = true
-      // The callback-specific client exists for one page lifetime only. A
-      // reload creates the normal PKCE singleton from the persisted invitee
-      // session, so recovery and every later auth action remain PKCE.
-      window.history.replaceState(
-        window.history.state,
-        '',
-        ACTIVATION_CALLBACK_PATH,
-      )
-      window.location.reload()
-    },
+  return () => {
+    if (reloadStarted || typeof window === 'undefined') return
+    reloadStarted = true
+    // Reload only after the normal client has persisted the authorized
+    // handoff. The next page lifetime is the ordinary PKCE singleton.
+    window.history.replaceState(
+      window.history.state,
+      '',
+      ACTIVATION_CALLBACK_PATH,
+    )
+    window.location.reload()
   }
 }
 
@@ -195,36 +189,55 @@ export function getSupabaseClient(): SupabaseClientResolution {
 
   const callbackClassification = browserInvitationCallbackClassification()
 
-  // Invalid/expired/malformed callback fragments are removed before client
-  // construction. The normal PKCE client can then recover an existing owner
-  // session without interpreting or persisting any callback material.
+  // Invalid/expired/malformed callback fragments are removed before normal
+  // client construction. A valid callback is first captured by a callback-only
+  // implicit client which is memory-only and cannot open a BroadcastChannel.
   if (callbackClassification.status === 'invalid') {
     removeVisibleCallbackParameters()
   }
 
-  // Admin invitations cannot use PKCE because the inviting and accepting
-  // browsers differ. Use implicit only for the exact, fail-closed invitation
-  // callback shape above; every other browser flow remains PKCE.
+  let callbackClient: SupabaseClient<Database> | undefined
+  let callbackInitialization:
+    ReturnType<SupabaseClient<Database>['auth']['initialize']> | undefined
+  if (callbackClassification.status === 'valid') {
+    callbackClient = createClient<Database>(config.url, config.publishableKey, {
+      auth: {
+        autoRefreshToken: false,
+        detectSessionInUrl: true,
+        persistSession: false,
+        flowType: 'implicit',
+        storageKey: INVITATION_CALLBACK_EPHEMERAL_STORAGE_KEY,
+        skipAutoInitialize: true,
+      },
+    })
+    // initialize() synchronously captures the fragment before its first Auth
+    // request await. Remove the visible material immediately afterwards.
+    callbackInitialization = callbackClient.auth.initialize()
+    removeVisibleCallbackParameters()
+  }
+
+  // The application client is always the single normal persistent PKCE client.
+  // It is constructed only after callback material has left the URL.
   const client = createClient<Database>(config.url, config.publishableKey, {
     auth: {
       autoRefreshToken: true,
       detectSessionInUrl: true,
       persistSession: true,
-      flowType: callbackClassification.status === 'valid' ? 'implicit' : 'pkce',
+      flowType: 'pkce',
     },
   })
 
-  // auth-js 2.111.0 captures the callback parameters synchronously when the
-  // client is constructed, before its user validation request awaits. Replace
-  // the current history entry immediately so secrets are never copied to a
-  // query/returnTo and do not remain visible while initialization completes.
-  if (callbackClassification.status === 'valid') {
-    removeVisibleCallbackParameters()
-  }
-
-  const invitationCallback = createInvitationCallbackLifecycle(
-    callbackClassification,
-  )
+  const invitationCallback: InvitationCallbackLifecycle =
+    callbackClassification.status === 'none'
+      ? { status: 'none' }
+      : callbackClassification.status === 'invalid'
+        ? { status: 'invalid' }
+        : createPendingInvitationCallbackLifecycle({
+            callbackClient: callbackClient!,
+            callbackInitialization: callbackInitialization!,
+            persistentClient: client,
+            reloadWithPkce: createReloadWithPkce(),
+          })
   cachedClient = { config, client, invitationCallback }
   return { status: 'ready', client, invitationCallback }
 }

@@ -90,6 +90,7 @@ export function AuthProvider({
   const [isRecoverySession, setIsRecoverySession] = useState(
     () => recoveryStorage.getItem(RECOVERY_SESSION_STORAGE_KEY) === '1',
   )
+  const [invitationCallbackError, setInvitationCallbackError] = useState(false)
   const [activationPasswordSet, setActivationPasswordSet] = useState(
     () => recoveryStorage.getItem(ACTIVATION_PHASE_STORAGE_KEY) === '1',
   )
@@ -104,6 +105,7 @@ export function AuthProvider({
    * in-flight resolution that captured an older epoch can no longer write.
    */
   const authEpochRef = useRef(0)
+  const callbackReloadPendingRef = useRef(false)
 
   const markRecoverySession = useCallback(() => {
     recoveryStorage.setItem(RECOVERY_SESSION_STORAGE_KEY, '1')
@@ -375,10 +377,43 @@ export function AuthProvider({
     const client = resolution.client
     clientRef.current = client
 
-    void client.auth
-      .getSession()
-      .then(({ data }) => {
+    const invitationCallback = resolution.invitationCallback ?? {
+      status: 'none' as const,
+    }
+
+    void (async () => {
+      if (invitationCallback.status === 'pending') {
+        // Read the exact initialization result: getSession() alone would hide
+        // a failed URL login by returning a previously persisted owner session.
+        const initialization = await client.auth.initialize()
         if (disposedRef.current) return
+        if (initialization.error) {
+          setInvitationCallbackError(true)
+        } else {
+          const { data } = await client.auth.getSession()
+          if (disposedRef.current) return
+          if (data.session) {
+            callbackReloadPendingRef.current = true
+            invitationCallback.reloadWithPkce()
+            return
+          }
+          setInvitationCallbackError(true)
+        }
+      } else if (invitationCallback.status === 'invalid') {
+        setInvitationCallbackError(true)
+      }
+
+      return client.auth.getSession()
+    })()
+      .then((sessionResult) => {
+        if (
+          disposedRef.current ||
+          callbackReloadPendingRef.current ||
+          !sessionResult
+        ) {
+          return
+        }
+        const { data } = sessionResult
         if (!data.session) {
           transitionToUnauthenticated()
           return
@@ -392,13 +427,22 @@ export function AuthProvider({
         })
       })
       .catch(() => {
-        if (!disposedRef.current) transitionToUnauthenticated()
+        if (!disposedRef.current) {
+          if (invitationCallback.status === 'pending') {
+            setInvitationCallbackError(true)
+          }
+          transitionToUnauthenticated()
+        }
       })
 
     const {
       data: { subscription },
     } = client.auth.onAuthStateChange((event) => {
       if (disposedRef.current) return
+      // A successful invitation callback is about to reload into the normal
+      // PKCE singleton. Ignore late callback-client events so neither an owner
+      // nor invitee business view can render during that handoff.
+      if (callbackReloadPendingRef.current) return
       if (event === 'SIGNED_OUT') {
         // Token refresh failure, user deletion and explicit sign-out all land
         // here; the UI must drop protected content immediately and every
@@ -407,6 +451,7 @@ export function AuthProvider({
         return
       }
       if (event === 'PASSWORD_RECOVERY') {
+        setInvitationCallbackError(false)
         markRecoverySession()
         // A recovery session is a different flow: any in-progress first
         // activation for the previous session must be dropped.
@@ -477,6 +522,7 @@ export function AuthProvider({
         }
       }
       setNotice(null)
+      setInvitationCallbackError(false)
       const result = await signInWithEmailAndPassword(client, email, password)
       if (!result.ok) return result
       // Do NOT run a second identity resolution here: signInWithPassword
@@ -667,6 +713,7 @@ export function AuthProvider({
       profileMissing,
       configState,
       isRecoverySession,
+      invitationCallbackError,
       activationPasswordSet,
       notice,
       clearNotice,
@@ -688,6 +735,7 @@ export function AuthProvider({
       profileMissing,
       configState,
       isRecoverySession,
+      invitationCallbackError,
       activationPasswordSet,
       notice,
       clearNotice,

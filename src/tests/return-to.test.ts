@@ -46,6 +46,12 @@ describe('安全 returnTo 校验', () => {
     '',
     '/login?returnTo=/projects',
     '//localhost/path',
+    '/activate-account#access_token=fictional-access',
+    '/activate-account#refresh_token=fictional-refresh',
+    '/activate-account#expires_at=2000000000&token_type=bearer',
+    '/activate-account#error=access_denied&error_description=expired',
+    '/projects?access_token=fictional-access',
+    '/tasks#%72efresh_token=fictional-refresh',
   ])('拒绝非法值: %j', (value) => {
     expect(isSafeReturnTo(value)).toBe(false)
   })
@@ -63,6 +69,11 @@ describe('安全 returnTo 校验', () => {
     expect(sanitizeReturnTo('javascript:alert(1)')).toBe('/')
     expect(sanitizeReturnTo('/login')).toBe('/')
     expect(sanitizeReturnTo('/reset-password')).toBe('/')
+    expect(
+      sanitizeReturnTo(
+        '/activate-account#access_token=fictional&refresh_token=fictional',
+      ),
+    ).toBe('/')
     expect(sanitizeReturnTo(null)).toBe('/')
     expect(sanitizeReturnTo(undefined)).toBe('/')
     expect(sanitizeReturnTo('')).toBe('/')

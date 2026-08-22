@@ -143,6 +143,7 @@ function authValue(): AuthContextValue {
     profileMissing: false,
     configState: null,
     isRecoverySession: false,
+    invitationCallbackError: false,
     activationPasswordSet: false,
     notice: null,
     clearNotice: vi.fn(),

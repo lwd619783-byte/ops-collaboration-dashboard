@@ -46,6 +46,8 @@ export type AuthContextValue = {
   /** Preserved reason when the Supabase client could not be built. */
   configState: AuthConfigState
   isRecoverySession: boolean
+  /** Safe, route-scoped result for an invalid/failed invitation callback. */
+  invitationCallbackError: boolean
   /**
    * True while the FIRST-ACTIVATION phase has set the initial password and is
    * waiting to accept the workspace invitation. It survives USER_UPDATED

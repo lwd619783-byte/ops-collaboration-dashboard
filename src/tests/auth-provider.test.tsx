@@ -60,6 +60,73 @@ describe('AuthProvider 状态机', () => {
     )
   })
 
+  it('有效 invitation callback 初始化成功后只触发一次 PKCE reload，期间不解析 owner 身份', async () => {
+    const supabase = createSupabaseClientMock({ hasSession: true })
+    const reloadWithPkce = vi.fn()
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <AuthProvider
+        resolveClient={() => ({
+          status: 'ready',
+          client: supabase.client,
+          invitationCallback: { status: 'pending', reloadWithPkce },
+        })}
+      >
+        {children}
+      </AuthProvider>
+    )
+
+    const { result } = renderHook(() => useAuth(), { wrapper })
+
+    await waitFor(() => expect(reloadWithPkce).toHaveBeenCalledTimes(1))
+    expect(supabase.initialize).toHaveBeenCalledTimes(1)
+    expect(result.current.status).toBe('initializing')
+    expect(result.current.invitationCallbackError).toBe(false)
+    expect(supabase.rpc).not.toHaveBeenCalled()
+
+    act(() => supabase.emitAuthEvent('SIGNED_IN'))
+    await act(async () => Promise.resolve())
+    expect(supabase.rpc).not.toHaveBeenCalled()
+  })
+
+  it('invitation callback 初始化失败时保留 owner session 但发布安全 callback error', async () => {
+    const supabase = createSupabaseClientMock({
+      hasSession: true,
+      initializationError: { name: 'AuthApiError', message: 'fixture only' },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <AuthProvider
+        resolveClient={() => ({
+          status: 'ready',
+          client: supabase.client,
+          invitationCallback: {
+            status: 'pending',
+            reloadWithPkce: vi.fn(),
+          },
+        })}
+      >
+        {children}
+      </AuthProvider>
+    )
+
+    const { result } = renderHook(() => useAuth(), { wrapper })
+
+    await waitFor(() =>
+      expect(result.current.status).toBe('authenticated_authorized'),
+    )
+    expect(result.current.invitationCallbackError).toBe(true)
+    expect(supabase.signOut).not.toHaveBeenCalled()
+    expect(supabase.rpc).toHaveBeenCalledWith('current_app_user_id')
+
+    // A recovered owner session may emit SIGNED_IN during SDK restoration;
+    // that must not erase the route-scoped invitation error and expose owner
+    // content on the activation route.
+    act(() => supabase.emitAuthEvent('SIGNED_IN'))
+    await waitFor(() =>
+      expect(result.current.status).toBe('authenticated_authorized'),
+    )
+    expect(result.current.invitationCallbackError).toBe(true)
+  })
+
   it('登录成功但内部身份不存在时不可用并安全退出', async () => {
     const { supabase, rendered } = renderAuth({ hasSession: false })
     await waitFor(() =>

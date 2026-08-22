@@ -39,6 +39,16 @@ const authPaths = new Set<string>([
 ])
 
 const MAX_RETURN_TO_LENGTH = 2048
+const sensitiveAuthParameterNames = new Set([
+  'access_token',
+  'refresh_token',
+  'expires_at',
+  'expires_in',
+  'token_type',
+  'error',
+  'error_code',
+  'error_description',
+])
 const projectDetailPath =
   /^\/projects\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?:\/edit)?$/iu
 
@@ -56,6 +66,28 @@ function extractPathname(value: string): string | null {
   return pathname
 }
 
+function containsSensitiveAuthParameters(value: string): boolean {
+  const queryIndex = value.indexOf('?')
+  const hashIndex = value.indexOf('#')
+  const parameterSections = [
+    queryIndex >= 0
+      ? value.slice(
+          queryIndex + 1,
+          hashIndex > queryIndex ? hashIndex : value.length,
+        )
+      : '',
+    hashIndex >= 0 ? value.slice(hashIndex + 1) : '',
+  ]
+
+  return parameterSections.some((section) => {
+    if (section.length === 0) return false
+    const parameters = new URLSearchParams(section)
+    return [...parameters.keys()].some((key) =>
+      sensitiveAuthParameterNames.has(key),
+    )
+  })
+}
+
 /**
  * True only for a safe in-app relative path to a known business page.
  * Rejects absolute URLs, protocol-relative URLs, dangerous schemes,
@@ -68,6 +100,9 @@ export function isSafeReturnTo(value: string): boolean {
   if (value.startsWith('//')) return false
   if (value.includes('\\')) return false
   if (value.includes('\0')) return false
+  // Auth callback material is never a navigation target. In particular, a
+  // failed callback fragment must not be percent-encoded into /login?returnTo.
+  if (containsSensitiveAuthParameters(value)) return false
   // `javascript:`, `http:`, `https:`, `data:` etc. cannot appear because the
   // string must start with '/', but also reject any colon inside the pathname
   // segment to be conservative about scheme-like fragments.

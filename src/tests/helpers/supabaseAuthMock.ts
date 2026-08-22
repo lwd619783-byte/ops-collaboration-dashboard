@@ -117,6 +117,8 @@ export type MockClientOptions = {
   resetError?: unknown
   /** error object returned by updateUser */
   updateUserError?: unknown
+  /** error returned by the exact auth initialization result */
+  initializationError?: unknown
   /** error object returned by profile update */
   profileUpdateError?: unknown
 }
@@ -132,6 +134,7 @@ export type SupabaseClientMock = {
   rpc: ReturnType<typeof vi.fn>
   from: ReturnType<typeof vi.fn>
   getSession: ReturnType<typeof vi.fn>
+  initialize: ReturnType<typeof vi.fn>
   functionsInvoke: ReturnType<typeof vi.fn>
 }
 
@@ -215,6 +218,10 @@ export function createSupabaseClientMock(
     return { data: { session }, error: null }
   })
 
+  const initialize = vi.fn(async () => ({
+    error: options.initializationError ?? null,
+  }))
+
   const signInWithPassword = vi.fn(async () => {
     if (options.networkFailure) throw new Error('Failed to fetch')
     if (options.signInError)
@@ -283,6 +290,7 @@ export function createSupabaseClientMock(
 
   const client = {
     auth: {
+      initialize,
       getSession,
       signInWithPassword,
       signOut,
@@ -311,6 +319,7 @@ export function createSupabaseClientMock(
     rpc,
     from,
     getSession,
+    initialize,
     functionsInvoke,
   }
 }

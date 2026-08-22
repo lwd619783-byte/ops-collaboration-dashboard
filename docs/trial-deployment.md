@@ -492,6 +492,46 @@ TRIAL ADMISSION: NOT ADMITTED
 
 F1 未执行直接 Trial PostgreSQL 写入、db push、migration apply/repair/up、reset、restore、Recovery/Production mutation、SMTP 配置、Edge/Vercel redeploy、PR、merge 或 force push；未在文档中记录 project ref、Hosted URL、邮箱、token、OTP、用户 ID、IP、请求 ID、数据库 hostname、credential path 或 Auth raw log。
 
+### Task 3.9.3-R6-F2 Invitation callback session 修复记录（2026-08-22）
+
+F2 从准确 `origin/main` 基线 `29fd9258714386d5cbbb258a8f4ac74fd4a63802` 开始，只修复 Hosted invitation `/verify` 成功后的浏览器 session 初始化与激活路由交接；未重发 existing invitee、未修改数据库/Edge Function/Hosted Auth 配置、未部署，也不是完整 R6 重跑。
+
+锁定依赖与精确版本源码审计：
+
+| Evidence field                         | Result            |
+| -------------------------------------- | ----------------- |
+| `LOCKED_SUPABASE_JS_VERSION`           | `2.111.0`         |
+| `LOCKED_AUTH_JS_VERSION`               | `2.111.0`         |
+| `CALLBACK_SESSION_CREATED_ON_MAIN`     | `NO`              |
+| `EXISTING_SESSION_BEHAVIOR_ON_MAIN`    | `OWNER_PRESERVED` |
+| `INVALID_CALLBACK_OWNER_SESSION`       | `PRESERVED`       |
+| `INVALID_CALLBACK_FRAGMENT_ON_MAIN`    | `NOT CLEANED`     |
+| `PKCE_RECOVERY_BASELINE`               | `PASS`            |
+| `DATABASE_INVITED_IDENTITY_RESOLVABLE` | `YES`             |
+| `DATABASE_MEMBERSHIP_PRE_ACCEPTANCE`   | `INVITED`         |
+
+`ROOT_CAUSE_CLASSIFICATION: F (A + D)`。精确安装的 Auth SDK 会把 Hosted admin invitation 视为 implicit callback；全局 `flowType = pkce` 因 flow mismatch 拒绝建立 invitee session，失败语义保留既有 session。干净浏览器因此无 session 并进入登录页；已有 owner session 时则可能继续解析 owner。与此同时，受保护路由原先允许把 `/activate-account` 的 fragment 拼入 `returnTo`，使失败回调的敏感 fragment 存在被编码进登录 query 的路径。数据库不是根因：Auth user insert trigger 同步创建 active app user、verified issuer/subject identity、invited membership 和 sent invitation；`current_app_user_id()` 可据 invitee JWT 解析身份，接受 RPC 再按该身份校验 invitation ownership。
+
+最小修复采用一次性 flow-aware 初始化：只有 exact `/activate-account` 且严格匹配 Supabase invitation fragment shape、无错误或额外字段时，该页面生命周期的唯一客户端才使用 implicit；query、其它路径、其它 callback type、重复/缺失字段均不能切换 flow。客户端构造后立即以 `history.replaceState` 清除当前 fragment；SDK 验证并持久化 invitee session 后执行一次整页 reload，新页面创建正常 PKCE singleton 并继续既有 activation flow。这样没有两个客户端同时管理同一 storage，也不会让 callback-specific mode 留到 password recovery、普通登录或后续 SPA 操作。
+
+失效、过期或畸形 callback 在客户端构造前即清理 fragment，继续用 PKCE 恢复既有 owner session，但 `/activate-account` 优先显示固定、脱敏的邀请错误，不展示 owner protected content、不静默继续 owner 操作，也不永久退出 owner。`returnTo` 另有独立敏感 Auth 参数拒绝门禁；callback material 不进入 query、日志、错误文案、telemetry、文档或跨账号暂存。有效 callback 是显式新认证动作：锁定 SDK regression 证明它会用已验证 invitee session 替换 owner session，随后才进入 invitee activation。
+
+本地 deterministic regression 以明显虚构的固定 fixture 覆盖：锁定版本 implicit/PKCE mismatch、干净浏览器 session 建立、owner → invitee 替换、invalid callback 保留 owner、PKCE recovery、fragment 清理、returnTo 拒绝、无 owner 内容 flash、固定错误、StrictMode/singleton、`SIGNED_IN`/`USER_UPDATED`/`TOKEN_REFRESHED`/`SIGNED_OUT`、激活密码阶段刷新、邀请接受与本地退出。最终 `npm run check` 与 feature-branch exact-SHA CI 结果在交付报告中绑定，不用本节替代远端 CI 或真实 Trial 浏览器验证。
+
+```text
+AUTH CALLBACK TOKEN HANDLING: PASS
+OWNER / INVITEE SESSION ISOLATION: PASS
+
+F2 INVITATION CALLBACK SESSION REPAIR: IMPLEMENTED — PENDING TRIAL VALIDATION
+TRIAL AUTH ACTIVATION REDIRECT BLOCKER: NOT REMEDIATED
+FULL R6 RERUN: PENDING
+TRIAL ADMISSION: NOT ADMITTED
+
+HOSTED EXISTING-INVITEE REISSUE COMPATIBILITY: DEFERRED TO SEPARATE TASK
+```
+
+F2 未执行 Trial/Production/Recovery 数据库或配置 mutation、local/hosted reset、migration apply、reissue、账号/邀请/identity/member 清理、Edge/Vercel deployment、PR、merge 或 force push；未开始 F3、完整 R6 或 Stage 4。
+
 ## 12. Rollback
 
 ### Frontend rollback

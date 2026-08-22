@@ -25,8 +25,20 @@ function buildReturnTo(pathname: string, search: string, hash: string) {
 }
 
 export function ProtectedRoute() {
-  const { status, authError, retryAuthCheck } = useAuth()
+  const { status, authError, invitationCallbackError, retryAuthCheck } =
+    useAuth()
   const location = useLocation()
+
+  if (location.pathname === '/activate-account' && invitationCallbackError) {
+    return (
+      <div className="route-loading">
+        <ErrorState
+          title="邀请链接无效或已过期"
+          description="该邀请无法继续使用，请联系工作空间管理员重新获取邀请。"
+        />
+      </div>
+    )
+  }
 
   if (
     status === 'initializing' ||

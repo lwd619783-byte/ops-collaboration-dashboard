@@ -171,6 +171,62 @@ describe('受保护路由', () => {
     ).toBeInTheDocument()
   })
 
+  it.each([false, true])(
+    'invalid invitation callback 显示固定错误且不泄漏或静默展示 owner（hasSession=%s）',
+    async (hasSession) => {
+      const supabase = createSupabaseClientMock({ hasSession })
+      render(
+        <MemoryRouter initialEntries={['/activate-account']}>
+          <AppRouter
+            resolveClient={() => ({
+              status: 'ready',
+              client: supabase.client,
+              invitationCallback: { status: 'invalid' },
+            })}
+          />
+        </MemoryRouter>,
+      )
+
+      expect(
+        await screen.findByRole('heading', {
+          level: 2,
+          name: '邀请链接无效或已过期',
+        }),
+      ).toBeInTheDocument()
+      expect(document.body).not.toHaveTextContent('otp_expired')
+      expect(
+        screen.queryByRole('navigation', { name: '主导航' }),
+      ).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('heading', { level: 1, name: '工作台' }),
+      ).not.toBeInTheDocument()
+      expect(supabase.signOut).not.toHaveBeenCalled()
+    },
+  )
+
+  it('valid invitation callback 等待 PKCE reload 时不展示 owner 内容', async () => {
+    const supabase = createSupabaseClientMock({ hasSession: true })
+    const reloadWithPkce = vi.fn()
+    render(
+      <MemoryRouter initialEntries={['/activate-account']}>
+        <AppRouter
+          resolveClient={() => ({
+            status: 'ready',
+            client: supabase.client,
+            invitationCallback: { status: 'pending', reloadWithPkce },
+          })}
+        />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(reloadWithPkce).toHaveBeenCalledTimes(1))
+    expect(await screen.findByText('正在验证登录状态')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('navigation', { name: '主导航' }),
+    ).not.toBeInTheDocument()
+    expect(supabase.rpc).not.toHaveBeenCalled()
+  })
+
   it('不可用用户被集中退出并显示安全提示（不在渲染中触发 signOut）', async () => {
     const { supabase } = renderApp({ hasSession: true, currentAppUserId: null })
     expect(

@@ -8,15 +8,15 @@
 ```text
 TRIAL DEPLOYMENT COMPLETE
 RECOVERY DRILL COMPLETE
-FINAL TRIAL SMOKE/E2E NOT YET EXECUTED
-TRIAL ADMISSION NOT YET EVALUATED
+FINAL TRIAL SMOKE/E2E EXECUTED — FAIL
+TRIAL ADMISSION NOT ADMITTED
 PRODUCTION NOT CONFIGURED
 ```
 
 - Trial deployment：已完成（独立 Supabase Trial 与 Vercel Trial 已建立并部署）；
 - Recovery Drill：已完成（`TRIAL-RECOVERY-001` 关闭条件已建立，见第 13 节）；
-- Final Task 3.9.3 Trial Smoke/E2E：尚未执行；
-- Trial Admission：NOT YET EVALUATED；
+- Final Task 3.9.3-R6 Trial Smoke/E2E：已执行；真实邀请激活链路存在 1 个 Blocker，核心多用户闭环未能继续；
+- Trial Admission：NOT ADMITTED；
 - Production：NOT CONFIGURED。
 
 > Task 3.9.1 historical baseline statement：Task 3.9.1 完成时仅建立
@@ -400,7 +400,48 @@ Task 3.9.3 必须在真实 Trial 和真实浏览器中完成，并明确区分�
 - migration、Function 和 Vercel 版本可追溯；
 - Blocker 为 0，Major 原则上关闭。
 
-Task 3.9.1 historical baseline statement：Task 3.9.1 不声称完成上述远端 Smoke/E2E；最终全量 Smoke/E2E Rerun 至今仍未执行。
+Task 3.9.1 historical baseline statement：Task 3.9.1 不声称完成上述远端 Smoke/E2E；Task 3.9.3-R6 已在后续独立授权中执行，并因 mandatory member activation blocker 判定 NOT ADMITTED。
+
+### Task 3.9.3-R6 脱敏执行结果（2026-08-22）
+
+R6 在公开 Git SHA `b38cf709e4109a81a5cff4a7187b5568518b208f` 对应的稳定 Trial 前端上执行。Smoke 数据均为明显虚构数据并使用 `R6-SMOKE-` 前缀；数据保留为 Trial 验证痕迹，未执行破坏性清理。
+
+执行前安全与版本门禁均通过：workspace/main 基线准确且工作树干净；`security:audit`、`check`、`test:edge`、operator credential verifier 与 diff check 通过；Trial target、Session Pooler 5432、TLS、22 项 migration 与末项 `20260812124927` 一致；operator database credential 仅加载用于只读核对，WRITE/APPLY authorization 均未授予并已清除；Production 仍未配置；Recovery Drill 既有关闭条件未发生回归。前端可追溯到上述准确 Git SHA，`invite-workspace-member` 为 active version 2。
+
+真实桌面浏览器证据证明：Owner 登录、刷新后的 session restore、fresh login、工作空间解析、synthetic project 创建均成功。稳定 Trial origin 的邀请预检为 `OPTIONS 204`，allow-origin 精确匹配且不是 `*`，methods 固定为 `POST, OPTIONS`，allowed headers 固定为 `authorization, apikey, content-type, x-client-info`，任意附加 header 未被反射，`Vary` 包含 `Origin`，cache 为 `no-store` 且 max-age 为 600；随后同一正常浏览器流程实际产生 `POST 200` 并返回邀请成功。不可变 preview origin 的预检被 `403` 拒绝，作为非 allowlist 来源的负向证据；OPTIONS 未触发邀请业务 mutation。
+
+邀请激活未通过。默认托管邮件发送到第一个非团队受控 inbox 时，Auth/业务侧记录了发送但 inbox 未收到邮件；改用另一个已加入平台组织团队的受控 inbox 后邮件成功到达，但邮件中的激活入口解析到 local development origin，而不是稳定 Trial 的 `/activate-account`。仓库 Edge handler 已向 Auth Admin 传入基于准确请求 origin 的 Trial 激活地址，runbook 也要求托管 Auth 公网 Site URL 与受控 Trial redirect allowlist；当前 hosted Auth 结果与该门禁不一致。R6 未改写邀请链接、未修改 Auth 配置、未重发来掩盖问题，也未把手工绕过计为 PASS。
+
+| Mandatory check                                         | R6 result    |
+| ------------------------------------------------------- | ------------ |
+| owner login / workspace identity                        | PASS         |
+| session restore                                         | PASS         |
+| logout + fresh login                                    | PASS         |
+| invitation CORS preflight                               | PASS         |
+| invitation actual POST                                  | PASS         |
+| controlled member activation/login                      | FAIL         |
+| synthetic project creation                              | PASS         |
+| project membership                                      | NOT EXECUTED |
+| module / task creation                                  | NOT EXECUTED |
+| todo -> in_progress                                     | NOT EXECUTED |
+| progress / blocked / resume / 100%                      | NOT EXECUTED |
+| submit / return / edit / resubmit / approve / completed | NOT EXECUTED |
+| completed freeze                                        | NOT EXECUTED |
+| unauthorized read denial                                | NOT EXECUTED |
+| task refresh / deep link consistency                    | NOT EXECUTED |
+| actual mobile browser                                   | NOT EXECUTED |
+
+Finding count：Blocker 1，Major 0，Minor 0，Feature Request 0。
+
+- Blocker：`Trial Auth invitation activation redirects to a local origin`。复现：Owner 从稳定 Trial 正常邀请已加入平台组织团队的受控成员，邮件可到达，但激活入口指向 local development origin，成员无法按正常 Trial 产品路径进入 `/activate-account`。影响：member activation、project membership、完整任务/review closure、completed freeze、outsider RLS、关键状态 refresh/deep-link 与真实手机 mandatory gates 均无法继续。证据类型：真实浏览器、受控收件箱人工检查、脱敏 Edge/Auth logs、只读数据库状态与仓库封板代码。建议：由独立授权任务核对并修正 hosted Trial Auth Site URL、redirect allowlist 与 invite template/config，完成独立审计与受控部署后，从准确基线重新执行完整 R6；本任务不实施修复。
+
+确定性结论：
+
+```text
+TRIAL ADMISSION: NOT ADMITTED
+```
+
+本轮未启动 Stage 4，未执行 Production/Recovery mutation、db push、migration apply/repair/up、reset、restore、直接 Trial PostgreSQL 写入、未经授权部署、PR、merge 或 force push；正常 UI invitation/project 写入仅限本任务授权的 synthetic smoke 数据。OPS database session 已清除。
 
 ## 12. Rollback
 
@@ -695,9 +736,9 @@ active Trial/Production 未修改和独立复核全部成立后，才可另行�
 
 > Task 3.9.1 historical baseline statement：以下延期清单描述 Task 3.9.1 完成时的
 > 范围边界。其中 Trial Supabase/Vercel 创建与部署已由 Task 3.9.2 完成，Recovery
-> Drill 已由 Task 3.9.3 完成；其余项目仍未执行并继续延期到后续授权任务：
+> Drill 已由 Task 3.9.3 完成；R6 已执行并判定 NOT ADMITTED；其余项目仍未执行并继续延期到后续授权任务：
 
-- Task 3.9.3（剩余部分）：最终全量 Trial Smoke/E2E 与准入结论；
+- Task 3.9.3-R6：在独立授权修复 hosted Trial Auth activation redirect blocker 并完成独立审计后，重新执行最终全量 Trial Smoke/E2E 与准入；
 - Production Supabase/Vercel 创建、配置、迁移、域名和正式数据；
 - Stage 4 工作台、通知、提醒、通用日志、回收站；
 - 微信小程序、CloudBase、微信身份桥接、订阅消息和飞书；

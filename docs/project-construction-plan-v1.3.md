@@ -2017,10 +2017,10 @@ Codex 最终报告必须提供：
 2. Task 3.9.1 部署基线与环境门禁已封板；
 3. Task 3.9.2 Trial Supabase / Vercel 已建立并部署；
 4. Recovery Drill 已完成；
-5. Local Database Credential Bootstrap V1 已通过 PR #21 合并；这仅交付 Windows 本机 operator tooling，不代表真实 Trial / Recovery 凭据已经初始化；
-6. 下一步由获得单独授权的 operator 完成真实 credential initialization；
-7. 然后执行 Task 3.9.3-R6 Final Trial Smoke/E2E，完整验证“登录—项目—模块—任务—进展—阻塞—提交验收—退回—再次提交—通过—完成”以及权限拒绝路径；
-8. 基于 Smoke/E2E、Blocker / Major、回滚和版本追溯证据形成 Trial Admission 结论；
+5. Local Database Credential Bootstrap V1 已通过 PR #21 合并，Trial / Recovery operator credential 与 Recovery CA 已由后续受控操作初始化；credential ready 不授予数据库 write/apply、Recovery mutation 或 Production 权限；
+6. Task 3.9.3-R6 Final Trial Smoke/E2E 已在准确封板版本上执行：Owner auth/session、真实浏览器 invitation CORS + POST 与 synthetic project 创建通过，但受控成员邮件激活入口错误指向 local development origin，核心多用户闭环无法继续；
+7. R6 Finding 为 Blocker 1、Major 0，Trial Admission 确定判定为 NOT ADMITTED；Recovery Drill 仍为 COMPLETE，Production 仍为 NOT CONFIGURED；
+8. 下一步先由 ChatGPT 对远端 R6 evidence branch 做独立终局审计；随后只有在获得独立修复授权时，才可核对并修正 hosted Trial Auth Site URL、redirect allowlist 与 invite template/config，并在审计和受控交付后重新执行完整 R6；
 9. 只有 Trial Admission 为 ADMITTED 后，才启动 3–5 人、1–2 个真实低风险项目、1–2 周的网页受控试运行；
 10. Stage 4 继续等待真实试运行证据重新排序，不提前机械开发“我的任务、管理者工作台、团队负荷”等功能；
 11. 网页业务模型稳定后启动阶段 5 微信小程序，Task 5.1 仍必须先做身份桥接技术验证，不得直接开发小程序业务页面；
@@ -2207,4 +2207,4 @@ Codex 最终报告必须提供：
 
 ## 24. 一句话结论
 
-项目当前已经完成“安全登录—工作空间—项目—模块—任务—进展—阻塞—提交验收—退回/通过—完成”的 Web Core MVP 闭环；Stage 3.9 的基础设施、Trial 部署与 Recovery Drill 已基本完成，剩余 Final Trial Smoke/E2E 和 Trial Admission。下一步不继续机械堆叠功能，而是先由获得单独授权的 operator 完成真实 credential initialization，再以 Smoke/E2E 与准入证据决定是否启动 3–5 名内部成员、1–2 个低风险项目、连续 1–2 周的受控试运行；之后才依据真实试运行证据推进网页工作台，最后使用 CloudBase 安全承接微信身份与订阅消息，让小程序复用同一 Supabase 业务数据和权限体系，形成“网页完整管理 + 小程序移动执行”的双端运维协同平台。
+项目当前已经完成“安全登录—工作空间—项目—模块—任务—进展—阻塞—提交验收—退回/通过—完成”的 Web Core MVP 代码闭环，Stage 3.9 的基础设施、Trial 部署与 Recovery Drill 已完成；但 Task 3.9.3-R6 真实浏览器验证发现 hosted Trial Auth 激活入口错误指向 local development origin，成员无法按正常 Trial 路径激活，因此 Trial Admission 为 NOT ADMITTED。下一步不继续机械堆叠功能，而是先独立审计 R6 脱敏证据，再在单独授权下修复并审计 hosted Trial Auth activation redirect 配置，随后完整重跑 R6；只有 ADMITTED 后才启动 3–5 名内部成员、1–2 个低风险项目、连续 1–2 周的受控试运行。之后才依据真实试运行证据推进网页工作台，最后使用 CloudBase 安全承接微信身份与订阅消息，让小程序复用同一 Supabase 业务数据和权限体系，形成“网页完整管理 + 小程序移动执行”的双端运维协同平台。

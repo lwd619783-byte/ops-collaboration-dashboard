@@ -29,7 +29,7 @@ import {
 
 const repositoryRoot = process.cwd()
 const projectPlanHash =
-  'ea6c353fe83b48d4241def9ed3651be49f9cf5dda6c6e043066a431d8ccb1722'
+  '1221774ea5c4dd54e11e1b10ac0b137272da933328d92554abaa1c7ae9f3145a'
 let checkCount = 0
 
 function read(path) {
@@ -128,8 +128,8 @@ for (const heading of [
 for (const statusContract of [
   'TRIAL DEPLOYMENT COMPLETE',
   'RECOVERY DRILL COMPLETE',
-  'FINAL TRIAL SMOKE/E2E NOT YET EXECUTED',
-  'TRIAL ADMISSION NOT YET EVALUATED',
+  'FINAL TRIAL SMOKE/E2E EXECUTED — FAIL',
+  'TRIAL ADMISSION NOT ADMITTED',
   'PRODUCTION NOT CONFIGURED',
 ]) {
   check(

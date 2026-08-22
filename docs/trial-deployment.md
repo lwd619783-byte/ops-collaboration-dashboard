@@ -443,6 +443,55 @@ TRIAL ADMISSION: NOT ADMITTED
 
 本轮未启动 Stage 4，未执行 Production/Recovery mutation、db push、migration apply/repair/up、reset、restore、直接 Trial PostgreSQL 写入、未经授权部署、PR、merge 或 force push；正常 UI invitation/project 写入仅限本任务授权的 synthetic smoke 数据。OPS database session 已清除。
 
+### Task 3.9.3-R6-F1 Hosted Trial Auth activation redirect 脱敏结果（2026-08-22）
+
+F1 从准确 `origin/main` 基线 `3a65cbb5f75deaf948d6d8d99dfcff01b2333f84` 开始，只处理 R6 已封板的 Hosted Trial invitation activation redirect blocker；本轮不是完整 R6 重跑，也不授权 Stage 4、Production、Recovery、数据库、Edge Function 或 Vercel deployment mutation。
+
+修复前只读诊断建立了组合配置根因：Hosted Trial Site URL 仍分类为 local origin，精确的稳定 Trial `/activate-account` 未进入 Redirect URLs allowlist；deployed `invite-workspace-member` 仍为 active version 2、JWT verification enabled，且 deployed source 与 sealed main 的 stable-origin `/activate-account` redirect 逻辑一致；Invite template 使用标准 `ConfirmationURL`，当前 Free/default SMTP 项目不允许编辑该模板。Supabase 当前行为会在应用传入的 redirect 未被允许时忽略该值并回退到 Site URL，因此真实邮件在 R6 中生成了 local redirect。
+
+| Hosted Auth signal                         | Before F1                        | After minimal configuration remediation |
+| ------------------------------------------ | -------------------------------- | --------------------------------------- |
+| `SITE_URL_CLASSIFICATION`                  | `LOCAL_ORIGIN`                   | `TRIAL_ORIGIN`                          |
+| `STABLE_TRIAL_ACTIVATION_REDIRECT_ALLOWED` | `NO`                             | `YES`                                   |
+| `LOCAL_REDIRECT_PRESENT`                   | `NO`                             | `NO`                                    |
+| `PREVIEW_REDIRECT_PRESENT`                 | `NO`                             | `NO`                                    |
+| `DEPLOYED_INVITE_REDIRECT_LOGIC`           | `STABLE_ORIGIN_ACTIVATE_ACCOUNT` | unchanged                               |
+| `INVITE_TEMPLATE_MODE`                     | `CONFIRMATION_URL`               | unchanged                               |
+| `INVITE_TEMPLATE_EDITABLE`                 | `NO`                             | unchanged                               |
+| `INVITE_AUTH_LOG_REDIRECT_CONTEXT`         | `UNAVAILABLE`                    | `TRIAL_ORIGIN`                          |
+
+`ROOT_CAUSE_CLASSIFICATION: D`：精确 activation redirect 缺失与 local Site URL 同时存在；template 和 deployed Edge source 不是该 local redirect 的根因。F1 仅把 Site URL 改为稳定 Trial origin，并添加精确的稳定 Trial `/activate-account` redirect；未删除 localhost 配置、未加入 wildcard/Preview/Production/Recovery，也未修改邮件模板。
+
+修复后由 Owner 在稳定 Trial 发出一个新的 controlled invitation。脱敏 Edge/Auth evidence 显示 invitation `OPTIONS 204`、`POST 200`、Auth `/invite 200` 和 mail delivery 均成功；随后 Auth `/verify` 曾成功返回一次 redirect，之后对同一一次性链接的重复访问均为 invalid/expired。操作者未在首次点击前留下任务要求的 ConfirmationURL 脱敏检查记录，且真实浏览器最终落在登录页而不是 `/activate-account`，因此不能补写 `NEW_INVITATION_REDIRECT: STABLE_TRIAL_ACTIVATION_PATH`，也不能把 redirect context 或后续绕行替代 mandated final-landing evidence。
+
+| Narrow F1 check                                   | Result                                           |
+| ------------------------------------------------- | ------------------------------------------------ |
+| new invitation CORS preflight                     | `PASS` (`OPTIONS 204`)                           |
+| invitation actual POST                            | `PASS` (`POST 200`)                              |
+| controlled inbox mail delivery                    | `PASS`                                           |
+| pre-click ConfirmationURL redirect classification | `UNAVAILABLE`                                    |
+| Auth invite token verification                    | `PASS ONCE`; later visits invalid/expired        |
+| final landing = stable Trial `/activate-account`  | `FAIL`                                           |
+| activation through the invitation session         | `FAIL`                                           |
+| password-recovery workaround                      | `EXECUTED BY HUMAN — NOT F1 ACTIVATION EVIDENCE` |
+| member normal login after the workaround          | `PASS`                                           |
+| workspace membership                              | `PASS` (`member`, enabled)                       |
+| refresh identity / membership consistency         | `PASS`                                           |
+
+内置浏览器的只读核验显示该成员可恢复受保护工作台和成员目录，成员状态为 enabled，刷新后保持一致；该成员没有可见的邀请、角色调整或停用控制，浏览器控制台无 auth/network error。上述结果只证明 recovery 后的账号访问和 membership，不证明 invitation activation session 的正常落地。
+
+本轮还确认一个独立的新 Finding：对已由早期邀请创建 Auth user 的邮箱调用 hosted `inviteUserByEmail` 会返回“already registered”，而 sealed 本地 reissue 验证假设该调用会复用同一未确认 Auth user 并重新发信。删除业务邀请行既不能释放 Auth email，也被 schema 明确禁止；F1 未执行任何账号/邀请清理。该 hosted reissue compatibility 与首次 verify 后 activation session/final landing 均需要独立任务判定，F1 不修改业务代码、不 redeploy Edge Function。
+
+确定性结论：Hosted URL configuration 的最小修复已应用，但 F1 全部成功标准未满足，不得记录 blocker remediated：
+
+```text
+TRIAL AUTH ACTIVATION REDIRECT BLOCKER: NOT REMEDIATED
+FULL R6 RERUN: PENDING
+TRIAL ADMISSION: NOT ADMITTED
+```
+
+F1 未执行直接 Trial PostgreSQL 写入、db push、migration apply/repair/up、reset、restore、Recovery/Production mutation、SMTP 配置、Edge/Vercel redeploy、PR、merge 或 force push；未在文档中记录 project ref、Hosted URL、邮箱、token、OTP、用户 ID、IP、请求 ID、数据库 hostname、credential path 或 Auth raw log。
+
 ## 12. Rollback
 
 ### Frontend rollback

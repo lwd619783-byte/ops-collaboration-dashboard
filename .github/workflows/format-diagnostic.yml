@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - fix/issue-001-cross-browser-password-recovery
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read

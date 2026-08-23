@@ -2,11 +2,11 @@
  * ResetPasswordPage: set a new password inside a valid recovery session.
  *
  * The form is only reachable when the AuthProvider holds a real recovery
- * session (PASSWORD_RECOVERY flow). A normal logged-in session is never
- * mistaken for a recovery session — even after a page refresh, because the
- * recovery marker is cleared on normal sign-in and after password update.
- * Invalid / expired / already-used links show a safe error with a link to
- * re-request. Passwords are never logged or echoed back.
+ * session. A normal logged-in session is never mistaken for a recovery session
+ * because the recovery-purpose marker is cleared on normal sign-in and after a
+ * password update. Missing recovery context is reported separately from an
+ * invalid/used/expired one-time recovery credential. Passwords are never logged
+ * or echoed back.
  */
 
 import { useEffect, useState, type FormEvent } from 'react'
@@ -39,11 +39,12 @@ export function ResetPasswordPage() {
   }, [succeeded, isUnauthenticated, navigate])
 
   if (!isRecoverySession) {
+    const missingContext = createSafeAuthError('recovery_context_missing')
     return (
       <section className="auth-page" aria-label="重置密码">
         <h2>重置密码</h2>
         <p className="form-error" role="alert" aria-live="assertive">
-          重置密码链接无效或已过期，请重新申请。
+          {missingContext.message}
         </p>
         <p className="auth-links">
           <Link className="text-link" to="/forgot-password">

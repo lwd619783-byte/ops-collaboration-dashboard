@@ -53,7 +53,9 @@ Use the version-controlled template in:
 The security-relevant link must remain equivalent to:
 
 ```html
-<a href="{{ .SiteURL }}/auth/recovery#token_hash={{ .TokenHash }}&type=recovery">
+<a
+  href="{{ .SiteURL }}/auth/recovery#token_hash={{ .TokenHash }}&type=recovery"
+>
   继续重置密码
 </a>
 ```

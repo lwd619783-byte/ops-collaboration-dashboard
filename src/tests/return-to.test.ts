@@ -68,7 +68,9 @@ describe('安全 returnTo 校验', () => {
       '/projects?tab=active',
     )
     expect(
-      sanitizeReturnTo(`/projects/${projectId}/tasks/${taskId}?view=detail#top`),
+      sanitizeReturnTo(
+        `/projects/${projectId}/tasks/${taskId}?view=detail#top`,
+      ),
     ).toBe(`/projects/${projectId}/tasks/${taskId}?view=detail#top`)
     expect(sanitizeReturnTo('/')).toBe('/')
   })

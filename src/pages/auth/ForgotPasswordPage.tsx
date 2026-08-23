@@ -1,8 +1,8 @@
 /**
  * ForgotPasswordPage: request a password-reset email.
  *
- * The reset redirect target is the app-controlled /reset-password built by the
- * AuthProvider — the page never accepts an external redirect URL. Regardless of
+ * Password recovery is completed through the app-controlled confirmation
+ * boundary described by the hosted Recovery email template. Regardless of
  * whether the email exists, the SAME success message is shown, so the page
  * cannot be used to enumerate accounts. Rate-limit / network / service errors
  * map to safe, generic messages only.
@@ -61,9 +61,14 @@ export function ForgotPasswordPage() {
       <p className="auth-description">输入账号邮箱，我们将发送密码重置链接。</p>
 
       {sentMessage && (
-        <p className="form-notice" role="status" aria-live="polite">
-          {sentMessage}
-        </p>
+        <>
+          <p className="form-notice" role="status" aria-live="polite">
+            {sentMessage}
+          </p>
+          <p className="auth-description">
+            如果连续申请了多次，请只使用最新一封密码重置邮件。
+          </p>
+        </>
       )}
       {error && (
         <p className="form-error" role="alert" aria-live="assertive">

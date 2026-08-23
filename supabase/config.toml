@@ -258,6 +258,13 @@ otp_expiry = 3600
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
+# Local password-recovery parity with Hosted Trial. The template carries the
+# TokenHash in the URL fragment, so the recovery credential is not sent in the
+# initial HTTP request. This local binding contains no SMTP credentials.
+[auth.email.template.recovery]
+subject = "重置运维协同看板密码"
+content_path = "./supabase/templates/recovery.html"
+
 # Uncomment to customize email template
 # [auth.email.template.invite]
 # subject = "You have been invited"

@@ -16,6 +16,7 @@ export type AuthErrorCode =
   | 'network_unavailable'
   | 'session_expired'
   | 'refresh_token_invalid'
+  | 'recovery_context_missing'
   | 'recovery_link_invalid'
   | 'recovery_link_expired'
   | 'password_too_weak'
@@ -38,8 +39,11 @@ export const SAFE_ERROR_MESSAGES: Record<AuthErrorCode, string> = {
   network_unavailable: '网络连接不可用，请检查网络后重试。',
   session_expired: '登录状态已过期，请重新登录。',
   refresh_token_invalid: '登录状态已失效，请重新登录。',
-  recovery_link_invalid: '重置密码链接无效，请重新申请。',
-  recovery_link_expired: '重置密码链接已过期，请重新申请。',
+  recovery_context_missing:
+    '当前浏览器没有有效的密码恢复会话，请从最新一封密码重置邮件重新进入。',
+  recovery_link_invalid:
+    '此重置链接已失效，可能已过期、已使用或不是最新一封邮件中的链接，请重新申请。',
+  recovery_link_expired: '此重置链接已过期，请重新申请。',
   password_too_weak: '密码不符合最低强度要求，请重新设置。',
   identity_unavailable: '该账号尚未激活或暂不可使用，请联系系统管理员。',
   profile_read_failed: '无法读取个人资料，请稍后重试。',
@@ -97,6 +101,8 @@ function mapByCode(code: string): MappedAuthError | undefined {
     case 'invalid_otp':
     case 'recovery_link_invalid':
       return createSafeAuthError('recovery_link_invalid')
+    case 'recovery_link_expired':
+      return createSafeAuthError('recovery_link_expired')
     default:
       return undefined
   }
@@ -124,8 +130,12 @@ export function mapAuthError(error: unknown): SafeAuthError {
 
   const code = extractErrorCode(error)
   if (code && isRecoveryLinkError(code)) {
+    // Supabase can report OTP verification failures using a combined
+    // invalid/expired class. Do not over-claim that `otp_expired` proves a
+    // naturally elapsed TTL: the same user-facing class can also cover a used
+    // or superseded one-time recovery credential.
     return createSafeAuthError(
-      code === 'otp_expired' || code === 'recovery_link_expired'
+      code === 'recovery_link_expired'
         ? 'recovery_link_expired'
         : 'recovery_link_invalid',
     )

@@ -2,15 +2,12 @@
  * Shared Supabase client mock for auth tests.
  *
  * The mock exposes `vi.fn()` implementations so tests can assert the REAL
- * arguments passed to signIn / signOut / resetPasswordForEmail / updateUser /
- * rpc / table reads. Like the real Supabase client, sign-in emits SIGNED_IN,
- * password update emits USER_UPDATED and sign-out emits SIGNED_OUT through the
- * registered onAuthStateChange listeners, so the AuthProvider subscription and
- * its concurrency logic are exercised with realistic event ordering.
- *
- * Tests may also emit events manually via `emitAuthEvent`, and may replace any
- * method implementation (e.g. with a controllable deferred promise) through
- * the exposed `vi.fn` handles.
+ * arguments passed to signIn / signOut / resetPasswordForEmail / verifyOtp /
+ * updateUser / rpc / table reads. Like the real Supabase client, sign-in emits
+ * SIGNED_IN, password update emits USER_UPDATED and sign-out emits SIGNED_OUT.
+ * Recovery TokenHash verification persists a session but deliberately emits no
+ * PASSWORD_RECOVERY event, so tests can prove the new cross-browser recovery
+ * path does not depend on the legacy PKCE callback event.
  */
 
 import { vi } from 'vitest'
@@ -80,19 +77,12 @@ export type AuthEventName =
 export type MockClientOptions = {
   hasSession?: boolean
   session?: typeof fictionalSession | null
-  /** Return value of rpc('current_app_user_id'); null → identity unavailable */
   currentAppUserId?: string | null
-  /** rpc('current_app_user_id') error object */
   currentAppUserIdError?: unknown
-  /** rpc('current_app_user_id') network-like failure */
   rpcNetworkFailure?: boolean
-  /** app_users read error */
   appUserReadError?: unknown
-  /** app_users row returned by read; null → row missing */
   appUserRow?: typeof fictionalAppUser | null
-  /** profiles read error */
   profileReadError?: unknown
-  /** profiles row returned by read; null → row missing */
   profileRow?: typeof fictionalProfile | null
   workspaceRows?: Array<{
     workspace_id: string
@@ -109,15 +99,11 @@ export type MockClientOptions = {
     status: 'sent'
     expires_at: string
   }>
-  /** Throw a network-like failure on auth calls */
   networkFailure?: boolean
-  /** error object returned by signInWithPassword */
   signInError?: unknown
-  /** error object returned by resetPasswordForEmail */
   resetError?: unknown
-  /** error object returned by updateUser */
+  verifyOtpError?: unknown
   updateUserError?: unknown
-  /** error object returned by profile update */
   profileUpdateError?: unknown
 }
 
@@ -128,6 +114,7 @@ export type SupabaseClientMock = {
   signInWithPassword: ReturnType<typeof vi.fn>
   signOut: ReturnType<typeof vi.fn>
   resetPasswordForEmail: ReturnType<typeof vi.fn>
+  verifyOtp: ReturnType<typeof vi.fn>
   updateUser: ReturnType<typeof vi.fn>
   rpc: ReturnType<typeof vi.fn>
   from: ReturnType<typeof vi.fn>
@@ -198,9 +185,6 @@ export function createSupabaseClientMock(
     options.hasSession === undefined ? false : options.hasSession
 
   const emit = (event: AuthEventName) => {
-    // Mirror the real client: SIGNED_OUT implies the session is gone, so any
-    // later getSession() must return null even if the event was emitted
-    // directly by the test (not through signOut()).
     if (event === 'SIGNED_OUT') {
       hasSessionState = false
     }
@@ -235,6 +219,24 @@ export function createSupabaseClientMock(
     if (options.networkFailure) throw new Error('Failed to fetch')
     if (options.resetError) return { data: null, error: options.resetError }
     return { data: null, error: null }
+  })
+
+  const verifyOtp = vi.fn(async () => {
+    if (options.networkFailure) throw new Error('Failed to fetch')
+    if (options.verifyOtpError) {
+      return {
+        data: { user: null, session: null },
+        error: options.verifyOtpError,
+      }
+    }
+    // TokenHash verification establishes/persists a session but intentionally
+    // does not emit PASSWORD_RECOVERY. The app must carry recovery purpose via
+    // its own marker when mounting AuthProvider on /reset-password.
+    hasSessionState = true
+    return {
+      data: { user: fictionalSession.user, session: fictionalSession },
+      error: null,
+    }
   })
 
   const updateUser = vi.fn(async () => {
@@ -287,6 +289,7 @@ export function createSupabaseClientMock(
       signInWithPassword,
       signOut,
       resetPasswordForEmail,
+      verifyOtp,
       updateUser,
       onAuthStateChange: vi.fn((listener: (event: AuthEventName) => void) => {
         authEventListeners.push(listener)
@@ -307,6 +310,7 @@ export function createSupabaseClientMock(
     signInWithPassword,
     signOut,
     resetPasswordForEmail,
+    verifyOtp,
     updateUser,
     rpc,
     from,

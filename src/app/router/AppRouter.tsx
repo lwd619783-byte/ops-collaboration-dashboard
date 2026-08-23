@@ -27,6 +27,7 @@ import { ProjectTasksPage } from '@/pages/ProjectTasksPage'
 import { ProjectsPage } from '@/pages/ProjectsPage'
 import { SystemHealthPage } from '@/pages/SystemHealthPage'
 import { TaskDetailPage } from '@/pages/TaskDetailPage'
+import { ConfirmPasswordRecoveryPage } from '@/pages/auth/ConfirmPasswordRecoveryPage'
 import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage'
 import { LoginPage } from '@/pages/auth/LoginPage'
 import { ResetPasswordPage } from '@/pages/auth/ResetPasswordPage'
@@ -39,6 +40,8 @@ type AppRouterProps = {
 /**
  * Route layout:
  *   /system-health  → public, OUTSIDE AuthProvider (never initializes identity)
+ *   /auth/recovery  → public confirmation boundary, OUTSIDE AuthProvider;
+ *                     verifies TokenHash only after an explicit user action
  *   public 404      → public, OUTSIDE AuthProvider
  *   auth pages      → AuthLayout inside AuthProviderLayout
  *   business routes → ProtectedRoute + AppLayout inside AuthProviderLayout
@@ -47,6 +50,15 @@ export function AppRouter({ resolveClient }: AppRouterProps) {
   return (
     <Routes>
       <Route path="/system-health" element={<SystemHealthPage />} />
+
+      <Route element={<AuthLayout />}>
+        <Route
+          path="/auth/recovery"
+          element={
+            <ConfirmPasswordRecoveryPage resolveClient={resolveClient} />
+          }
+        />
+      </Route>
 
       <Route element={<AuthProviderLayout resolveClient={resolveClient} />}>
         <Route element={<AuthLayout />}>

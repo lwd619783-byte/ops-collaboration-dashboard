@@ -44,19 +44,36 @@ describe('认证错误安全映射', () => {
     expect(result.message).not.toContain('characters')
   })
 
-  it('recovery 链接无效映射为安全文案', () => {
+  it('otp_expired 不过度断言为自然过期，而映射为通用失效文案', () => {
     const result = mapAuthError(
       authError('otp_expired', 'Token has expired or is invalid'),
     )
-    expect(result.code).toBe('recovery_link_expired')
-    expect(result.message).toBe(SAFE_ERROR_MESSAGES.recovery_link_expired)
+    expect(result.code).toBe('recovery_link_invalid')
+    expect(result.message).toBe(SAFE_ERROR_MESSAGES.recovery_link_invalid)
+    expect(result.message).toContain('可能已过期')
   })
 
-  it('recovery 链接已使用映射为安全文案', () => {
+  it('显式 recovery_link_expired 仍保留确定过期语义', () => {
+    const result = mapAuthError(
+      authError('recovery_link_expired', 'internal detail'),
+    )
+    expect(result.code).toBe('recovery_link_expired')
+    expect(result.message).toBe(SAFE_ERROR_MESSAGES.recovery_link_expired)
+    expect(result.message).not.toContain('internal detail')
+  })
+
+  it('recovery 链接已使用映射为安全失效文案', () => {
     const result = mapAuthError(
       authError('refresh_token_already_used', 'refresh_token already used'),
     )
     expect(result.code).toBe('recovery_link_invalid')
+    expect(result.message).toBe(SAFE_ERROR_MESSAGES.recovery_link_invalid)
+  })
+
+  it('缺少 recovery context 使用独立安全文案', () => {
+    const result = createSafeAuthError('recovery_context_missing')
+    expect(result.message).toBe(SAFE_ERROR_MESSAGES.recovery_context_missing)
+    expect(result.message).toContain('没有有效的密码恢复会话')
   })
 
   it('网络失败映射为网络不可用', () => {

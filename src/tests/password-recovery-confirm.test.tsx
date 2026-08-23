@@ -1,12 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  createMemoryRouter,
-  Route,
-  RouterProvider,
-  Routes,
-} from 'react-router'
+import { createMemoryRouter, Route, RouterProvider, Routes } from 'react-router'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { AppRouter } from '@/app/router/AppRouter'
 import { ConfirmPasswordRecoveryPage } from '@/pages/auth/ConfirmPasswordRecoveryPage'
@@ -228,7 +223,9 @@ describe('密码重置 TokenHash 完整链路', () => {
       password: 'new-password-123',
     })
     await waitFor(() =>
-      expect(window.sessionStorage.getItem(RECOVERY_SESSION_STORAGE_KEY)).toBeNull(),
+      expect(
+        window.sessionStorage.getItem(RECOVERY_SESSION_STORAGE_KEY),
+      ).toBeNull(),
     )
     expect(supabase.signOut).toHaveBeenCalledWith({ scope: 'local' })
     await waitFor(() => expect(router.state.location.pathname).toBe('/login'))

@@ -26,7 +26,7 @@ declare
   v_actor_role public.workspace_role;
   v_target public.workspace_members%rowtype;
   v_latest_invitation public.workspace_invitations%rowtype;
-  v_has_verified_identity boolean := false;
+  v_has_completed_auth boolean := false;
   v_has_sent_lineage boolean := false;
 begin
   if p_status is null or p_status not in ('active', 'suspended') then
@@ -74,16 +74,29 @@ begin
     order by i.created_at desc, i.id desc
     limit 1;
 
+    -- Business identity binding alone is insufficient: an invited Auth user is
+    -- provisioned before the person necessarily opens the email. Require the
+    -- exact bound Hosted Auth subject to have actually completed confirmation
+    -- AND a sign-in. Deleted or currently banned Auth users are not recoverable.
     select exists (
       select 1
       from public.app_users as au
       join public.user_identities as ui on ui.user_id = au.id
+      join auth.users as auth_user
+        on auth_user.id::text = ui.provider_subject
       where au.id = p_user_id
         and au.status = 'active'
         and ui.provider = 'supabase_auth'
         and ui.verified_at is not null
         and ui.revoked_at is null
-    ) into v_has_verified_identity;
+        and auth_user.confirmed_at is not null
+        and auth_user.last_sign_in_at is not null
+        and auth_user.deleted_at is null
+        and (
+          auth_user.banned_until is null
+          or auth_user.banned_until <= pg_catalog.clock_timestamp()
+        )
+    ) into v_has_completed_auth;
 
     if v_latest_invitation.id is not null then
       with recursive lineage as (
@@ -111,7 +124,7 @@ begin
       ) into v_has_sent_lineage;
     end if;
 
-    if not v_has_verified_identity
+    if not v_has_completed_auth
        or v_latest_invitation.id is null
        or v_latest_invitation.status <> 'failed'
        or v_latest_invitation.failure_code not in (

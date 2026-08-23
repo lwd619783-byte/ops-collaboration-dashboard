@@ -389,7 +389,10 @@ export function createInviteWorkspaceMemberHandler(
     try {
       inviteResult = await dependencies.inviteAuthUser({
         email,
-        redirectTo: `${origin}/activate-account`,
+        // Hosted template stays unchanged during code rollout. After this
+        // version is deployed, the template can use RedirectTo as the stable
+        // public confirmation route and append its invite TokenHash fragment.
+        redirectTo: `${origin}/auth/invite`,
         invitationId: preparation.data.invitationId,
         providerTenant: authentication.data.providerTenant,
       })

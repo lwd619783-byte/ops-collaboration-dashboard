@@ -2,11 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mapAuthInviteErrorForOperation } from './entry'
 
 describe('Hosted invite reissue fail-closed mapping', () => {
-  it.each([
-    'user_already_exists',
-    'email_exists',
-    'identity_already_exists',
-  ])(
+  it.each(['user_already_exists', 'email_exists', 'identity_already_exists'])(
     'keeps an existing-invitee reissue recoverable for provider conflict %s',
     (code) => {
       expect(

@@ -110,7 +110,9 @@ describe('工作空间激活断链恢复', () => {
       }),
     )
 
-    const recoverableRow = (await screen.findByText('待恢复成员')).closest('tr')!
+    const recoverableRow = (await screen.findByText('待恢复成员')).closest(
+      'tr',
+    )!
     const pendingRow = screen.getByText('正常待激活成员').closest('tr')!
 
     expect(within(recoverableRow).getByText('待恢复激活')).toBeInTheDocument()
@@ -152,7 +154,9 @@ describe('工作空间激活断链恢复', () => {
     }))
 
     renderMembers(workspaceValue('owner', { setMemberStatus }))
-    const recoverableRow = (await screen.findByText('待恢复成员')).closest('tr')!
+    const recoverableRow = (await screen.findByText('待恢复成员')).closest(
+      'tr',
+    )!
     await user.click(
       within(recoverableRow).getByRole('button', { name: '恢复激活' }),
     )

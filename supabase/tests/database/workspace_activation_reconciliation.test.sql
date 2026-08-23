@@ -72,12 +72,43 @@ insert into public.app_users (id, status) values
   ('71000000-0000-4000-8000-000000000003', 'active'),
   ('71000000-0000-4000-8000-000000000004', 'active');
 
+-- Auth rows deliberately omit invitation metadata, so the normal Auth trigger
+-- is a no-op. They let this test distinguish "identity provisioned" from
+-- "person actually confirmed and signed in".
+insert into auth.users (
+  id, aud, role, email, encrypted_password,
+  email_confirmed_at, confirmed_at, last_sign_in_at,
+  raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+) values
+  (
+    '81000000-0000-4000-8000-000000000002',
+    'authenticated', 'authenticated', 'recoverable@example.invalid', '',
+    now() - interval '1 hour', now() - interval '1 hour', now() - interval '10 minutes',
+    '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb,
+    now() - interval '3 hours', now()
+  ),
+  (
+    '81000000-0000-4000-8000-000000000003',
+    'authenticated', 'authenticated', 'never-signed-in@example.invalid', '',
+    null, null, null,
+    '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb,
+    now() - interval '3 hours', now()
+  ),
+  (
+    '81000000-0000-4000-8000-000000000004',
+    'authenticated', 'authenticated', 'no-lineage@example.invalid', '',
+    now() - interval '1 hour', now() - interval '1 hour', now() - interval '10 minutes',
+    '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb,
+    now() - interval '3 hours', now()
+  );
+
 insert into public.user_identities (
   user_id, provider, provider_tenant, provider_subject, verified_at
 ) values
   ('71000000-0000-4000-8000-000000000001', 'supabase_auth', 'https://fixture-recovery.invalid', 'recovery-owner', now()),
-  ('71000000-0000-4000-8000-000000000002', 'supabase_auth', 'https://fixture-recovery.invalid', 'recoverable-member', now()),
-  ('71000000-0000-4000-8000-000000000004', 'supabase_auth', 'https://fixture-recovery.invalid', 'no-lineage-member', now());
+  ('71000000-0000-4000-8000-000000000002', 'supabase_auth', 'https://fixture-recovery.invalid', '81000000-0000-4000-8000-000000000002', now()),
+  ('71000000-0000-4000-8000-000000000003', 'supabase_auth', 'https://fixture-recovery.invalid', '81000000-0000-4000-8000-000000000003', now()),
+  ('71000000-0000-4000-8000-000000000004', 'supabase_auth', 'https://fixture-recovery.invalid', '81000000-0000-4000-8000-000000000004', now());
 
 insert into public.workspaces (id, name, owner_id, created_by) values (
   '72000000-0000-4000-8000-000000000001',
@@ -127,8 +158,9 @@ insert into public.workspace_invitations (
   now() - interval '25 minutes'
 );
 
--- Unverified member has the same recoverable-looking lineage but no verified
--- identity row; the RPC must still fail closed.
+-- A business identity can already exist for an invited Auth account that the
+-- person never confirmed or signed into. The same recoverable-looking lineage
+-- must not be enough to activate that membership.
 insert into public.workspace_invitations (
   id, workspace_id, email_hash, email_hint, display_name, role,
   status, invitee_user_id, invited_by, idempotency_key, expires_at,
@@ -136,7 +168,7 @@ insert into public.workspace_invitations (
 ) values (
   '73000000-0000-4000-8000-000000000003',
   '72000000-0000-4000-8000-000000000001',
-  repeat('b', 64), 'u***@e***.invalid', 'Unverified Member', 'member',
+  repeat('b', 64), 'u***@e***.invalid', 'Never Signed In Member', 'member',
   'revoked', '71000000-0000-4000-8000-000000000003',
   '71000000-0000-4000-8000-000000000001',
   '74000000-0000-4000-8000-000000000003',
@@ -151,7 +183,7 @@ insert into public.workspace_invitations (
 ) values (
   '73000000-0000-4000-8000-000000000004',
   '72000000-0000-4000-8000-000000000001',
-  repeat('b', 64), 'u***@e***.invalid', 'Unverified Member', 'member',
+  repeat('b', 64), 'u***@e***.invalid', 'Never Signed In Member', 'member',
   'failed', '71000000-0000-4000-8000-000000000003',
   '71000000-0000-4000-8000-000000000001',
   '74000000-0000-4000-8000-000000000004',
@@ -160,7 +192,8 @@ insert into public.workspace_invitations (
   now() - interval '25 minutes'
 );
 
--- Verified identity but no previously sent invitation in the lineage.
+-- Auth is complete here, but there is no previously sent invitation in the
+-- lineage, so a manager still cannot manufacture a workspace acceptance.
 insert into public.workspace_invitations (
   id, workspace_id, email_hash, email_hint, display_name, role,
   status, invitee_user_id, invited_by, idempotency_key, expires_at,
@@ -186,7 +219,7 @@ select is(
     'active'
   )),
   'active',
-  'owner explicitly recovers a verified invited member with a sent recoverable lineage'
+  'owner recovers only a confirmed signed-in member with a sent recoverable lineage'
 );
 select ok(
   pg_temp.membership_joined_at(
@@ -215,7 +248,7 @@ select is(
     )
   $sql$),
   'workspace_activation_recovery_unavailable',
-  'unverified invited member cannot be recovered'
+  'provisioned but never confirmed or signed-in Auth user cannot be recovered'
 );
 select is(
   pg_temp.membership_status_of(
@@ -223,7 +256,7 @@ select is(
     '71000000-0000-4000-8000-000000000003'
   ),
   'invited',
-  'failed unverified recovery leaves membership invited'
+  'failed incomplete-Auth recovery leaves membership invited'
 );
 select is(
   pg_temp.error_message_of($sql$
@@ -234,7 +267,7 @@ select is(
     )
   $sql$),
   'workspace_activation_recovery_unavailable',
-  'verified member without a previously sent invitation cannot be recovered'
+  'confirmed signed-in member without a previously sent invitation cannot be recovered'
 );
 select is(
   pg_temp.membership_status_of(
@@ -246,7 +279,7 @@ select is(
 );
 reset role;
 
-set local "request.jwt.claims" = '{"sub":"recoverable-member","iss":"https://fixture-recovery.invalid","role":"authenticated"}';
+set local "request.jwt.claims" = '{"sub":"81000000-0000-4000-8000-000000000002","iss":"https://fixture-recovery.invalid","role":"authenticated"}';
 set local role authenticated;
 select is(
   pg_temp.sqlstate_of($sql$

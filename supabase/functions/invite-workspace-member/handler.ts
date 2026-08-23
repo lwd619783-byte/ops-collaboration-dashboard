@@ -58,8 +58,15 @@ export type InviteWorkspaceMemberDependencies = {
     input: PreparationInput,
     authorization: string,
   ) => Promise<EdgeOperationResult<PreparedInvitation>>
+  /**
+   * `operationKind` is supplied only for an existing-invitee reissue. Hosted
+   * adapters may use it to distinguish an expected existing-user rejection
+   * from a true new-user identity conflict without changing the browser
+   * contract or weakening new-user conflict handling.
+   */
   inviteAuthUser: (
     input: AuthInviteInput,
+    operationKind?: InvitationOperationKind,
   ) => Promise<EdgeOperationResult<AuthInviteResult>>
   /**
    * Service-only confirmation boundary. After Auth Admin accepted the request,
@@ -385,14 +392,21 @@ export function createInviteWorkspaceMemberHandler(
       return safeError('invitation_conflict', origin)
     }
 
+    const authInviteInput: AuthInviteInput = {
+      email,
+      redirectTo: `${origin}/activate-account`,
+      invitationId: preparation.data.invitationId,
+      providerTenant: authentication.data.providerTenant,
+    }
     let inviteResult: EdgeOperationResult<AuthInviteResult>
     try {
-      inviteResult = await dependencies.inviteAuthUser({
-        email,
-        redirectTo: `${origin}/activate-account`,
-        invitationId: preparation.data.invitationId,
-        providerTenant: authentication.data.providerTenant,
-      })
+      inviteResult =
+        preparation.data.operationKind === 'existing_invitee_reissue'
+          ? await dependencies.inviteAuthUser(
+              authInviteInput,
+              preparation.data.operationKind,
+            )
+          : await dependencies.inviteAuthUser(authInviteInput)
     } catch {
       inviteResult = { ok: false, code: 'temporary_failure' }
     }

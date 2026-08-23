@@ -79,9 +79,9 @@ describe('安全 returnTo 校验', () => {
     expect(sanitizeReturnTo('javascript:alert(1)')).toBe('/')
     expect(sanitizeReturnTo('/login')).toBe('/')
     expect(sanitizeReturnTo('/reset-password')).toBe('/')
-    expect(sanitizeReturnTo(`/projects/${projectId}/tasks/${taskId}/delete`)).toBe(
-      '/',
-    )
+    expect(
+      sanitizeReturnTo(`/projects/${projectId}/tasks/${taskId}/delete`),
+    ).toBe('/')
     expect(sanitizeReturnTo(null)).toBe('/')
     expect(sanitizeReturnTo(undefined)).toBe('/')
     expect(sanitizeReturnTo('')).toBe('/')

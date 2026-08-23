@@ -245,9 +245,7 @@ describe('ISSUE-004 邀请单次设密完整链路', () => {
     await screen.findByRole('heading', { name: '激活工作空间账号' })
     await user.type(screen.getByLabelText(/设置密码/), 'strong-pass-123')
     await user.type(screen.getByLabelText(/确认密码/), 'strong-pass-123')
-    await user.click(
-      screen.getByRole('button', { name: '设置密码并接受邀请' }),
-    )
+    await user.click(screen.getByRole('button', { name: '设置密码并接受邀请' }))
 
     await waitFor(() =>
       expect(supabase.updateUser).toHaveBeenCalledWith({

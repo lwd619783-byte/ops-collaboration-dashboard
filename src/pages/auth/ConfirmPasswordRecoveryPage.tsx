@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router'
+import { useEffect, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router'
 import { Button } from '@/components/ui/Button'
 import {
   RECOVERY_SESSION_STORAGE_KEY,
@@ -21,36 +21,58 @@ type ConfirmPasswordRecoveryPageProps = {
   resolveClient?: () => SupabaseClientResolution
 }
 
+type RecoveryCredential = {
+  tokenHash: string
+  hasValidShape: boolean
+}
+
 function invalidRecoveryLink(): SafeAuthError {
   return createSafeAuthError('recovery_link_invalid')
+}
+
+function readRecoveryCredential(fragment: string): RecoveryCredential {
+  const params = new URLSearchParams(
+    fragment.startsWith('#') ? fragment.slice(1) : fragment,
+  )
+  const tokenHash = params.get('token_hash') ?? ''
+  const recoveryType = params.get('type')
+  return {
+    tokenHash,
+    hasValidShape:
+      recoveryType === 'recovery' &&
+      tokenHash.length > 0 &&
+      tokenHash.length <= MAX_RECOVERY_TOKEN_HASH_LENGTH,
+  }
 }
 
 /**
  * User-controlled password-recovery confirmation boundary.
  *
- * The email link lands here with a TokenHash, but merely loading the page never
- * verifies or consumes the one-time token. This protects the recovery flow
- * from email-provider link scanners and removes the PKCE requirement that the
- * reset link be opened in the same browser/device that requested the email.
+ * The email link lands here with a TokenHash in the URL fragment. Fragments are
+ * not sent in the HTTP request, so the recovery credential is kept out of the
+ * Vercel request path/search parameters. On mount, the fragment is captured in
+ * short-lived component memory and then removed from browser history/address
+ * state. Merely loading the page NEVER verifies or consumes the one-time token.
  * Only an explicit user click performs verifyOtp(type='recovery').
  */
 export function ConfirmPasswordRecoveryPage({
   resolveClient = getSupabaseClient,
 }: ConfirmPasswordRecoveryPageProps) {
-  const [searchParams] = useSearchParams()
+  const location = useLocation()
   const navigate = useNavigate()
+  const [{ tokenHash, hasValidShape }] = useState<RecoveryCredential>(() =>
+    readRecoveryCredential(location.hash),
+  )
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<SafeAuthError | null>(null)
 
-  const tokenHash = searchParams.get('token_hash') ?? ''
-  const recoveryType = searchParams.get('type')
-  const hasValidShape = useMemo(
-    () =>
-      recoveryType === 'recovery' &&
-      tokenHash.length > 0 &&
-      tokenHash.length <= MAX_RECOVERY_TOKEN_HASH_LENGTH,
-    [recoveryType, tokenHash],
-  )
+  useEffect(() => {
+    if (!location.hash) return
+    // The credential has already been captured in component memory. Replace
+    // the current history entry with the clean route before the user acts, so
+    // refresh/history/address-bar sharing cannot retain the TokenHash.
+    navigate(location.pathname, { replace: true })
+  }, [location.hash, location.pathname, navigate])
 
   const verifyRecoveryToken = async (): Promise<AuthServiceResult> => {
     if (!hasValidShape) {
@@ -98,9 +120,9 @@ export function ConfirmPasswordRecoveryPage({
       }
 
       // Store only a non-sensitive boolean marker. The token hash itself is
-      // never copied to storage, logs, rendered text or application state.
-      // /reset-password is inside a fresh AuthProvider mount, which restores
-      // the verified Supabase session and this recovery marker together.
+      // never copied to storage, logs, rendered text or long-lived app state.
+      // /reset-password mounts AuthProvider after verifyOtp has persisted the
+      // verified Supabase session; the marker preserves the recovery purpose.
       window.sessionStorage.setItem(RECOVERY_SESSION_STORAGE_KEY, '1')
       navigate('/reset-password', { replace: true })
     } finally {

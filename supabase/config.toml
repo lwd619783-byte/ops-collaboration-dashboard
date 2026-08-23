@@ -13,7 +13,7 @@ port = 54321
 schemas = ["public", "graphql_public"]
 # Extra schemas to add to the search_path of every request.
 extra_search_path = ["public", "extensions"]
-# The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
+# The maximum number of rows returns from a view, table or stored procedure. Limits payload size
 # for accidental or malicious requests.
 max_rows = 1000
 # Controls whether new tables, views, sequences and functions created in the `public` schema by
@@ -77,7 +77,7 @@ enabled = false
 # Defaults to allow all IPv4 connections. Set empty array to block all IPs.
 allowed_cidrs = ["0.0.0.0/0"]
 # List of IPv6 CIDR blocks allowed to connect to the database.
-# Defaults to allow all IPv6 connections. Set empty array to block all IPs.
+# Defaults to allow all IPv6 connections. Set empty array to block all IPv6 connections.
 allowed_cidrs_v6 = ["::/0"]
 
 # Uncomment to reject non-secure connections to the database.
@@ -258,6 +258,13 @@ otp_expiry = 3600
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
+# Local password-recovery parity with Hosted Trial. The template carries the
+# TokenHash in the URL fragment, so the recovery credential is not sent in the
+# initial HTTP request. This local binding contains no SMTP credentials.
+[auth.email.template.recovery]
+subject = "重置运维协同看板密码"
+content_path = "./supabase/templates/recovery.html"
+
 # Uncomment to customize email template
 # [auth.email.template.invite]
 # subject = "You have been invited"
@@ -349,7 +356,7 @@ skip_nonce_check = false
 # If enabled, it will allow the user to successfully authenticate when the provider does not return an email address.
 email_optional = false
 
-# Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS, EIP-4361) standard.
+# Allow Solana wallet holders to sign in via the Sign in with Solana (SIWS, EIP-4361) standard.
 # You can configure "web3" rate limit in the [auth.rate_limit] section and set up [auth.captcha] if self-hosting.
 [auth.web3.solana]
 enabled = false

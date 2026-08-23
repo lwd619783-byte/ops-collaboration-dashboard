@@ -7,6 +7,7 @@ export type WorkspaceErrorCode =
   | 'invitation_unavailable'
   | 'member_not_found'
   | 'member_status_conflict'
+  | 'activation_recovery_unavailable'
   | 'invalid_request'
   | 'temporary_failure'
 
@@ -24,6 +25,8 @@ const messages: Record<WorkspaceErrorCode, string> = {
   invitation_unavailable: '该邀请不可用、已处理或不属于当前账号。',
   member_not_found: '未找到该工作空间成员。',
   member_status_conflict: '成员当前状态不允许执行此操作。',
+  activation_recovery_unavailable:
+    '该成员当前不满足安全恢复条件，请核对其认证与邀请状态。',
   invalid_request: '提交的信息不完整或格式不正确。',
   temporary_failure: '操作暂时无法完成，请稍后重试。',
 }
@@ -71,6 +74,8 @@ export function mapWorkspaceError(error: unknown): SafeWorkspaceError {
       return createSafeWorkspaceError('member_not_found')
     case 'workspace_member_status_conflict':
       return createSafeWorkspaceError('member_status_conflict')
+    case 'workspace_activation_recovery_unavailable':
+      return createSafeWorkspaceError('activation_recovery_unavailable')
     case 'workspace_invitation_invalid':
     case 'invalid_request':
       return createSafeWorkspaceError('invalid_request')

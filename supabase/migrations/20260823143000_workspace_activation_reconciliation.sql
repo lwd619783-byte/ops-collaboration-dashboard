@@ -43,6 +43,14 @@ begin
     raise exception 'workspace_permission_denied' using errcode = '42501';
   end if;
 
+  -- Invitation preparation already serializes on the workspace row. Reuse the
+  -- same lock order here BEFORE locking a membership so recovery cannot race a
+  -- concurrent reissue into an active-member/new-pending-invitation split.
+  perform 1
+  from public.workspaces as w
+  where w.id = p_workspace_id
+  for update;
+
   select m.* into v_target
   from public.workspace_members as m
   where m.workspace_id = p_workspace_id and m.user_id = p_user_id
@@ -72,7 +80,8 @@ begin
     where i.workspace_id = p_workspace_id
       and i.invitee_user_id = p_user_id
     order by i.created_at desc, i.id desc
-    limit 1;
+    limit 1
+    for update;
 
     -- Business identity binding alone is insufficient: an invited Auth user is
     -- provisioned before the person necessarily opens the email. Require the

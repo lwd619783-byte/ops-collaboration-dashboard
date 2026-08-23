@@ -212,8 +212,8 @@ describe('密码重置 TokenHash 完整链路', () => {
       '1',
     )
 
-    const password = await screen.findByLabelText('新密码')
-    const confirmation = screen.getByLabelText('确认新密码')
+    const password = await screen.findByLabelText(/^新密码/)
+    const confirmation = screen.getByLabelText(/^确认新密码/)
     await user.type(password, 'new-password-123')
     await user.type(confirmation, 'new-password-123')
     await user.click(screen.getByRole('button', { name: '更新密码' }))

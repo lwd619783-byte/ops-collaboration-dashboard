@@ -12,7 +12,8 @@ email handling changes to a user-controlled TokenHash confirmation boundary:
 ```text
 request reset
   -> Recovery email
-  -> /auth/recovery?token_hash=...&type=recovery
+  -> /auth/recovery#token_hash=...&type=recovery
+  -> app captures fragment in short-lived memory and immediately cleans URL
   -> explicit user click
   -> verifyOtp(type=recovery)
   -> verified recovery session
@@ -20,7 +21,11 @@ request reset
   -> update password
 ```
 
-Merely loading `/auth/recovery` MUST NOT verify or consume the one-time token.
+The TokenHash is a one-time recovery credential. It MUST be carried in the URL
+fragment, not the query string: fragments are not included in the HTTP request,
+which keeps the credential out of Vercel request paths/search parameters. The
+application removes the fragment from browser history/address state after it is
+captured. Merely loading `/auth/recovery` MUST NOT verify or consume the token.
 
 ## 2. Preconditions
 
@@ -48,14 +53,15 @@ Use the version-controlled template in:
 The security-relevant link must remain equivalent to:
 
 ```html
-<a href="{{ .SiteURL }}/auth/recovery?token_hash={{ .TokenHash }}&type=recovery">
+<a href="{{ .SiteURL }}/auth/recovery#token_hash={{ .TokenHash }}&type=recovery">
   继续重置密码
 </a>
 ```
 
-Do not replace this with `{{ .ConfirmationURL }}`. The TokenHash is intentionally
-sent to an application page that performs no verification on GET; verification
-only happens after the user explicitly clicks the confirmation button.
+Do not move `token_hash` before `#` or into `?token_hash=...`; do not replace this
+with `{{ .ConfirmationURL }}`. The application landing page performs no
+verification on GET. Verification only happens after the user explicitly clicks
+the confirmation button.
 
 Do not paste access tokens, database passwords, service-role keys, SMTP
 passwords, real reset links, or real user email addresses into repository files,
@@ -71,20 +77,31 @@ At minimum verify:
 2. desktop browser requests reset -> phone browser/WebView opens latest email;
 3. phone requests reset -> desktop browser opens latest email;
 4. merely opening the confirmation URL does not consume the token;
-5. explicit `继续重置密码` establishes the recovery session and opens the new
-   password form;
-6. password update succeeds and the recovery session is cleared/signs out;
-7. the old/used token is rejected;
-8. an actually expired token is rejected with safe copy;
-9. after multiple reset requests, only the newest email is used;
-10. no raw Supabase error, token hash, access token, refresh token, or internal
+5. after landing, the address bar/history entry no longer retains `token_hash`;
+6. explicit `继续重置密码` establishes the recovery session and opens the new
+   password form without relying on the original PKCE verifier;
+7. password update succeeds and the recovery session is cleared/signs out;
+8. an old/used/expired/superseded token is rejected with safe non-overclaiming
+   copy and the user is directed to request a new link;
+9. direct entry to `/reset-password` without a recovery session reports missing
+   recovery context rather than claiming the link expired;
+10. after multiple reset requests, only the newest email is used;
+11. network failure is distinguishable from an invalid recovery credential;
+12. no raw Supabase error, token hash, access token, refresh token, or internal
     identity detail is rendered or logged.
 
 For the previously failing cross-device class, Supabase Auth logs should show a
-successful OTP verification/session creation rather than a `/verify` redirect
-that never completes the PKCE `/token` exchange.
+successful recovery OTP/TokenHash verification and session creation rather than
+a `/verify` redirect that never completes the original PKCE code exchange.
 
-## 5. Admission / issue status
+## 5. Local parity
+
+`supabase/config.toml` must bind the local Recovery template to
+`supabase/templates/recovery.html`. Local Mailpit/Supabase testing therefore
+uses the same fragment-based TokenHash structure as Hosted Trial. This parity is
+for testing only and does not configure or expose Production SMTP credentials.
+
+## 6. Admission / issue status
 
 ISSUE-001 remains **处理中** until the hosted Trial template is switched and the
 cross-browser/device verification above passes.
@@ -95,7 +112,7 @@ Trial deployment and sanitized verification evidence.
 
 Do not proceed to a new Major issue merely because the code branch builds.
 
-## 6. Rollback
+## 7. Rollback
 
 If the new flow fails after the hosted template switch:
 

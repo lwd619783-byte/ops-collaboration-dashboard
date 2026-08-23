@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   mapAuthError,
+  mapInviteAuthError,
   SAFE_ERROR_MESSAGES,
   createSafeAuthError,
   isRecoveryLinkError,
@@ -51,6 +52,23 @@ describe('认证错误安全映射', () => {
     expect(result.code).toBe('recovery_link_invalid')
     expect(result.message).toBe(SAFE_ERROR_MESSAGES.recovery_link_invalid)
     expect(result.message).toContain('可能已过期')
+  })
+
+  it('invite OTP 失效使用邀请专用文案，不误报为密码重置链接', () => {
+    const result = mapInviteAuthError(
+      authError('otp_expired', 'Token has expired or is invalid'),
+    )
+    expect(result.code).toBe('invite_link_invalid')
+    expect(result.message).toBe(SAFE_ERROR_MESSAGES.invite_link_invalid)
+    expect(result.message).toContain('邀请链接')
+    expect(result.message).not.toContain('重置')
+  })
+
+  it('invite OTP 网络失败仍使用统一网络安全文案', () => {
+    const result = mapInviteAuthError(new TypeError('Failed to fetch'))
+    expect(result.code).toBe('network_unavailable')
+    expect(result.message).toBe(SAFE_ERROR_MESSAGES.network_unavailable)
+    expect(result.message).not.toContain('Failed to fetch')
   })
 
   it('显式 recovery_link_expired 仍保留确定过期语义', () => {

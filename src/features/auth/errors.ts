@@ -19,6 +19,8 @@ export type AuthErrorCode =
   | 'recovery_context_missing'
   | 'recovery_link_invalid'
   | 'recovery_link_expired'
+  | 'invite_link_invalid'
+  | 'invite_link_expired'
   | 'password_too_weak'
   | 'identity_unavailable'
   | 'profile_read_failed'
@@ -44,6 +46,9 @@ export const SAFE_ERROR_MESSAGES: Record<AuthErrorCode, string> = {
   recovery_link_invalid:
     '此重置链接已失效，可能已过期、已使用或不是最新一封邮件中的链接，请重新申请。',
   recovery_link_expired: '此重置链接已过期，请重新申请。',
+  invite_link_invalid:
+    '此邀请链接已失效，可能已过期、已使用或不是最新一封邀请邮件中的链接，请联系管理员重新发送邀请。',
+  invite_link_expired: '此邀请链接已过期，请联系管理员重新发送邀请。',
   password_too_weak: '密码不符合最低强度要求，请重新设置。',
   identity_unavailable: '该账号尚未激活或暂不可使用，请联系系统管理员。',
   profile_read_failed: '无法读取个人资料，请稍后重试。',
@@ -148,6 +153,43 @@ export function mapAuthError(error: unknown): SafeAuthError {
   const message = extractErrorMessage(error)
   if (message && isNetworkLikeError(message)) {
     return createSafeAuthError('network_unavailable')
+  }
+
+  return unknownAuthError()
+}
+
+/**
+ * Invite TokenHash verification shares Supabase's OTP error codes with
+ * password recovery, but it must never tell an invitee that a password-reset
+ * link failed. Keep invite-specific one-time-token semantics at this public
+ * boundary while preserving safe network/error handling and never surfacing
+ * provider details.
+ */
+export function mapInviteAuthError(error: unknown): SafeAuthError {
+  if (error === null || error === undefined) {
+    return unknownAuthError()
+  }
+
+  const code = extractErrorCode(error)
+  if (
+    code === 'invite_link_invalid' ||
+    code === 'otp_expired' ||
+    code === 'invalid_otp'
+  ) {
+    return createSafeAuthError('invite_link_invalid')
+  }
+  if (code === 'invite_link_expired') {
+    return createSafeAuthError('invite_link_expired')
+  }
+
+  const message = extractErrorMessage(error)
+  if (message && isNetworkLikeError(message)) {
+    return createSafeAuthError('network_unavailable')
+  }
+
+  if (code) {
+    const mapped = mapByCode(code)
+    if (mapped) return mapped
   }
 
   return unknownAuthError()

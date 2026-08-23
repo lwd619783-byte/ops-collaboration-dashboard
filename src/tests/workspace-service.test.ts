@@ -3,6 +3,7 @@ import {
   acceptWorkspaceInvitation,
   inviteWorkspaceMember,
   listWorkspaceMembers,
+  setWorkspaceMemberStatus,
 } from '@/features/workspaces/workspaceService'
 import {
   createSupabaseClientMock,
@@ -56,6 +57,33 @@ describe('工作空间服务错误与幂等映射', () => {
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.error.code).toBe('network_unavailable')
+  })
+
+  it('恢复激活不满足数据库证据链时返回固定安全错误', async () => {
+    const supabase = createSupabaseClientMock()
+    supabase.rpc.mockImplementation(async (name: string) => {
+      if (name === 'set_workspace_member_status') {
+        return {
+          data: null,
+          error: { message: 'workspace_activation_recovery_unavailable' },
+        }
+      }
+      return { data: null, error: null }
+    })
+
+    const result = await setWorkspaceMemberStatus(
+      supabase.client,
+      FICTIONAL_WORKSPACE_ID,
+      '33333333-3333-4333-8333-333333333333',
+      'active',
+    )
+
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error).toEqual({
+      code: 'activation_recovery_unavailable',
+      message: '该成员当前不满足安全恢复条件，请核对其认证与邀请状态。',
+    })
   })
 
   it('接受 RPC 的 already_accepted 返回稳定幂等成功', async () => {

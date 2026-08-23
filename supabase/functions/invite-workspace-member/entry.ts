@@ -11,6 +11,7 @@
 
 import {
   createInviteWorkspaceMemberHandler,
+  type InvitationOperationKind,
   type PreparedInvitation,
 } from './handler.ts'
 import { resolveVerifiedProviderTenant } from './verified-issuer.ts'
@@ -27,6 +28,33 @@ export const MIN_INVITE_TTL_SECONDS = 300
 export const MAX_INVITE_TTL_SECONDS = 86400
 
 export const INVITE_TTL_ENV_NAME = 'APP_INVITE_TTL_SECONDS'
+
+const existingUserConflictCodes = new Set([
+  'user_already_exists',
+  'email_exists',
+  'identity_already_exists',
+])
+
+/**
+ * Hosted Supabase `inviteUserByEmail()` cannot reliably re-send an invite to
+ * an Auth user that already exists. For an existing-invitee reissue, those
+ * provider conflict codes are therefore a DELIVERY capability failure, not a
+ * permanent identity conflict. Downgrade only that exact combination to a
+ * recoverable temporary failure. New-user invitations keep the original
+ * conflict code and stable conflict semantics.
+ */
+export function mapAuthInviteErrorForOperation(
+  operationKind: InvitationOperationKind | undefined,
+  code: string,
+): string {
+  if (
+    operationKind === 'existing_invitee_reissue' &&
+    existingUserConflictCodes.has(code)
+  ) {
+    return 'temporary_failure'
+  }
+  return code
+}
 
 export type EntryEnvironment = {
   get(name: string): string | undefined
@@ -341,7 +369,7 @@ export function createInviteWorkspaceMemberEntry(
       }
       return { ok: true, data: result } as const
     },
-    async inviteAuthUser(input) {
+    async inviteAuthUser(input, operationKind) {
       const { data, error } = await adminClient.auth.admin.inviteUserByEmail(
         input.email,
         {
@@ -352,7 +380,13 @@ export function createInviteWorkspaceMemberEntry(
           },
         },
       )
-      if (error) return { ok: false, code: error.code ?? 'auth_invite_failed' }
+      if (error) {
+        const code = error.code ?? 'auth_invite_failed'
+        return {
+          ok: false,
+          code: mapAuthInviteErrorForOperation(operationKind, code),
+        }
+      }
       // The Auth Admin returned user ID is required for the reissue finalize
       // identity check. Missing or malformed IDs are safe temporary failures;
       // the ID is never returned to the browser or written to logs.

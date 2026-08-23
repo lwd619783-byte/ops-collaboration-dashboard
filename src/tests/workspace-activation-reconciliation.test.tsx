@@ -92,7 +92,7 @@ function renderMembers(value: WorkspaceContextValue) {
 }
 
 describe('工作空间激活断链恢复', () => {
-  it('只为没有有效 pending invitation 的 invited 成员提供显式恢复入口', async () => {
+  it('保留待重新邀请语义，并为没有有效 pending invitation 的 invited 成员提供条件性恢复入口', async () => {
     const user = userEvent.setup()
     const listMembers = vi.fn(async () => ({
       ok: true as const,
@@ -115,21 +115,23 @@ describe('工作空间激活断链恢复', () => {
     )!
     const pendingRow = screen.getByText('正常待激活成员').closest('tr')!
 
-    expect(within(recoverableRow).getByText('待恢复激活')).toBeInTheDocument()
+    expect(within(recoverableRow).getByText('待重新邀请')).toBeInTheDocument()
     expect(
-      within(recoverableRow).getByRole('button', { name: '恢复激活' }),
+      within(recoverableRow).getByRole('button', { name: '尝试恢复' }),
     ).toBeEnabled()
     expect(within(pendingRow).getByText('待激活')).toBeInTheDocument()
     expect(
-      within(pendingRow).queryByRole('button', { name: '恢复激活' }),
+      within(pendingRow).queryByRole('button', { name: '尝试恢复' }),
     ).toBeNull()
     expect(within(pendingRow).getByText('无可用操作')).toBeInTheDocument()
 
     await user.click(
-      within(recoverableRow).getByRole('button', { name: '恢复激活' }),
+      within(recoverableRow).getByRole('button', { name: '尝试恢复' }),
     )
-    const dialog = screen.getByRole('dialog', { name: '恢复成员激活' })
-    expect(dialog).toHaveTextContent('数据库确认该成员已完成认证')
+    const dialog = screen.getByRole('dialog', {
+      name: '尝试恢复成员激活',
+    })
+    expect(dialog).toHaveTextContent('普通邀请过期仍应重新发起邀请')
     await user.click(within(dialog).getByRole('button', { name: '确认恢复' }))
 
     await waitFor(() =>
@@ -158,16 +160,18 @@ describe('工作空间激活断链恢复', () => {
       'tr',
     )!
     await user.click(
-      within(recoverableRow).getByRole('button', { name: '恢复激活' }),
+      within(recoverableRow).getByRole('button', { name: '尝试恢复' }),
     )
-    const dialog = screen.getByRole('dialog', { name: '恢复成员激活' })
+    const dialog = screen.getByRole('dialog', {
+      name: '尝试恢复成员激活',
+    })
     await user.click(within(dialog).getByRole('button', { name: '确认恢复' }))
 
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(
       '该成员当前不满足安全恢复条件，请核对其认证与邀请状态。',
     )
     expect(
-      screen.getByRole('dialog', { name: '恢复成员激活' }),
+      screen.getByRole('dialog', { name: '尝试恢复成员激活' }),
     ).toBeInTheDocument()
   })
 
@@ -188,9 +192,9 @@ describe('工作空间激活断链恢复', () => {
     )
 
     const adminRow = (await screen.findByText('待恢复管理员')).closest('tr')!
-    expect(within(adminRow).getByText('待恢复激活')).toBeInTheDocument()
+    expect(within(adminRow).getByText('待重新邀请')).toBeInTheDocument()
     expect(
-      within(adminRow).queryByRole('button', { name: '恢复激活' }),
+      within(adminRow).queryByRole('button', { name: '尝试恢复' }),
     ).toBeNull()
     expect(within(adminRow).getByText('无可用操作')).toBeInTheDocument()
   })

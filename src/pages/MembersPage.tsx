@@ -42,7 +42,9 @@ const statusBadgeClasses = {
 
 function statusLabel(member: WorkspaceMember): string {
   if (member.status === 'invited') {
-    return member.pending_invitation ? '待激活' : '待恢复激活'
+    // An invited member without a live invitation still needs the normal
+    // re-invite path unless the guarded recovery action proves otherwise.
+    return member.pending_invitation ? '待激活' : '待重新邀请'
   }
   return statusLabels[member.status]
 }
@@ -339,7 +341,7 @@ export function MembersPage() {
                         size="sm"
                         variant="secondary"
                       >
-                        恢复激活
+                        尝试恢复
                       </Button>
                     ) : canManageTarget(member) ? (
                       <div className="member-actions">
@@ -497,7 +499,7 @@ export function MembersPage() {
         danger={statusTarget?.status === 'active'}
         description={
           statusTarget?.status === 'invited'
-            ? '系统只会在数据库确认该成员已完成认证、且邀请链属于可恢复异常时恢复其工作空间访问；不满足条件会安全拒绝。'
+            ? '若该成员已完成认证且邀请链属于可恢复异常，系统将恢复其工作空间访问；否则会安全拒绝。普通邀请过期仍应重新发起邀请。'
             : statusTarget?.status === 'suspended'
               ? '重新启用后，该成员将恢复与角色相符的工作空间访问权限。'
               : '停用后，该成员将立即失去此工作空间的读取和管理权限，但不会停用其全局账号。'
@@ -507,7 +509,7 @@ export function MembersPage() {
         open={Boolean(statusTarget)}
         title={
           statusTarget?.status === 'invited'
-            ? '恢复成员激活'
+            ? '尝试恢复成员激活'
             : statusTarget?.status === 'suspended'
               ? '重新启用成员'
               : '停用成员'

@@ -39,8 +39,21 @@ const authPaths = new Set<string>([
 ])
 
 const MAX_RETURN_TO_LENGTH = 2048
-const projectDetailPath =
-  /^\/projects\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?:\/edit)?$/iu
+const uuidSegment =
+  '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
+
+/**
+ * Dynamic protected routes that are safe return targets.
+ *
+ * Keep this deliberately closed over the routes that AppRouter actually
+ * exposes. In particular, do not accept arbitrary suffixes after a project or
+ * task id: the return target originates from browser/router state and remains
+ * an untrusted redirect input even though it must start with `/`.
+ */
+const projectScopedBusinessPath = new RegExp(
+  `^/projects/${uuidSegment}(?:/edit|/members|/tasks(?:/new|/${uuidSegment}(?:/edit)?)?)?$`,
+  'iu',
+)
 
 /**
  * Split `/path?query#hash` into its pathname part. Returns the leading `/path`
@@ -75,7 +88,7 @@ export function isSafeReturnTo(value: string): boolean {
   if (!pathname) return false
   if (pathname.includes(':')) return false
   if (authPaths.has(pathname)) return false
-  return businessPaths.has(pathname) || projectDetailPath.test(pathname)
+  return businessPaths.has(pathname) || projectScopedBusinessPath.test(pathname)
 }
 
 /** Normalize a candidate returnTo to a safe value; unsafe input → '/'. */

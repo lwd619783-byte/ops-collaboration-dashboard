@@ -392,7 +392,9 @@ describe('认证页面', () => {
       </MemoryRouter>,
     )
     expect(
-      await screen.findByText('重置密码链接无效或已过期，请重新申请。'),
+      await screen.findByText(
+        '当前浏览器没有有效的密码恢复会话，请从最新一封密码重置邮件重新进入。',
+      ),
     ).toBeInTheDocument()
     expect(supabase.updateUser).not.toHaveBeenCalled()
     expect(

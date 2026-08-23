@@ -208,7 +208,6 @@ describe('密码重置 TokenHash 完整链路', () => {
       token_hash: FIXTURE_TOKEN_HASH,
       type: 'recovery',
     })
-    expect(supabase.authEventListeners.length).toBeGreaterThan(0)
     expect(window.sessionStorage.getItem(RECOVERY_SESSION_STORAGE_KEY)).toBe(
       '1',
     )

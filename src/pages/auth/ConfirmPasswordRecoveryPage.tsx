@@ -92,10 +92,11 @@ export function ConfirmPasswordRecoveryPage({
     }
 
     try {
-      const { data, error: verifyError } = await resolution.client.auth.verifyOtp({
-        token_hash: tokenHash,
-        type: 'recovery',
-      })
+      const { data, error: verifyError } =
+        await resolution.client.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: 'recovery',
+        })
       if (verifyError) {
         return { ok: false, error: mapAuthError(verifyError) }
       }

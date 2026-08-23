@@ -241,7 +241,10 @@ describe('密码重置 TokenHash 完整链路', () => {
           path: '*',
           element: (
             <AppRouter
-              resolveClient={() => ({ status: 'ready', client: supabase.client })}
+              resolveClient={() => ({
+                status: 'ready',
+                client: supabase.client,
+              })}
             />
           ),
         },

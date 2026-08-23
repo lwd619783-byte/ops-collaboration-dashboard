@@ -16,9 +16,9 @@ describe('Hosted invite reissue fail-closed mapping', () => {
   )
 
   it('preserves stable existing-user conflicts for a new Auth invite', () => {
-    expect(mapAuthInviteErrorForOperation('new_auth_user_invite', 'email_exists')).toBe(
-      'email_exists',
-    )
+    expect(
+      mapAuthInviteErrorForOperation('new_auth_user_invite', 'email_exists'),
+    ).toBe('email_exists')
   })
 
   it('does not hide unrelated provider failures during a reissue', () => {

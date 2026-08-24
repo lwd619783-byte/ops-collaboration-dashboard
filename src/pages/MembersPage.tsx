@@ -42,9 +42,8 @@ const statusBadgeClasses = {
 
 function statusLabel(member: WorkspaceMember): string {
   if (member.status === 'invited') {
-    // Distinguish "awaiting activation" from an expired invitation that needs
-    // a controlled re-invite; the directory reports pending_invitation for
-    // memberships that still have a valid sent invitation.
+    // An invited member without a live invitation still needs the normal
+    // re-invite path unless the guarded recovery action proves otherwise.
     return member.pending_invitation ? '待激活' : '待重新邀请'
   }
   return statusLabels[member.status]
@@ -126,6 +125,19 @@ export function MembersPage() {
 
   const canManageTarget = (member: WorkspaceMember) => {
     if (!canManage || member.role === 'owner' || member.status === 'invited') {
+      return false
+    }
+    if (actorRole === 'admin' && member.role === 'admin') return false
+    return true
+  }
+
+  const canRecoverActivation = (member: WorkspaceMember) => {
+    if (
+      !canManage ||
+      member.role === 'owner' ||
+      member.status !== 'invited' ||
+      member.pending_invitation
+    ) {
       return false
     }
     if (actorRole === 'admin' && member.role === 'admin') return false
@@ -221,8 +233,11 @@ export function MembersPage() {
     if (!current || !statusTarget || isMutating) return
     setMutating(true)
     setMutationError(null)
+    const previousStatus = statusTarget.status
     const nextStatus =
-      statusTarget.status === 'suspended' ? 'active' : 'suspended'
+      previousStatus === 'invited' || previousStatus === 'suspended'
+        ? 'active'
+        : 'suspended'
     const result = await workspace.setMemberStatus(
       current.workspace_id,
       statusTarget.user_id,
@@ -235,7 +250,13 @@ export function MembersPage() {
     }
     setStatusTarget(null)
     setMutating(false)
-    setFeedback(nextStatus === 'active' ? '成员已重新启用。' : '成员已停用。')
+    setFeedback(
+      previousStatus === 'invited'
+        ? '成员激活状态已恢复。'
+        : nextStatus === 'active'
+          ? '成员已重新启用。'
+          : '成员已停用。',
+    )
     await loadMembers()
   }
 
@@ -311,7 +332,18 @@ export function MembersPage() {
                 </td>
                 {canManage && (
                   <td>
-                    {canManageTarget(member) ? (
+                    {canRecoverActivation(member) ? (
+                      <Button
+                        onClick={() => {
+                          setMutationError(null)
+                          setStatusTarget(member)
+                        }}
+                        size="sm"
+                        variant="secondary"
+                      >
+                        尝试恢复
+                      </Button>
+                    ) : canManageTarget(member) ? (
                       <div className="member-actions">
                         <Button
                           onClick={() => {
@@ -457,22 +489,30 @@ export function MembersPage() {
         confirmLabel={
           isMutating
             ? '正在处理'
-            : statusTarget?.status === 'suspended'
-              ? '确认启用'
-              : '确认停用'
+            : statusTarget?.status === 'invited'
+              ? '确认恢复'
+              : statusTarget?.status === 'suspended'
+                ? '确认启用'
+                : '确认停用'
         }
         confirmLoading={isMutating}
-        danger={statusTarget?.status !== 'suspended'}
+        danger={statusTarget?.status === 'active'}
         description={
-          statusTarget?.status === 'suspended'
-            ? '重新启用后，该成员将恢复与角色相符的工作空间访问权限。'
-            : '停用后，该成员将立即失去此工作空间的读取和管理权限，但不会停用其全局账号。'
+          statusTarget?.status === 'invited'
+            ? '若该成员已完成认证且邀请链属于可恢复异常，系统将恢复其工作空间访问；否则会安全拒绝。普通邀请过期仍应重新发起邀请。'
+            : statusTarget?.status === 'suspended'
+              ? '重新启用后，该成员将恢复与角色相符的工作空间访问权限。'
+              : '停用后，该成员将立即失去此工作空间的读取和管理权限，但不会停用其全局账号。'
         }
         onClose={() => !isMutating && setStatusTarget(null)}
         onConfirm={() => void submitStatusChange()}
         open={Boolean(statusTarget)}
         title={
-          statusTarget?.status === 'suspended' ? '重新启用成员' : '停用成员'
+          statusTarget?.status === 'invited'
+            ? '尝试恢复成员激活'
+            : statusTarget?.status === 'suspended'
+              ? '重新启用成员'
+              : '停用成员'
         }
       >
         {mutationError && (

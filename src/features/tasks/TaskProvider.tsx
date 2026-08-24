@@ -9,6 +9,7 @@ import {
   createTaskProgressUpdate,
   getTask,
   listProjectTasks,
+  listMyTasks,
   listTaskStatusHistory,
   listTaskUpdates,
   listTaskReviews,
@@ -59,6 +60,8 @@ export function TaskProvider({
       get: (taskId: string) => withClient((client) => getTask(client, taskId)),
       list: (input: Parameters<typeof listProjectTasks>[1]) =>
         withClient((client) => listProjectTasks(client, input)),
+      listMine: (input: Parameters<typeof listMyTasks>[1]) =>
+        withClient((client) => listMyTasks(client, input)),
       listCandidates: (projectId: string) =>
         withClient((client) => listTaskAssignmentCandidates(client, projectId)),
       create: (input: Parameters<typeof createTask>[1]) =>

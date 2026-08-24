@@ -16,6 +16,7 @@ import { EditProjectPage } from '@/pages/EditProjectPage'
 import { EditTaskPage } from '@/pages/EditTaskPage'
 import { HomePage } from '@/pages/HomePage'
 import { MembersPage } from '@/pages/MembersPage'
+import { MyTasksPage } from '@/pages/MyTasksPage'
 import { NewProjectPage } from '@/pages/NewProjectPage'
 import { NewTaskPage } from '@/pages/NewTaskPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
@@ -103,6 +104,7 @@ export function AppRouter({ resolveClient }: AppRouterProps) {
                           item.path !== '/system-health' &&
                           item.path !== '/settings' &&
                           item.path !== '/members' &&
+                          item.path !== '/tasks' &&
                           item.path !== '/projects',
                       )
                       .map((item) => (
@@ -120,6 +122,7 @@ export function AppRouter({ resolveClient }: AppRouterProps) {
                       />
                     ))}
                     <Route path="/projects" element={<ProjectsPage />} />
+                    <Route path="/tasks" element={<MyTasksPage />} />
                     <Route path="/projects/new" element={<NewProjectPage />} />
                     <Route
                       path="/projects/:projectId"

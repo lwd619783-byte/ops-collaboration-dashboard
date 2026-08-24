@@ -6,6 +6,8 @@ import type {
   TaskBlockInput,
   TaskCreateInput,
   TaskListInput,
+  MyTaskListInput,
+  MyTaskSummary,
   TaskProgressInput,
   TaskProgressResult,
   TaskProgressUpdate,
@@ -23,6 +25,9 @@ import type {
 export type TaskContextValue = {
   get: (taskId: string) => Promise<TaskServiceResult<Task>>
   list: (input: TaskListInput) => Promise<TaskServiceResult<TaskSummary[]>>
+  listMine: (
+    input: MyTaskListInput,
+  ) => Promise<TaskServiceResult<MyTaskSummary[]>>
   listCandidates: (
     projectId: string,
   ) => Promise<TaskServiceResult<TaskAssignmentCandidate[]>>

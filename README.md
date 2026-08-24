@@ -1,6 +1,6 @@
 # 运维协同看板
 
-> Task 0.1–3.5 已完成远端独立审计、PR CI 和 Squash 合并，Stage 3 Web Core MVP 已封板。当前处于 Stage 3.9 网页受控试运行准备与部署：Trial Supabase / Vercel 已建立并部署，Recovery Drill 已完成；最终全量 Trial Smoke/E2E Rerun 尚未执行，Trial Admission 尚未评估，Production 尚未配置。Task 3.9.1 historical baseline statement：该任务当时只建立 local / trial / production 边界、部署门禁和 runbook，不代表当时已有 Trial 或 Production 部署。业务身份仍只通过 `current_app_user_id()` 解析，浏览器不持有高权限凭据。
+> Task 0.1–3.5 已完成远端独立审计、PR CI 和 Squash 合并，Stage 3 Web Core MVP 已封板。当前 Stage 4.1 功能分支正在增加首页工作台 V1、跨项目“我的任务”V1 与数据库权威的 `list_my_tasks` 只读 RPC；该分支仍需 exact-head CI 和远端独立审计。Trial Supabase / Vercel 已建立并部署，Recovery Drill 已完成，Production 尚未配置。业务身份仍只通过 `current_app_user_id()` 解析，浏览器不持有高权限凭据。
 
 一个面向互联网部署的轻量化运维协同看板前端工程。
 
@@ -10,11 +10,11 @@
 
 Task 0.1 至 Task 1.4 已建立前端、数据库、统一身份、网页登录与工作空间权限基线。Task 2.1–2.3 已完成项目 CRUD、项目成员/牵头人和有序模块；Task 3.1–3.5 已完成共享任务、只读浏览、受控状态机、每日进展和提交/退回/通过验收闭环。详见 [工作空间与成员权限](docs/workspace-permissions.md)、[项目 CRUD、可见性与归档 V1](docs/project-crud-and-visibility.md)、[项目成员与牵头人 V1](docs/project-membership-and-lead.md)、[项目工作模块 V1](docs/project-modules.md)、[任务数据模型与创建编辑 V1](docs/task-data-model-and-editing.md)、[任务看板与列表 V1](docs/task-board-and-list.md)、[任务状态流转与阻塞 V1](docs/task-status-transitions.md)、[每日任务进展与进度同步 V1](docs/task-daily-progress.md) 和 [任务提交验收、通过与退回 V1](docs/task-review-closure.md)。
 
-当前仍处于 Stage 3.9。Trial Supabase / Vercel 已建立并部署；Task 3.9.3 的真实 Recovery Drill 已完成并建立 `TRIAL-RECOVERY-001` 关闭条件，但最终全量 Trial Smoke/E2E Rerun 尚未执行，Trial Admission 仍未评估。仓库提供的 Local Database Credential Bootstrap V1 仅是 Windows 本机 operator tooling：它用 CurrentUser + CurrentMachine DPAPI 在仓库外保护 Trial/Recovery 数据库密码并准备 Recovery CA/TLS 上下文，不授予 write、migration、PLAN 或 APPLY 权限。Production Supabase/Vercel 仍未创建或配置。
+Stage 4.1 功能分支已实现首页个人工作台与 `/tasks` 跨项目任务中心，复用同一个 `list_my_tasks(p_workspace_id)` RPC，并以现有项目/任务权限函数限制责任任务范围；功能分支完成不等于独立审计通过或主分支封板。Trial Supabase / Vercel 已建立并部署；仓库提供的 Local Database Credential Bootstrap V1 仅是 Windows 本机 operator tooling，不授予 write、migration、PLAN 或 APPLY 权限。Production Supabase/Vercel 仍未创建或配置。
 
 ## 第一阶段边界
 
-当前数据库包含健康检查、统一身份、工作空间权限以及项目、成员、有序模块、项目任务、受控任务状态机、状态历史、追加式每日进展和验收记录。前端已提供邮箱密码登录、密码恢复、个人资料、工作空间门禁、成员目录、邀请激活，项目列表 / 创建 / 详情 / 编辑 / 归档 / 成员管理 / 工作模块闭环，以及任务创建 / 详情 / 核心元数据编辑、项目级只读任务看板 / 列表、任务详情 start / block / resume / cancel、每日进展、提交验收、通过、退回和授权时间线。当前仍不含通知 / 提醒、已完成重开、Stage 4 工作台、微信小程序、CloudBase 业务桥接、归档恢复或物理删除，也不扩大工作空间所有权、邀请、账号绑定、外部平台、生产 SMTP 或远端部署边界。
+当前数据库包含健康检查、统一身份、工作空间权限以及项目、成员、有序模块、项目任务、受控任务状态机、状态历史、追加式每日进展、验收记录和跨项目个人责任任务只读 RPC。前端已提供邮箱密码登录、密码恢复、个人资料、工作空间门禁、成员目录、邀请激活，项目闭环、任务核心闭环、首页个人工作台和 `/tasks` 个人任务中心。当前仍不含通知 / 提醒、已完成重开、管理者综合工作台、团队负荷、微信小程序、CloudBase 业务桥接、归档恢复或物理删除，也不扩大工作空间所有权、邀请、账号绑定、外部平台、生产 SMTP 或远端部署边界。
 
 ## 技术栈
 
@@ -107,4 +107,4 @@ Trial Vercel 必须与未来 Production 分离。构建命令为 `npm run build`
 
 ## 当前未实现功能
 
-本仓库已实现身份、认证、工作空间成员权限 V1、项目 CRUD / 可见性 / 归档 V1、项目成员 / 牵头人 V1、项目工作模块 V1，以及 Task 3.1–3.5 的任务创建、浏览、状态、进展和验收闭环；但**尚未实现或执行**最终全量 Trial Smoke/E2E Rerun（Trial 环境已建立并部署，Recovery Drill 已完成；剩余 Smoke/E2E 与准入尚未执行）、公开注册、项目邀请 / 审批、拖拽状态修改、已完成重开、通知 / 提醒、Stage 4 workspace / 全局“我的任务”工作台、私人任务 / 个人空间、归档恢复或物理删除、工作空间所有权转移 / 删除、成员永久删除、批量项目成员操作、完整邀请撤销 / 重发界面、确认 Auth 用户跨工作空间自动加入、微信小程序、CloudBase 业务桥接、飞书、通用审计日志、生产 SMTP、Vercel Production 配置或 Production Supabase 部署。这些能力只能在新的、明确授权的任务中增加。
+本仓库已实现身份、认证、工作空间成员权限 V1、项目 CRUD / 可见性 / 归档 V1、项目成员 / 牵头人 V1、项目工作模块 V1、Task 3.1–3.5 任务核心闭环，以及 Stage 4.1 首页个人工作台和跨项目“我的任务”V1；但**尚未实现或执行**公开注册、项目邀请 / 审批、拖拽状态修改、已完成重开、通知 / 提醒、管理者综合工作台、团队负荷、私人任务 / 个人空间、归档恢复或物理删除、工作空间所有权转移 / 删除、成员永久删除、批量项目成员操作、完整邀请撤销 / 重发界面、确认 Auth 用户跨工作空间自动加入、微信小程序、CloudBase 业务桥接、飞书、通用审计日志、生产 SMTP、Vercel Production 配置或 Production Supabase 部署。这些能力只能在新的、明确授权的任务中增加。

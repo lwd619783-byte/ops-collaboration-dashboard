@@ -1,6 +1,20 @@
 export { TaskProvider } from '@/features/tasks/TaskProvider'
 export { TaskForm } from '@/features/tasks/TaskForm'
+export { MyTaskCard } from '@/features/tasks/MyTaskCard'
 export { useTasks } from '@/features/tasks/TaskContext'
+export { useScopedMyTasks } from '@/features/tasks/useScopedMyTasks'
+export type { MyTasksScope } from '@/features/tasks/useScopedMyTasks'
+export {
+  compareMyTasks,
+  filterMyTasks,
+  hasExecutionResponsibility,
+  isMyTaskActionable,
+  isMyTaskView,
+  myTaskViewLabels,
+  myTaskViews,
+  sortMyTasks,
+} from '@/features/tasks/myTaskList'
+export type { MyTaskView } from '@/features/tasks/myTaskList'
 export type { TaskContextValue } from '@/features/tasks/TaskContext'
 export type {
   Task,
@@ -10,6 +24,8 @@ export type {
   TaskExecutionAction,
   TaskFormValues,
   TaskListInput,
+  MyTaskListInput,
+  MyTaskSummary,
   TaskPerson,
   TaskProgressFormValues,
   TaskProgressInput,

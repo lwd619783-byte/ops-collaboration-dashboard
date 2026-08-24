@@ -1,4 +1,5 @@
 export { ProjectProvider } from '@/features/projects/ProjectProvider'
+export { ProjectStatusBadge } from '@/features/projects/ProjectStatusBadge'
 export { useProjects } from '@/features/projects/ProjectContext'
 export type { ProjectContextValue } from '@/features/projects/ProjectContext'
 export type {

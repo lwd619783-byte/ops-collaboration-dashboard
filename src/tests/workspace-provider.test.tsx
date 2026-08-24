@@ -173,7 +173,7 @@ describe('工作空间路由门禁', () => {
     expect(
       await screen.findByRole('heading', {
         level: 2,
-        name: '协作界面已准备就绪',
+        name: '工作台',
       }),
     ).toBeInTheDocument()
     expect(screen.queryByText('激活工作空间账号')).toBeNull()

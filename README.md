@@ -1,6 +1,6 @@
 # 运维协同看板
 
-> Task 0.1–3.5 已完成远端独立审计、PR CI 和 Squash 合并，Stage 3 Web Core MVP 已封板。当前 Stage 4.1 功能分支正在增加首页工作台 V1、跨项目“我的任务”V1 与数据库权威的 `list_my_tasks` 只读 RPC；该分支仍需 exact-head CI 和远端独立审计。Trial Supabase / Vercel 已建立并部署，Recovery Drill 已完成，Production 尚未配置。业务身份仍只通过 `current_app_user_id()` 解析，浏览器不持有高权限凭据。
+> Task 0.1–3.5 已完成远端独立审计、PR CI 和 Squash 合并，Stage 3 Web Core MVP 已封板。Stage 4.1 已完成首页工作台 V1、跨项目“我的任务”V1 与数据库权威的 `list_my_tasks(p_workspace_id)` 只读 RPC 代码实现；Stage 4.1 migration 尚未部署到 Trial，Hosted Trial 真实浏览器验证仍为 PENDING。Stage 3.9 最终全量 Trial Smoke/E2E Rerun 仍为 PENDING，Trial Admission 仍为 NOT ADMITTED，尚未完成正式准入封板。Trial Supabase / Vercel 已建立并部署，Recovery Drill 已完成，Production 尚未配置。业务身份仍只通过 `current_app_user_id()` 解析，浏览器不持有高权限凭据。
 
 一个面向互联网部署的轻量化运维协同看板前端工程。
 
@@ -10,7 +10,7 @@
 
 Task 0.1 至 Task 1.4 已建立前端、数据库、统一身份、网页登录与工作空间权限基线。Task 2.1–2.3 已完成项目 CRUD、项目成员/牵头人和有序模块；Task 3.1–3.5 已完成共享任务、只读浏览、受控状态机、每日进展和提交/退回/通过验收闭环。详见 [工作空间与成员权限](docs/workspace-permissions.md)、[项目 CRUD、可见性与归档 V1](docs/project-crud-and-visibility.md)、[项目成员与牵头人 V1](docs/project-membership-and-lead.md)、[项目工作模块 V1](docs/project-modules.md)、[任务数据模型与创建编辑 V1](docs/task-data-model-and-editing.md)、[任务看板与列表 V1](docs/task-board-and-list.md)、[任务状态流转与阻塞 V1](docs/task-status-transitions.md)、[每日任务进展与进度同步 V1](docs/task-daily-progress.md) 和 [任务提交验收、通过与退回 V1](docs/task-review-closure.md)。
 
-Stage 4.1 功能分支已实现首页个人工作台与 `/tasks` 跨项目任务中心，复用同一个 `list_my_tasks(p_workspace_id)` RPC，并以现有项目/任务权限函数限制责任任务范围；功能分支完成不等于独立审计通过或主分支封板。Trial Supabase / Vercel 已建立并部署；仓库提供的 Local Database Credential Bootstrap V1 仅是 Windows 本机 operator tooling，不授予 write、migration、PLAN 或 APPLY 权限。Production Supabase/Vercel 仍未创建或配置。
+Stage 4.1 已实现首页个人工作台与 `/tasks` 跨项目任务中心，复用同一个 `list_my_tasks(p_workspace_id)` 只读 RPC，并以现有项目/任务权限函数限制责任任务范围。这里的“已实现”仅表示代码实现完成：对应 migration 尚未部署到 Trial，Hosted Trial 真实浏览器验证仍为 PENDING，不代表 Stage 4.1 已完成 Trial 验证。Stage 3.9 最终全量 Trial Smoke/E2E Rerun 仍为 PENDING，Trial Admission 仍为 NOT ADMITTED；Recovery Drill 已完成。Trial Supabase / Vercel 已建立并部署；仓库提供的 Local Database Credential Bootstrap V1 仅是 Windows 本机 operator tooling，不授予 write、migration、PLAN 或 APPLY 权限。Production Supabase/Vercel 仍未创建或配置。
 
 ## 第一阶段边界
 

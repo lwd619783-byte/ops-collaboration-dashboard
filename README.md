@@ -101,9 +101,11 @@ src/
 
 本仓库不接受真实业务数据、人员或单位信息、内部材料、IP/内部域名、日志、Cookie、Token、密码、私钥、API Key 或本机绝对路径。提交前遵循 [公开开发流程](docs/public-development-workflow.md)。
 
-## Vercel 部署
+## Trial 前端部署
 
-Trial Vercel 必须与未来 Production 分离。构建命令为 `npm run build`，输出目录为 `dist`；`vercel.json` 为 React Router 的直接访问提供 SPA 回退。Vercel 只允许配置 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_PUBLISHABLE_KEY` 两项 browser-safe 变量。Trial 部署已由 Task 3.9.2 的已授权人员按 [runbook](docs/trial-deployment.md) 发起并完成；本仓库不执行部署，也不为当前状态配置 Production Vercel。Task 3.9.1 historical baseline statement：该任务当时未创建 Vercel 项目、未配置远端变量，也未部署 Production。
+Trial Vercel 必须与未来 Production 分离。构建命令为 `npm run build`，输出目录为 `dist`；`vercel.json` 为 React Router 的直接访问提供 SPA 回退。Vercel 只允许配置 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_PUBLISHABLE_KEY` 两项 browser-safe 变量。Trial Vercel 部署已由 Task 3.9.2 的已授权人员按 [runbook](docs/trial-deployment.md) 发起并完成；本仓库不为当前状态配置 Production Vercel。Task 3.9.1 historical baseline statement：该任务当时未创建 Vercel 项目、未配置远端变量，也未部署 Production。
+
+CloudBase 国内 Trial 只承载同一份静态前端；Supabase 仍是唯一权威业务后端。`.github/workflows/cloudbase-trial-deploy.yml` 仅在 `main` push 时使用 GitHub Repository Secrets 重建 Trial 产物并发布到 CloudBase 静态托管根目录；Pull Request 只执行非部署验证，feature branch 不登录、不上传、不发布。流水线固定使用实施时 npm `latest` 稳定版 `@cloudbase/cli@3.8.1`（非 beta / alpha / rc）。这是 Trial 机制，不是 Production 自动部署；实际自动发布是否成功，必须以审计、PR 和 Squash Merge 后首次准确 `main` workflow run 为验收依据，当前不记录 `CloudBase Auto Deploy PASS`。
 
 ## 当前未实现功能
 

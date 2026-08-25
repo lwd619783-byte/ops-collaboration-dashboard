@@ -1,0 +1,92 @@
+name: CloudBase Trial deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate CloudBase Trial deploy
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.0
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run project checks
+        run: npm run check
+
+  deploy:
+    name: Deploy CloudBase Trial frontend
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: cloudbase-trial-deploy-main
+      cancel-in-progress: true
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.0
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run project checks
+        run: npm run check
+      - name: Fail closed if deployment secrets are missing
+        shell: bash
+        env:
+          TCB_ENV_ID: ${{ secrets.TCB_ENV_ID }}
+          TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
+          TCB_SECRET_KEY: ${{ secrets.TCB_SECRET_KEY }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          test -n "$TCB_ENV_ID"
+          test -n "$TCB_SECRET_ID"
+          test -n "$TCB_SECRET_KEY"
+          test -n "$VITE_SUPABASE_URL"
+          test -n "$VITE_SUPABASE_PUBLISHABLE_KEY"
+      - name: Build CloudBase Trial frontend
+        env:
+          VITE_APP_NAME: 运维协同看板
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: npm run build
+      - name: Verify deployment artifact
+        shell: bash
+        run: |
+          test -d dist
+          test -f dist/index.html
+      - name: Install pinned CloudBase CLI
+        run: npm install --global @cloudbase/cli@3.8.1
+      - name: Verify CloudBase CLI version
+        run: tcb --version
+      - name: Log in to CloudBase
+        env:
+          TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
+          TCB_SECRET_KEY: ${{ secrets.TCB_SECRET_KEY }}
+        run: tcb login --apiKeyId "$TCB_SECRET_ID" --apiKey "$TCB_SECRET_KEY"
+      - name: Deploy static frontend to CloudBase Trial
+        env:
+          TCB_ENV_ID: ${{ secrets.TCB_ENV_ID }}
+        run: tcb hosting deploy ./dist -e "$TCB_ENV_ID"

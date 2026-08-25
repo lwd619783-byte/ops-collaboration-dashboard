@@ -77,6 +77,23 @@ export type TaskListInput = {
   workspaceId: string
 }
 
+type GeneratedMyTaskSummary =
+  Database['public']['Functions']['list_my_tasks']['Returns'][number]
+
+export type MyTaskSummary = Omit<
+  GeneratedMyTaskSummary,
+  'collaborators' | 'due_date' | 'start_date'
+> & {
+  collaborators: TaskPerson[]
+  due_date: string | null
+  start_date: string | null
+}
+
+export type MyTaskListInput = {
+  appUserId: string
+  workspaceId: string
+}
+
 export type TaskAssignmentCandidate =
   Database['public']['Functions']['list_task_assignment_candidates']['Returns'][number]
 

@@ -232,6 +232,7 @@ function taskValue(
       error: { code: 'not_found_or_forbidden' as const, message: '不可用' },
     })),
     list: vi.fn(async () => ({ ok: true as const, data: rows })),
+    listMine: vi.fn(async () => ({ ok: true as const, data: [] })),
     listCandidates: vi.fn(async () => ({ ok: true as const, data: [] })),
     create: vi.fn(async () => ({
       ok: false as const,

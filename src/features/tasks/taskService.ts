@@ -13,6 +13,8 @@ import {
 } from '@/features/tasks/taskMeta'
 import type {
   Task,
+  MyTaskListInput,
+  MyTaskSummary,
   TaskAssignmentCandidate,
   TaskBlockInput,
   TaskCreateInput,
@@ -203,6 +205,109 @@ function parseTaskSummaries(
     ) {
       return invalidPayload()
     }
+    taskIds.add(row.task_id)
+  }
+  return { ok: true, data: rows }
+}
+
+function parseMyTaskSummary(
+  value: unknown,
+  input: MyTaskListInput,
+): MyTaskSummary | null {
+  if (!isRecord(value)) return null
+  const collaborators = parsePeople(value.collaborators)
+  if (
+    !isUuid(value.task_id) ||
+    !isUuid(value.workspace_id) ||
+    !isUuid(value.project_id) ||
+    !isString(value.project_name) ||
+    value.project_name.trim().length === 0 ||
+    !isUuid(value.module_id) ||
+    !isString(value.module_name) ||
+    value.module_name.trim().length === 0 ||
+    !isString(value.title) ||
+    value.title.trim() !== value.title ||
+    value.title.length === 0 ||
+    value.title.length > 200 ||
+    !isTaskStatus(value.status) ||
+    !isTaskPriority(value.priority) ||
+    typeof value.progress !== 'number' ||
+    !Number.isInteger(value.progress) ||
+    value.progress < 0 ||
+    value.progress > 100 ||
+    !isNullableDateOnly(value.start_date) ||
+    !isNullableDateOnly(value.due_date) ||
+    !isTimestamp(value.updated_at) ||
+    !isUuid(value.assignee_id) ||
+    !isString(value.assignee_display_name) ||
+    value.assignee_display_name.trim().length === 0 ||
+    !isUuid(value.reviewer_id) ||
+    !isString(value.reviewer_display_name) ||
+    value.reviewer_display_name.trim().length === 0 ||
+    collaborators === null ||
+    collaborators.some((person) => person.app_user_id === value.assignee_id) ||
+    typeof value.is_assignee !== 'boolean' ||
+    typeof value.is_collaborator !== 'boolean' ||
+    typeof value.is_reviewer !== 'boolean' ||
+    typeof value.can_decide_review !== 'boolean'
+  ) {
+    return null
+  }
+  if (
+    value.workspace_id !== input.workspaceId ||
+    value.is_assignee !== (value.assignee_id === input.appUserId) ||
+    value.is_collaborator !==
+      collaborators.some((person) => person.app_user_id === input.appUserId) ||
+    value.is_reviewer !== (value.reviewer_id === input.appUserId) ||
+    (value.is_reviewer && !value.can_decide_review) ||
+    (!value.is_assignee &&
+      !value.is_collaborator &&
+      !value.is_reviewer &&
+      !(value.status === 'pending_review' && value.can_decide_review)) ||
+    (value.start_date !== null &&
+      value.due_date !== null &&
+      value.due_date < value.start_date)
+  ) {
+    return null
+  }
+
+  return {
+    assignee_display_name: value.assignee_display_name,
+    assignee_id: value.assignee_id,
+    can_decide_review: value.can_decide_review,
+    collaborators,
+    due_date: value.due_date,
+    is_assignee: value.is_assignee,
+    is_collaborator: value.is_collaborator,
+    is_reviewer: value.is_reviewer,
+    module_id: value.module_id,
+    module_name: value.module_name,
+    priority: value.priority,
+    progress: value.progress,
+    project_id: value.project_id,
+    project_name: value.project_name,
+    reviewer_display_name: value.reviewer_display_name,
+    reviewer_id: value.reviewer_id,
+    start_date: value.start_date,
+    status: value.status,
+    task_id: value.task_id,
+    title: value.title,
+    updated_at: value.updated_at,
+    workspace_id: value.workspace_id,
+  }
+}
+
+function parseMyTaskSummaries(
+  value: unknown,
+  input: MyTaskListInput,
+): TaskServiceResult<MyTaskSummary[]> {
+  if (!Array.isArray(value)) return invalidPayload()
+  const parsed = value.map((row) => parseMyTaskSummary(row, input))
+  if (parsed.some((row) => row === null)) return invalidPayload()
+  const rows = parsed as MyTaskSummary[]
+  const taskIds = new Set<string>()
+  for (const row of rows) {
+    if (taskIds.has(row.task_id)) return invalidPayload()
     taskIds.add(row.task_id)
   }
   return { ok: true, data: rows }
@@ -889,6 +994,21 @@ export async function listProjectTasks(
     })
     if (error) return { ok: false, error: mapTaskError(error) }
     return parseTaskSummaries(data, input)
+  } catch (error) {
+    return { ok: false, error: mapTaskError(error) }
+  }
+}
+
+export async function listMyTasks(
+  client: SupabaseClient<Database>,
+  input: MyTaskListInput,
+): Promise<TaskServiceResult<MyTaskSummary[]>> {
+  try {
+    const { data, error } = await client.rpc('list_my_tasks', {
+      p_workspace_id: input.workspaceId,
+    })
+    if (error) return { ok: false, error: mapTaskError(error) }
+    return parseMyTaskSummaries(data, input)
   } catch (error) {
     return { ok: false, error: mapTaskError(error) }
   }

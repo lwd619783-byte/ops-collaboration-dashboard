@@ -298,6 +298,7 @@ function taskValue(
   return {
     get: vi.fn(async () => ({ ok: true as const, data: task })),
     list: vi.fn(async () => ({ ok: true as const, data: [] })),
+    listMine: vi.fn(async () => ({ ok: true as const, data: [] })),
     listCandidates: vi.fn(async () => ({
       ok: true as const,
       data: candidates,

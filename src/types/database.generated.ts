@@ -1397,6 +1397,33 @@ export type Database = {
           workspace_name: string
         }[]
       }
+      list_my_tasks: {
+        Args: { p_workspace_id: string }
+        Returns: {
+          assignee_display_name: string
+          assignee_id: string
+          can_decide_review: boolean
+          collaborators: Json
+          due_date: string
+          is_assignee: boolean
+          is_collaborator: boolean
+          is_reviewer: boolean
+          module_id: string
+          module_name: string
+          priority: Database["public"]["Enums"]["task_priority"]
+          progress: number
+          project_id: string
+          project_name: string
+          reviewer_display_name: string
+          reviewer_id: string
+          start_date: string
+          status: Database["public"]["Enums"]["task_status"]
+          task_id: string
+          title: string
+          updated_at: string
+          workspace_id: string
+        }[]
+      }
       list_my_workspaces: {
         Args: never
         Returns: {

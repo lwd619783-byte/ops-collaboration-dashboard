@@ -15,7 +15,7 @@ PRODUCTION NOT CONFIGURED
 
 - Trial deployment：已完成（独立 Supabase Trial 与 Vercel Trial 已建立并部署）；
 - Recovery Drill：已完成（`TRIAL-RECOVERY-001` 关闭条件已建立，见第 13 节）；
-- Final Task 3.9.3-R6 Trial Smoke/E2E：已执行；真实邀请激活链路存在 1 个 Blocker，核心多用户闭环未能继续；
+- Final Task 3.9.3-R7 Trial Smoke/E2E：已执行；Hosted Trial 部署来源追溯与实际入口安全响应头存在 2 个 Blocker，写入型核心多用户闭环按 fail-closed 门禁未启动；
 - Trial Admission：NOT ADMITTED；
 - Production：NOT CONFIGURED。
 
@@ -492,6 +492,49 @@ TRIAL ADMISSION: NOT ADMITTED
 
 F1 未执行直接 Trial PostgreSQL 写入、db push、migration apply/repair/up、reset、restore、Recovery/Production mutation、SMTP 配置、Edge/Vercel redeploy、PR、merge 或 force push；未在文档中记录 project ref、Hosted URL、邮箱、token、OTP、用户 ID、IP、请求 ID、数据库 hostname、credential path 或 Auth raw log。
 
+### Task 3.9.3-R7 最终 Trial Smoke/E2E Rerun 脱敏结果（2026-08-25）
+
+R7 从准确 `origin/main` 基线 `9f14bda8cd77901984adbd0d7363535970a49344` 开始，在分支 `test/task-3.9.3-r7-final-trial-admission` 执行。执行前确认 live remote main、本地 main tracking ref、merge-base 与工作树一致，且 Frontend、Database、Edge Function 三组 push CI 均绑定该准确 SHA 并成功。Node.js `v22.23.2`、npm `10.9.8`、仓库锁定的 Supabase CLI `2.110.0` 参与验证。
+
+本地与只读远端门禁通过：`npm ci`、`npm run security:audit`、`npm run check`、`npm run test:edge`、operator credential verifier、`npm run db:verify` 与 diff check 全部 PASS；Trial target、Session Pooler 5432、TLS 与 24 项 local/remote migration 完全一致，末项为 `20260824125359`；deployed `invite-workspace-member` 为 active version 4、JWT verification enabled，去除注释与格式差异后与当前 main 的可执行语义一致；Production 保持 `NOT CONFIGURED`，operator database session 已清除，WRITE/APPLY authorization 均未授予。
+
+前置 Hosted gate 建立了确定性分叉：授权 Vercel Trial project 上存在 source branch `main`、准确 SHA `9f14bda8cd77901984adbd0d7363535970a49344` 且状态为 READY 的 deployment，授权稳定入口返回 200 并包含全部 6 项强制安全响应头；但 Hosted Auth 当前 Site URL 分类为 `NON_VERCEL_ORIGIN`，无法由 Vercel deployment trace 解析。该入口提供的前端 asset basename 与准确 main 构建一致，只能证明前端内容相似，不能证明授权部署来源、环境边界或 exact-SHA delivery。对 Hosted Auth 实际入口的只读响应头检查返回 200，但 `X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、`Permissions-Policy`、`Strict-Transport-Security` 与 `X-Permitted-Cross-Domain-Policies` 全部缺失。
+
+上述两项均属于 invitation、activation、recovery 及全部业务 E2E 之前的 mandatory Blocker。R7 因此没有发出 invitation、没有打开一次性 token、没有设置或修改密码、没有创建 `R7-SMOKE-*` 业务数据，也没有执行清理。既有 Owner session 的只读页面可达观察不能替代 fresh login/logout、角色闭环或移动端 mandatory evidence；未执行项均保持 `NOT EXECUTED`，不以静态代码、本地测试、历史 R6/F1/F2 证据或 asset 一致性补写 PASS。
+
+| Mandatory check                                               | R7 result    |
+| ------------------------------------------------------------- | ------------ |
+| exact main / exact-SHA push CI                                | PASS         |
+| local security / frontend / Edge / database gates             | PASS         |
+| Trial target / database route / migration trace               | PASS         |
+| deployed Edge Function executable-semantics trace             | PASS         |
+| authorized Vercel exact-main deployment                       | PASS         |
+| Hosted Auth actual origin -> authorized Vercel trace          | FAIL         |
+| security headers on authorized Vercel stable origin           | PASS         |
+| security headers on Hosted Auth actual origin                 | FAIL         |
+| Hosted Invite / Recovery email template read-only inspection  | NOT EXECUTED |
+| owner fresh login / logout / session / deep link              | NOT EXECUTED |
+| fresh invitation / single-password activation / member login  | NOT EXECUTED |
+| recovery and return-to negative paths                         | NOT EXECUTED |
+| workspace role / invitation / membership                      | NOT EXECUTED |
+| project / module / task / progress / blocker / review closure | NOT EXECUTED |
+| completed freeze / outsider RLS denial                        | NOT EXECUTED |
+| Stage 4.1 home / my tasks role consistency                    | NOT EXECUTED |
+| actual mobile browser                                         | NOT EXECUTED |
+
+Finding count：Blocker 2，Major 0，Minor 0，Feature Request 0。
+
+- `R7-B001`（Blocker）— `Hosted Trial origin is not traceable to the authorized exact-main Vercel deployment`。复现：核对 Hosted Auth Site URL 分类并用 Vercel deployment trace 解析，同时对照授权 Vercel Trial project 上准确 main SHA 的 READY deployment。期望：Hosted Auth 稳定入口与授权 exact-main Vercel deployment 为同一 Trial origin。实际：Hosted Auth 使用 `NON_VERCEL_ORIGIN`；Vercel exact-main deployment 独立存在但不是 Auth 当前入口。影响：全部角色、邮件跳转与业务闭环的环境边界和部署追溯。可重复：是。建议：在独立授权任务中确定唯一 canonical Trial origin，重新建立 Vercel deployment、Hosted Auth URL/redirect/template 与 exact-SHA 追溯一致性并独立审计；R7 不实施配置修复。
+- `R7-B002`（Blocker）— `Mandatory security headers are absent on the Hosted Auth actual origin`。复现：对 Hosted Auth 当前 Site URL 执行只读 HEAD 检查。期望：6 项 mandatory headers 全部存在。实际：入口为 200，但 6 项全部缺失；作为对照，授权 Vercel stable origin 的 6 项全部存在。影响：所有桌面/移动访问以及邀请、激活和恢复落地。可重复：是。建议：在 canonical Trial origin 对齐任务中恢复并验证完整 header contract；R7 不修改 hosting 或 header 配置。
+
+确定性结论：
+
+```text
+TRIAL ADMISSION: NOT ADMITTED
+```
+
+R7 未执行 Trial/Production/Recovery mutation、Hosted Auth 配置修改、SMTP 配置、邀请或密码操作、业务写入、db push、migration apply/repair/up、reset、restore、Edge/Vercel/CloudBase 部署或 Finding 修复；没有创建 PR、合并 main 或 force push。所有 URL、project ref、邮箱、账号、token、OTP、用户/请求 ID、IP、数据库 hostname、credential path 与 raw Auth log 均未写入证据。
+
 ## 12. Rollback
 
 ### Frontend rollback
@@ -785,9 +828,9 @@ active Trial/Production 未修改和独立复核全部成立后，才可另行�
 
 > Task 3.9.1 historical baseline statement：以下延期清单描述 Task 3.9.1 完成时的
 > 范围边界。其中 Trial Supabase/Vercel 创建与部署已由 Task 3.9.2 完成，Recovery
-> Drill 已由 Task 3.9.3 完成；R6 已执行并判定 NOT ADMITTED；其余项目仍未执行并继续延期到后续授权任务：
+> Drill 已由 Task 3.9.3 完成；R6 与 R7 均已执行并判定 NOT ADMITTED；其余项目仍未执行并继续延期到后续授权任务：
 
-- Task 3.9.3-R6：在独立授权修复 hosted Trial Auth activation redirect blocker 并完成独立审计后，重新执行最终全量 Trial Smoke/E2E 与准入；
+- Task 3.9.3 后续独立任务：确定唯一 canonical Trial origin，使授权 Vercel exact-main deployment、Hosted Auth URL/redirect/template 和 mandatory security headers 重新一致；完成独立审计后，再从准确基线重新执行全量 Trial Smoke/E2E 与准入；
 - Production Supabase/Vercel 创建、配置、迁移、域名和正式数据；
 - Stage 4 工作台、通知、提醒、通用日志、回收站；
 - 微信小程序、CloudBase、微信身份桥接、订阅消息和飞书；

@@ -1501,6 +1501,266 @@ a {
 .task-list-mobile {
   display: none;
 }
+.management-workbench-heading h2 {
+  margin: 0;
+  font-size: clamp(1.5rem, 4vw, 2rem);
+}
+.management-workbench-heading p:last-child {
+  max-width: 48rem;
+  margin-bottom: 0;
+}
+.management-section {
+  display: grid;
+  gap: 1rem;
+  scroll-margin-top: 1rem;
+}
+.management-section-heading h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+.management-section-heading p {
+  margin: 0.3rem 0 0;
+  color: #526075;
+  line-height: 1.6;
+}
+.management-partial-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid #fcd34d;
+  border-radius: 0.75rem;
+  color: #78350f;
+  background: #fffbeb;
+}
+.management-partial-warning p {
+  margin: 0.3rem 0 0;
+  line-height: 1.6;
+}
+.management-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.5rem), 1fr));
+  gap: 0.85rem;
+}
+.management-summary-card {
+  display: grid;
+  min-width: 0;
+  min-height: 8.5rem;
+  align-content: space-between;
+  gap: 0.45rem;
+  border: 1px solid #dce3ed;
+  border-top-width: 4px;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  color: #172033;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+}
+.management-summary-card:hover {
+  background: #f8fafc;
+}
+.management-summary-red {
+  border-top-color: #dc2626;
+}
+.management-summary-yellow {
+  border-top-color: #d97706;
+}
+.management-summary-green {
+  border-top-color: #16a34a;
+}
+.management-summary-info {
+  border-top-color: #0284c7;
+}
+.management-summary-label {
+  color: #475569;
+  font-weight: 700;
+}
+.management-summary-card strong {
+  font-size: clamp(1.8rem, 5vw, 2.4rem);
+  line-height: 1;
+}
+.management-summary-note {
+  color: #64748b;
+  font-size: 0.78rem;
+}
+.management-project-grid,
+.management-attention-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+  gap: 1rem;
+}
+.management-project-card,
+.management-task-card {
+  min-width: 0;
+  border: 1px solid #dce3ed;
+  border-left-width: 5px;
+  border-radius: 0.75rem;
+  padding: 1.15rem;
+  background: #fff;
+}
+.management-project-red {
+  border-left-color: #dc2626;
+}
+.management-project-yellow {
+  border-left-color: #d97706;
+}
+.management-project-green {
+  border-left-color: #16a34a;
+}
+.management-project-neutral {
+  border-left-color: #94a3b8;
+}
+.management-project-unknown {
+  border-left-color: #0284c7;
+  border-left-style: dashed;
+}
+.management-health-unknown {
+  border-style: dashed;
+}
+.management-project-heading,
+.management-task-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.management-project-heading > div,
+.management-task-heading > div {
+  min-width: 0;
+}
+.management-project-heading h3,
+.management-task-heading h3,
+.management-recent-list h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 1.05rem;
+}
+.management-project-heading h3 a,
+.management-task-heading h3 a,
+.management-recent-list h3 a {
+  color: #0f172a;
+  text-decoration-color: #7dd3fc;
+  text-underline-offset: 0.2em;
+}
+.management-project-badges,
+.management-task-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+.management-project-meta,
+.management-task-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin: 1rem 0 0;
+}
+.management-project-meta > div,
+.management-task-meta > div {
+  min-width: 0;
+}
+.management-project-meta dt,
+.management-task-meta dt,
+.management-project-counts dt {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.management-project-meta dd,
+.management-task-meta dd,
+.management-project-counts dd {
+  margin: 0.2rem 0 0;
+  overflow-wrap: anywhere;
+}
+.management-project-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.management-project-progress progress {
+  width: min(8rem, 70%);
+  height: 0.65rem;
+  accent-color: #0284c7;
+}
+.management-project-counts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 1rem 0 0;
+}
+.management-project-counts > div {
+  min-width: 0;
+  border-radius: 0.55rem;
+  padding: 0.65rem;
+  background: #f8fafc;
+}
+.management-project-counts dd {
+  font-weight: 800;
+}
+.management-project-warning {
+  margin: 1rem 0 0;
+  border-radius: 0.55rem;
+  padding: 0.75rem;
+  color: #075985;
+  background: #f0f9ff;
+  line-height: 1.55;
+}
+.management-attention-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+.management-task-card {
+  border-left-color: #f59e0b;
+}
+.management-task-heading p,
+.management-recent-list p {
+  margin: 0 0 0.3rem;
+  color: #0369a1;
+  font-size: 0.8rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.management-recent-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border: 1px solid #dce3ed;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: #fff;
+  list-style: none;
+}
+.management-recent-list li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+}
+.management-recent-list li + li {
+  border-top: 1px solid #e2e8f0;
+}
+.management-recent-list li > div {
+  min-width: 0;
+}
+.management-recent-list span,
+.management-recent-list time {
+  color: #526075;
+  font-size: 0.82rem;
+}
+.management-recent-status {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: end;
+  gap: 0.45rem;
+  text-align: right;
+}
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -1719,11 +1979,44 @@ a {
   .my-task-view-control .button {
     width: 100%;
   }
+  .management-partial-warning,
+  .management-recent-list li {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .management-partial-warning .button {
+    width: 100%;
+  }
+  .management-project-meta,
+  .management-task-meta {
+    grid-template-columns: 1fr;
+  }
+  .management-project-counts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .management-attention-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .management-attention-filters .button {
+    width: 100%;
+    min-height: 2.75rem;
+  }
+  .management-recent-status {
+    justify-items: start;
+    text-align: left;
+  }
   .segmented-control {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .segmented-control .button {
     width: 100%;
+  }
+}
+@media (max-width: 420px) {
+  .management-summary-grid,
+  .management-attention-filters {
+    grid-template-columns: 1fr;
   }
 }

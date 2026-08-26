@@ -28,7 +28,7 @@ import {
 } from './trial-database-route-gate.mjs'
 
 const repositoryRoot = process.cwd()
-const projectPlanHash =
+const historicalProjectPlanHash =
   '1221774ea5c4dd54e11e1b10ac0b137272da933328d92554abaa1c7ae9f3145a'
 let checkCount = 0
 
@@ -41,10 +41,166 @@ function check(condition, message) {
   checkCount += 1
 }
 
+function exactHeadingCount(contents, heading) {
+  return contents.split(/\r?\n/u).filter((line) => line.trimEnd() === heading)
+    .length
+}
+
+function sectionForExactHeading(contents, heading) {
+  const lines = contents.split(/\r?\n/u)
+  const headingLevel = /^#+/u.exec(heading)?.[0].length
+  const start = lines.findIndex((line) => line.trimEnd() === heading)
+  if (headingLevel === undefined || start < 0) return ''
+
+  let end = lines.length
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const nextHeading = /^(#+)\s/u.exec(lines[index])
+    if (nextHeading && nextHeading[1].length <= headingLevel) {
+      end = index
+      break
+    }
+  }
+  return lines.slice(start, end).join('\n')
+}
+
+export function validateTrialRunbookContract(contents, assert = check) {
+  const requiredHeadings = [
+    '## 9. Trial Web deployment',
+    '### 9.1 Vercel Trial',
+    '### 9.2 CloudBase Web Trial',
+    '### 9.3 Common browser security-header baseline',
+  ]
+  for (const heading of requiredHeadings) {
+    assert(
+      exactHeadingCount(contents, heading) === 1,
+      'runbook heading must appear exactly once: ' + heading,
+    )
+  }
+  assert(
+    exactHeadingCount(contents, '## 9. Vercel Trial deployment') === 0,
+    'the obsolete Vercel-only Trial deployment heading is still present',
+  )
+  assert(
+    !contents.includes('Historical heading compatibility marker'),
+    'the obsolete Vercel-only heading compatibility marker is still present',
+  )
+
+  const environmentModel = sectionForExactHeading(
+    contents,
+    '## 1. Environment model',
+  )
+  const secretBoundaries = sectionForExactHeading(
+    contents,
+    '## 3. Secret boundaries',
+  )
+  const trialWebDeployment = sectionForExactHeading(
+    contents,
+    '## 9. Trial Web deployment',
+  )
+  const vercelTrial = sectionForExactHeading(contents, '### 9.1 Vercel Trial')
+  const cloudBaseTrial = sectionForExactHeading(
+    contents,
+    '### 9.2 CloudBase Web Trial',
+  )
+  const securityHeaders = sectionForExactHeading(
+    contents,
+    '### 9.3 Common browser security-header baseline',
+  )
+  const traceability = sectionForExactHeading(
+    contents,
+    '## 10. Deployment version traceability',
+  )
+  const smokeChecklist = sectionForExactHeading(
+    contents,
+    '## 11. Smoke checklist',
+  )
+  const deferredActions = sectionForExactHeading(
+    contents,
+    '## 16. Explicitly deferred actions',
+  )
+
+  assert(
+    environmentModel.includes('单一权威 Supabase Trial 项目') &&
+      environmentModel.includes('授权 Vercel + CloudBase Web origins') &&
+      environmentModel.includes('不是两套 backend'),
+    'the environment model does not define one backend and two authorized Web origins',
+  )
+  assert(
+    secretBoundaries.includes('Vercel 与 CloudBase 各自的平台配置中独立设置') &&
+      secretBoundaries.includes('不能证明 CloudBase 自动继承'),
+    'browser environment configuration is not independently required per platform',
+  )
+  assert(
+    trialWebDeployment.includes('一个平台的通过证据不能自动证明另一个平台通过'),
+    'platform deployment evidence can still be inherited across origins',
+  )
+  assert(
+    vercelTrial.includes('| SPA routing |') &&
+      vercelTrial.includes('| Browser env |') &&
+      vercelTrial.includes('Vercel-specific deployment evidence'),
+    'the Vercel Trial section lacks browser env, SPA, or provenance contracts',
+  )
+  assert(
+    cloudBaseTrial.includes('配置两个 browser-safe Supabase 变量') &&
+      cloudBaseTrial.includes('SPA fallback / rewrite') &&
+      cloudBaseTrial.includes('CloudBase control-plane provenance'),
+    'the CloudBase Trial section lacks browser env, SPA, or provenance contracts',
+  )
+  for (const header of [
+    'Strict-Transport-Security',
+    'X-Frame-Options',
+    'X-Content-Type-Options',
+    'Referrer-Policy',
+    'Permissions-Policy',
+    'X-Permitted-Cross-Domain-Policies',
+  ]) {
+    assert(
+      securityHeaders.includes('`' + header + '`'),
+      'the common per-origin security-header baseline is missing: ' + header,
+    )
+  }
+  assert(
+    securityHeaders.includes('按 origin 分别验证') &&
+      securityHeaders.includes('不得用另一 origin 的 6/6 结果覆盖'),
+    'security headers are not required independently for every origin',
+  )
+  assert(
+    traceability.includes('每个正式授权 Web origin 必须分别建立') &&
+      traceability.includes('不能自动证明') &&
+      traceability.includes('CloudBase 使用 CloudBase-appropriate provenance'),
+    'deployment provenance is not independently traceable for every origin',
+  )
+  assert(
+    smokeChecklist.includes('对每个正式 Web origin 分别验证') &&
+      smokeChecklist.includes('SPA/deep-link fallback') &&
+      smokeChecklist.includes('Auth redirect compatibility'),
+    'the smoke contract does not verify SPA and Auth compatibility per origin',
+  )
+  assert(
+    smokeChecklist.includes(
+      'Site URL / default landing origin 必须执行完整 Auth 与 core E2E',
+    ) && smokeChecklist.includes('对于其他正式授权 origin，至少分别完成'),
+    'the smoke contract does not separate the full Site URL E2E from other-origin minimum checks',
+  )
+  assert(
+    contents.includes('TRIAL ADMISSION NOT ADMITTED'),
+    'the runbook no longer fails closed on Trial Admission',
+  )
+  assert(
+    deferredActions.includes(
+      'FOLLOW_UP_REQUIRED: Repository plan version needs V1.4 sync',
+    ),
+    'the required V1.4 plan sync follow-up marker is missing',
+  )
+
+  return true
+}
+
 const projectPlan = read('docs/project-construction-plan-v1.3.md')
 check(
-  createHash('sha256').update(projectPlan).digest('hex') === projectPlanHash,
-  'the authoritative V1.3 project plan changed',
+  createHash('sha256').update(projectPlan).digest('hex') ===
+    historicalProjectPlanHash,
+  'the historical V1.3 project plan changed unexpectedly',
 )
 check(
   projectPlan.includes('## 阶段 3.9：网页受控试运行准备与部署'),
@@ -52,6 +208,7 @@ check(
 )
 
 const runbook = read('docs/trial-deployment.md')
+validateTrialRunbookContract(runbook)
 const targetGate = read('scripts/trial-deployment-gate.mjs')
 const routeGate = read('scripts/trial-database-route-gate.mjs')
 const routeGateTest = read('scripts/trial-database-route-gate.test.mjs')
@@ -114,7 +271,7 @@ for (const heading of [
   '## 6. Migration deployment',
   '## 7. Database post-deploy verification',
   '## 8. Edge Function deployment',
-  '## 9. Vercel Trial deployment',
+  '## 9. Trial Web deployment',
   '## 10. Deployment version traceability',
   '## 11. Smoke checklist',
   '## 12. Rollback',

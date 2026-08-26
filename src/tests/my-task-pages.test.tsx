@@ -483,7 +483,7 @@ describe('我的任务页面', () => {
     expect(
       await screen.findByRole('heading', { name: '我的任务' }),
     ).toBeInTheDocument()
-    expect(screen.getByText(assignedTodo.title)).toBeInTheDocument()
+    expect(await screen.findByText(assignedTodo.title)).toBeInTheDocument()
     expect(screen.getByText(collaborating.title)).toBeInTheDocument()
     expect(screen.getByText(pendingReview.title)).toBeInTheDocument()
     expect(screen.queryByText(submittedForOtherReviewer.title)).toBeNull()

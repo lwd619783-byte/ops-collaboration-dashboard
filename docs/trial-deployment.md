@@ -348,8 +348,6 @@ npx supabase functions deploy invite-workspace-member --project-ref $env:SUPABAS
 
 失败时先确认目标、配置和版本；允许在原因明确后重新部署同一准确 commit。需要回退时按第 12 节部署上一已验证的函数源码，并先确认其与当前 schema 兼容。
 
-> Historical heading compatibility marker：`## 9. Vercel Trial deployment` 是旧版单平台章节标题，仅为兼容当前锁定的静态 baseline check 保留，不是现行通用合同。现行章节和合同以下方 `## 9. Trial Web deployment` 为准。
-
 ## 9. Trial Web deployment
 
 所有正式授权 Trial Web origins 运行同一个 React/Vite 应用、使用同一套 `npm ci` / `npm run build` 构建流程和 `dist` 制品，并连接同一个权威 Supabase Trial。每个平台仍必须独立配置 browser environment、SPA fallback、cache behavior、安全响应头和 deployment provenance；一个平台的通过证据不能自动证明另一个平台通过。

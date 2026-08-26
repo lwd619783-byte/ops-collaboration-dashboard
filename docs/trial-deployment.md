@@ -13,9 +13,10 @@ TRIAL ADMISSION NOT ADMITTED
 PRODUCTION NOT CONFIGURED
 ```
 
-- Trial deployment：已完成（独立 Supabase Trial 与 Vercel Trial 已建立并部署）；
+- Trial deployment：已完成（独立 Supabase Trial 与授权 Vercel / CloudBase Web origin 已建立）；
 - Recovery Drill：已完成（`TRIAL-RECOVERY-001` 关闭条件已建立，见第 13 节）；
-- Final Task 3.9.3-R7 Trial Smoke/E2E：已执行；Hosted Trial 部署来源追溯与实际入口安全响应头存在 2 个 Blocker，写入型核心多用户闭环按 fail-closed 门禁未启动；
+- Final Task 3.9.3-R7 Trial Smoke/E2E：已执行；当时按 Vercel-only 验证模型记录 2 个 Blocker，并在写入型核心多用户闭环前 fail closed；
+- Task 3.9.3-R7-D1：只读架构复核已完成；R7-B001 已重分类为 validation-model false positive，R7-B002 已重分类为授权 CloudBase Web 上真实且阻断准入的 security-hardening gap；
 - Trial Admission：NOT ADMITTED；
 - Production：NOT CONFIGURED。
 
@@ -29,17 +30,17 @@ Task 3.9.2-R1 是一次 deployment-discovered repository remediation：它只加
 
 ## 1. Environment model
 
-| 项目           | Local                           | Trial/Staging             | Production           |
-| -------------- | ------------------------------- | ------------------------- | -------------------- |
-| Frontend       | 本地 Vite                       | 独立 Vercel Trial 部署    | 独立正式 Vercel 部署 |
-| Database       | 本地 Supabase                   | 独立 Supabase Trial 项目  | 独立 Production 项目 |
-| Auth           | 本地 Auth 与邮件捕获            | Trial Auth 与受控测试账号 | Production Auth      |
-| Edge Functions | 本地 Edge Runtime               | Trial Function            | Production Function  |
-| Business data  | 明显虚构夹具                    | 1–2 个低风险试运行项目    | 经正式准入的数据     |
-| Secrets        | 未跟踪的本地环境或 CLI 本地状态 | 平台 Secret 管理          | 独立平台 Secret 管理 |
-| Verification   | pgTAP、集成、并发与完整重建     | 非破坏性 Smoke/E2E        | 独立生产准入         |
+| 项目           | Local                           | Trial/Staging                       | Production           |
+| -------------- | ------------------------------- | ----------------------------------- | -------------------- |
+| Frontend       | 本地 Vite                       | 授权 Vercel + CloudBase Web origins | 独立正式 Web hosting |
+| Database       | 本地 Supabase                   | 单一权威 Supabase Trial 项目        | 独立 Production 项目 |
+| Auth           | 本地 Auth 与邮件捕获            | Trial Auth 与受控测试账号           | Production Auth      |
+| Edge Functions | 本地 Edge Runtime               | Trial Function                      | Production Function  |
+| Business data  | 明显虚构夹具                    | 1–2 个低风险试运行项目              | 经正式准入的数据     |
+| Secrets        | 未跟踪的本地环境或 CLI 本地状态 | 平台 Secret 管理                    | 独立平台 Secret 管理 |
+| Verification   | pgTAP、集成、并发与完整重建     | 非破坏性 Smoke/E2E                  | 独立生产准入         |
 
-三类环境不得共用数据库、Auth 用户、Edge Function Secret 或 Vercel 环境变量。`supabase/config.toml` 只描述本地开发配置，不是远端 Trial 或 Production 配置的权威副本。
+Vercel 与 CloudBase 是同一 Trial 的两个授权 Web frontend origin，不是两套 backend；CloudBase Web 静态托管也不等于 CloudBase 业务桥接已实现。三类环境不得共用数据库、Auth 用户、Edge Function Secret 或 Web hosting 环境变量。`supabase/config.toml` 只描述本地开发配置，不是远端 Trial 或 Production 配置的权威副本。V1.3 方案中的 Vercel-only 当前架构表述留待独立方案治理任务同步，本任务不修改最高级方案文件。
 
 ## 2. Preconditions
 
@@ -535,6 +536,71 @@ TRIAL ADMISSION: NOT ADMITTED
 
 R7 未执行 Trial/Production/Recovery mutation、Hosted Auth 配置修改、SMTP 配置、邀请或密码操作、业务写入、db push、migration apply/repair/up、reset、restore、Edge/Vercel/CloudBase 部署或 Finding 修复；没有创建 PR、合并 main 或 force push。所有 URL、project ref、邮箱、账号、token、OTP、用户/请求 ID、IP、数据库 hostname、credential path 与 raw Auth log 均未写入证据。
 
+### Task 3.9.3-R7-D1 Hosted Auth Origin Impact Verification（2026-08-26）
+
+R7-D1 从准确 `origin/main` 基线 `60796ddb4989711923f0546ef42fb326c6bb189d` 创建隔离分支 `test/task-3.9.3-r7-d1-hosted-auth-origin-impact`，范围仅为 read-only Hosted diagnosis、R7 finding reclassification 与脱敏文档同步。Trial target gate、linked project 与受控 operator target 均为 `TRIAL`；WRITE / APPLY authorization 未授予。Production 与 Recovery 均未接触，Hosted Auth、SMTP、Vercel、CloudBase、数据库、Edge Function、用户、密码、session 与业务数据均未修改。`CUSTOM SMTP: CONFIGURED` 是既定配置事实，不是本轮 Finding，也没有以 SMTP 状态推导 redirect 正确性。
+
+当前官方 Supabase 合同确认：Site URL 是未指定 `redirectTo` 或传入值不在 allowlist 时的默认 redirect；`.SiteURL`、`.RedirectTo` 与 `.TokenHash` 是不同模板变量；`inviteUserByEmail` 与 `resetPasswordForEmail` 可以提供 `redirectTo`，而自定义 TokenHash 模板可自行决定实际落点。Hosted read-only inspection 得到下列脱敏配置：
+
+| Hosted Auth item   | D1 observed value                                                                                                                                                | Assessment                                     |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Site URL           | `CLOUDBASE_TRIAL_ORIGIN`                                                                                                                                         | 当前授权 Trial Web origin，不是未知或废弃入口  |
+| Redirect allowlist | `VERCEL_TRIAL_ORIGIN/activate-account`、`VERCEL_TRIAL_ORIGIN/reset-password`、`CLOUDBASE_TRIAL_ORIGIN/activate-account`、`CLOUDBASE_TRIAL_ORIGIN/reset-password` | 两个授权 origin 的代码级 redirect 均被精确允许 |
+| Invite template    | `TokenHash + SiteURL + /auth/invite + type=invite`                                                                                                               | 与显式确认页合同兼容；不读取 `.RedirectTo`     |
+| Recovery template  | `TokenHash + SiteURL + /auth/recovery + type=recovery`                                                                                                           | 与显式确认页合同兼容；不读取 `.RedirectTo`     |
+| SMTP               | `CONFIGURED`                                                                                                                                                     | 与 origin / redirect 判断分层，不作相互证明    |
+
+#### Redirect resolution matrix
+
+| Flow                    | Version-controlled API `redirectTo`       | Hosted template source | Effective landing                      | Confirmation / final path                                  | D1 result |
+| ----------------------- | ----------------------------------------- | ---------------------- | -------------------------------------- | ---------------------------------------------------------- | --------- |
+| Invite from Vercel      | `VERCEL_TRIAL_ORIGIN/activate-account`    | `.SiteURL` + TokenHash | `CLOUDBASE_TRIAL_ORIGIN/auth/invite`   | explicit `verifyOtp(type='invite')` -> `/activate-account` | PASS      |
+| Invite from CloudBase   | `CLOUDBASE_TRIAL_ORIGIN/activate-account` | `.SiteURL` + TokenHash | `CLOUDBASE_TRIAL_ORIGIN/auth/invite`   | explicit `verifyOtp(type='invite')` -> `/activate-account` | PASS      |
+| Recovery from Vercel    | `VERCEL_TRIAL_ORIGIN/reset-password`      | `.SiteURL` + TokenHash | `CLOUDBASE_TRIAL_ORIGIN/auth/recovery` | explicit `verifyOtp(type='recovery')` -> `/reset-password` | PASS      |
+| Recovery from CloudBase | `CLOUDBASE_TRIAL_ORIGIN/reset-password`   | `.SiteURL` + TokenHash | `CLOUDBASE_TRIAL_ORIGIN/auth/recovery` | explicit `verifyOtp(type='recovery')` -> `/reset-password` | PASS      |
+
+两份 Hosted template 都有意使用 `.SiteURL` 而不是 `.RedirectTo`，所以调用方 origin 不改变邮件的第一落点；代码提供的两个 `redirectTo` 仍全部位于 allowlist。该行为与当前显式 TokenHash 确认设计兼容，不是 redirect 缺陷。本轮没有发送 Invite / Recovery 邮件、没有打开或消费 token、没有建立 session，也没有设置或修改密码，因此上述 PASS 仅表示配置与代码合同相容，不代表完整 Invite / Recovery E2E 已通过。
+
+#### Web hosting evidence
+
+| Evidence                   | Vercel                                                                                                                         | CloudBase                                                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| Availability               | HTTP 200                                                                                                                       | HTTP 200                                                                                                                       |
+| SPA fallback               | `/auth/invite`、`/auth/recovery`、`/activate-account`、`/reset-password` 与受保护 deep-link 均为 HTTP 200，并由 React app 渲染 | 同左                                                                                                                           |
+| Deployment provenance      | GitHub Deployment 对准确 main SHA 返回 successful `VERCEL_TRIAL_ORIGIN` evidence                                               | CloudBase control plane 需要人工登录，按边界记为 `NOT_EXECUTED`; 未取得 deployment ID / exact-SHA control-plane trace          |
+| Public artifact comparison | 与 CloudBase 的 JS / CSS basename 及内容摘要完全一致                                                                           | 与已证明 exact-main 的 Vercel 公开制品逐字节一致；这是 current-artifact equivalence，不冒充 CloudBase control-plane provenance |
+| Required security headers  | 6/6                                                                                                                            | 0/6                                                                                                                            |
+
+架构判断：`AUTHORIZED TRIAL ORIGIN SET = { VERCEL_TRIAL_ORIGIN, CLOUDBASE_TRIAL_ORIGIN }`，单一权威 backend 为 Supabase Trial。Hosted Site URL、四条精确 allowlist、两份 TokenHash 模板、两个 Web origin 的真实浏览器 SPA 路由以及公开制品一致性相互印证 CloudBase 是当前授权 Web frontend，而不是 `NON_VERCEL = unauthorized`。
+
+#### R7 findings reclassification
+
+- `R7-B001` historical classification：Blocker — Hosted origin 不能追溯到授权 Vercel exact-main deployment。D1 new classification：`SUPERSEDED / FALSE POSITIVE`，分类 D（Validation-model false positive）。证据：现行架构允许 Vercel 与 CloudBase 两个 Trial Web origin；Site URL 明确分类为 `CLOUDBASE_TRIAL_ORIGIN`，allowlist 同时覆盖两端，CloudBase 关键 SPA 路由可用且公开制品与 exact-main Vercel 逐字节一致。影响：撤销“非 Vercel 即非法 origin”的判断，但不把制品一致性冒充 CloudBase control-plane provenance。建议：后续验证模型使用 authorized-origin set，并在有现成登录态时补齐 CloudBase deployment ID / exact-SHA 控制面证据。
+- `R7-B002` historical classification：Blocker — Hosted actual origin 缺少 6 项 mandatory headers。D1 new classification：`REAL SECURITY HARDENING GAP`，分类 B，Severity `Major (admission-blocking)`。证据：授权 Vercel 为 6/6，承载 Invite / Recovery TokenHash 第一落点的授权 CloudBase 为 0/6。影响：缺少 HSTS、frame protection、nosniff、referrer policy、permissions policy 与 cross-domain policy；其中 TLS 降级防护、clickjacking 与 MIME sniffing 直接覆盖认证确认页和受保护业务 UI，结合当前应用数据敏感度，不满足 Trial Admission。建议：独立授权的 CloudBase hosting hardening 后重验 6/6，再执行 fresh full Trial E2E；R7-D1 不实施修复。
+
+D1 Finding 分类：
+
+- A Functional defect：无已证实项。
+- B Security-hardening gap：`R7-B002`，Severity `Major (admission-blocking)`；证据、影响与建议见上方 reclassification。
+- C Environment/configuration defect：无已证实项。
+- D Validation-model false positive：`R7-B001`，Severity `Historical Blocker superseded`；证据、影响与建议见上方 reclassification。
+- E Documentation drift：`R7-D1-E001`，Severity `Minor (corrected in branch)`。证据：README 与本 runbook 把 Vercel-only 当作当前 Trial frontend 架构，V1.3 也尚未同步 authorized-origin set。影响：会再次把合法 CloudBase Web 误判为未知入口。建议：交付本轮最小文档修正，并在独立方案治理任务同步 V1.4；本轮不改 V1.3。
+- F Not executed / insufficient evidence：`R7-D1-F001`，Severity `Evidence gate`。证据：CloudBase control plane 与 Vercel CLI account-level inspection 均需要当前不存在的登录态；前者未取得 deployment ID / exact-SHA 控制面追溯，后者已有 GitHub exact-SHA Deployment 等价证据。影响：不得把公开制品一致性写成 CloudBase 控制面 provenance PASS。建议：在后续已授权 hosting hardening 任务中补齐 CloudBase 直接证据。
+- F Not executed / insufficient evidence：`R7-D1-F002`，Severity `Admission gate`。证据：R7-D1 明确禁止真实 Invite、Recovery、token、session、密码和业务写入，历史 R7 又在前置门禁停止。影响：即使配置合同兼容，也不能把 Trial 改写为 ADMITTED。建议：安全加固和独立审计后，从 fresh exact-main 基线执行完整 mandatory E2E。
+
+F 类限制不把未执行项补写成 PASS，并须在最终准入前关闭。
+
+确定性结论：R7 的历史 `TRIAL ADMISSION: NOT ADMITTED` 不改写；R7-D1 后仍为 `TRIAL ADMISSION: NOT ADMITTED — CLOUDBASE SECURITY HARDENING BLOCKER REMAINS`。推荐 `PATH B — Hosting hardening required`：先完成 CloudBase 6 项安全响应头加固及独立审计，再从 fresh exact-main 基线执行完整 Trial Smoke/E2E；只有完整闭环真实通过后才可重新判定准入。
+
+```text
+RUNTIME CODE CHANGED: NO
+HOSTED CONFIG MUTATED: NO
+REAL INVITE SENT: NO
+REAL RECOVERY SENT: NO
+REAL TOKEN CONSUMED: NO
+TRIAL ADMISSION CHANGED TO ADMITTED: NO
+```
+
 ## 12. Rollback
 
 ### Frontend rollback
@@ -830,10 +896,11 @@ active Trial/Production 未修改和独立复核全部成立后，才可另行�
 > 范围边界。其中 Trial Supabase/Vercel 创建与部署已由 Task 3.9.2 完成，Recovery
 > Drill 已由 Task 3.9.3 完成；R6 与 R7 均已执行并判定 NOT ADMITTED；其余项目仍未执行并继续延期到后续授权任务：
 
-- Task 3.9.3 后续独立任务：确定唯一 canonical Trial origin，使授权 Vercel exact-main deployment、Hosted Auth URL/redirect/template 和 mandatory security headers 重新一致；完成独立审计后，再从准确基线重新执行全量 Trial Smoke/E2E 与准入；
+- Task 3.9.3 后续独立任务：按 `{ VERCEL_TRIAL_ORIGIN, CLOUDBASE_TRIAL_ORIGIN }` authorized-origin set 完成 CloudBase browser security header hardening，补齐 CloudBase control-plane provenance，并在独立审计后从准确基线重新执行全量 Trial Smoke/E2E 与准入；
+- 方案治理后续：`FOLLOW_UP_REQUIRED: Repository plan version needs V1.4 sync`；本任务不修改 V1.3 最高级方案文件；
 - Production Supabase/Vercel 创建、配置、迁移、域名和正式数据；
 - Stage 4 工作台、通知、提醒、通用日志、回收站；
-- 微信小程序、CloudBase、微信身份桥接、订阅消息和飞书；
+- 微信小程序、CloudBase 业务桥接、微信身份桥接、订阅消息和飞书；
 - 生产 SMTP、附件、评论、Realtime、已完成重开和归档恢复。
 
 > Task 3.9.1 historical baseline statement：Task 3.9.1 当时的正确交付状态是

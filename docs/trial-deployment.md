@@ -18,6 +18,7 @@ PRODUCTION NOT CONFIGURED
 - Final Task 3.9.3-R7 Trial Smoke/E2E：已执行；当时按 Vercel-only 验证模型记录 2 个 Blocker，并在写入型核心多用户闭环前 fail closed；
 - Task 3.9.3-R7-D1：只读架构复核已完成；R7-B001 已重分类为 validation-model false positive，R7-B002 已重分类为授权 CloudBase Web 上真实且阻断准入的 security-hardening gap；
 - Task 3.9.3-R7-D1-F1：当前 runbook 的 browser env、preconditions、Web deployment、security-header、provenance 与 smoke 合同已统一为 multi-origin 模型；
+- Task 3.9.3-R7-D2B：公开入口重新预检确认 CloudBase Web 仍为 0/6；因 CloudBase control-plane operator 登录态不存在，目标身份门禁无法完成，Hosted mutation 未执行，R7-B002 仍开放；
 - Trial Admission：NOT ADMITTED；
 - Production：NOT CONFIGURED。
 
@@ -642,6 +643,70 @@ HOSTED CONFIG MUTATED: NO
 REAL INVITE SENT: NO
 REAL RECOVERY SENT: NO
 REAL TOKEN CONSUMED: NO
+TRIAL ADMISSION CHANGED TO ADMITTED: NO
+```
+
+### Task 3.9.3-R7-D2B CloudBase Hosting Security Hardening（2026-08-26）
+
+D2B 从准确 `origin/main` 基线 `d6566189928b1e654396a482e0e4aa5c428883eb` 创建隔离分支 `fix/task-3.9.3-r7-d2b-cloudbase-hosting-security-hardening`。授权目标仅为 `TRIAL / CLOUDBASE WEB` 的六项 response headers；Production、Recovery、Supabase Hosted、Vercel、数据库、Edge Function、Auth URL/template/SMTP、用户、密码、session 与业务数据均不在 mutation 范围内。
+
+安全只读 control-plane inspection 在腾讯云登录页 fail closed：当前浏览器不存在 CloudBase operator 登录态，因而无法同时核验环境类型、静态托管/HTTP 访问路由、绑定域名、当前部署记录与 exact-SHA 关联。公开入口可按 D1 已封板的 multi-origin 架构分类为 `CLOUDBASE_TRIAL_ORIGIN`，但公开页面与制品等价证据不能代替本轮要求的 direct control-plane target identity。D2B 未绕过认证、未猜测 environment ID、未读取 credential，也未保存任何配置。
+
+```text
+CLOUDBASE_OPERATOR_LOGIN_REQUIRED
+CLOUDBASE MUTATION: NONE
+CLOUDBASE PROVENANCE: NOT_EXECUTED
+```
+
+#### Pre-mutation public route snapshot
+
+以下为本轮重新执行的脱敏 HTTPS GET 结果，不继承 D1 的旧采样。`/projects` 作为 protected deep-link；`SPA shell = YES` 表示 HTTP 层返回包含应用根节点的前端 shell，不代表已执行登录、TokenHash 或业务闭环。
+
+| Route               | HTTPS | HTTP status | SPA shell | CloudBase headers |
+| ------------------- | ----- | ----------: | --------- | ----------------: |
+| `/`                 | YES   |         200 | YES       |               0/6 |
+| `/login`            | YES   |         200 | YES       |               0/6 |
+| `/auth/invite`      | YES   |         200 | YES       |               0/6 |
+| `/auth/recovery`    | YES   |         200 | YES       |               0/6 |
+| `/activate-account` | YES   |         200 | YES       |               0/6 |
+| `/reset-password`   | YES   |         200 | YES       |               0/6 |
+| `/projects`         | YES   |         200 | YES       |               0/6 |
+
+| Mandatory response header           | Expected value                                                 | CloudBase actual, all sampled routes | Result | Vercel read-only comparison |
+| ----------------------------------- | -------------------------------------------------------------- | ------------------------------------ | ------ | --------------------------- |
+| `X-Content-Type-Options`            | `nosniff`                                                      | MISSING                              | FAIL   | exact match                 |
+| `X-Frame-Options`                   | `DENY`                                                         | MISSING                              | FAIL   | exact match                 |
+| `Referrer-Policy`                   | `strict-origin-when-cross-origin`                              | MISSING                              | FAIL   | exact match                 |
+| `Permissions-Policy`                | `camera=(), microphone=(), geolocation=(), payment=(), usb=()` | MISSING                              | FAIL   | exact match                 |
+| `Strict-Transport-Security`         | `max-age=31536000; includeSubDomains`                          | MISSING                              | FAIL   | exact match                 |
+| `X-Permitted-Cross-Domain-Policies` | `none`                                                         | MISSING                              | FAIL   | exact match                 |
+
+同批 Vercel 只读对照在相同 7 条路由上均为 HTTPS 200、SPA shell 可用且 6/6 exact match。该结果仅证明 Vercel 当前 header contract，不外推为 CloudBase 已加固，也不代表 Vercel 被修改。
+
+#### Planned diff（not applied）
+
+只有 operator 登录后以多信号证明控制面目标正是授权 `TRIAL / CLOUDBASE WEB`，才允许在覆盖上述全部 SPA 路由的 CloudBase 静态托管/HTTP 访问层执行以下单一配置差异：
+
+```text
+TARGET: CLOUDBASE_TRIAL
+MUTATION: RESPONSE_HEADERS_ONLY
+ADD/SET: the 6 mandatory headers and exact values listed above
+UNCHANGED: routing, domain bindings, deployment artifact, browser env,
+           Supabase, Vercel, Production, Recovery
+NO EXTRA HEADERS: CSP, COOP, COEP, CORP, CORS or other policy additions
+```
+
+由于身份门禁未通过，`after 6/6`、传播后 route matrix、direct control-plane provenance 与 SPA/routes unchanged 的 before/after 证明均为 `NOT_EXECUTED`，不得补写成 PASS。当前确定性结论：`R7-B001 = SUPERSEDED / FALSE POSITIVE`；`R7-B002 = REMAINS OPEN — CLOUDBASE_OPERATOR_LOGIN_REQUIRED`；`TRIAL ADMISSION = NOT ADMITTED — CLOUDBASE SECURITY HARDENING BLOCKER REMAINS`。即使后续完成 6/6，加固状态也只能先记为 `REMEDIATED — PENDING INDEPENDENT AUDIT`，并须从 fresh exact-main 基线完成 full Trial Smoke/E2E 后才能重新判定准入。
+
+```text
+HOSTED CONFIG MUTATED: NO
+REAL INVITE SENT: NO
+REAL RECOVERY SENT: NO
+REAL TOKEN CONSUMED: NO
+SUPABASE HOSTED MUTATED: NO
+VERCEL MUTATED: NO
+PRODUCTION MUTATED: NO
+PR #33 CHANGED: NO
 TRIAL ADMISSION CHANGED TO ADMITTED: NO
 ```
 

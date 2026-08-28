@@ -8,18 +8,23 @@
 ```text
 TRIAL DEPLOYMENT COMPLETE
 RECOVERY DRILL COMPLETE
-FINAL TRIAL SMOKE/E2E EXECUTED — FAIL
+PREVIOUS FINAL TRIAL SMOKE/E2E EXECUTED — FAIL
+FRESH FULL TRIAL SMOKE/E2E REQUIRED
 TRIAL ADMISSION NOT ADMITTED
+CLOUDBASE PRIMARY TRIAL WEB
+VERCEL SECONDARY / FALLBACK TRIAL WEB
+CLOUDBASE SECURITY HARDENING DEFERRED TO PRODUCTION GATE
 PRODUCTION NOT CONFIGURED
 ```
 
 - Trial deployment：已完成（独立 Supabase Trial 与授权 Vercel / CloudBase Web origin 已建立）；
 - Recovery Drill：已完成（`TRIAL-RECOVERY-001` 关闭条件已建立，见第 13 节）；
 - Final Task 3.9.3-R7 Trial Smoke/E2E：已执行；当时按 Vercel-only 验证模型记录 2 个 Blocker，并在写入型核心多用户闭环前 fail closed；
-- Task 3.9.3-R7-D1：只读架构复核已完成；R7-B001 已重分类为 validation-model false positive，R7-B002 已重分类为授权 CloudBase Web 上真实且阻断准入的 security-hardening gap；
+- Task 3.9.3-R7-D1：只读架构复核已完成；R7-B001 已重分类为 validation-model false positive；R7-B002 当时被视为授权 CloudBase Web 上真实且阻断准入的 security-hardening gap；
 - Task 3.9.3-R7-D1-F1：当前 runbook 的 browser env、preconditions、Web deployment、security-header、provenance 与 smoke 合同已统一为 multi-origin 模型；
-- Task 3.9.3-R7-D2B：公开入口重新预检确认 CloudBase Web 仍为 0/6；因 CloudBase control-plane operator 登录态不存在，目标身份门禁无法完成，Hosted mutation 未执行，R7-B002 仍开放；
-- Trial Admission：NOT ADMITTED；
+- Task 3.9.3-R7-D2B / R1 / R2 / R2A / R2B：进一步确认 CloudBase Web 仍为 0/6，并定位到 Static Hosting CDN 与受限 CAM role 的 fail-closed 控制面边界；全过程 Hosted mutation 为 NONE；
+- Task 3.9.3-R7-D3：人工治理决定将 CloudBase 设为 primary Trial Web、Vercel 设为 secondary / fallback / comparison，并把 R7-B002 重分类为 `DEFERRED HARDENING — REQUIRED BEFORE PRODUCTION ADMISSION`；这是风险接受与排期决定，不是技术修复、关闭或风险豁免；
+- Trial Admission：`NOT ADMITTED — FRESH FULL TRIAL SMOKE/E2E REQUIRED`；CloudBase 0/6 不再单独阻断该 fresh E2E 或受控 Trial progression；
 - Production：NOT CONFIGURED。
 
 > Task 3.9.1 historical baseline statement：Task 3.9.1 完成时仅建立
@@ -42,7 +47,7 @@ Task 3.9.2-R1 是一次 deployment-discovered repository remediation：它只加
 | Secrets        | 未跟踪的本地环境或 CLI 本地状态 | 平台 Secret 管理                    | 独立平台 Secret 管理 |
 | Verification   | pgTAP、集成、并发与完整重建     | 非破坏性 Smoke/E2E                  | 独立生产准入         |
 
-Vercel 与 CloudBase 是同一 Trial 的两个授权 Web frontend origin，不是两套 backend；CloudBase Web 静态托管也不等于 CloudBase 业务桥接已实现。三类环境不得共用数据库、Auth 用户、Edge Function Secret 或 Web hosting 环境变量。`supabase/config.toml` 只描述本地开发配置，不是远端 Trial 或 Production 配置的权威副本。V1.3 方案中的 Vercel-only 当前架构表述留待独立方案治理任务同步，本任务不修改最高级方案文件。
+Vercel 与 CloudBase 是同一 Trial 的两个授权 Web frontend origin，不是两套 backend；当前正式优先级为 `PRIMARY = CLOUDBASE`、`SECONDARY / FALLBACK / COMPARISON = VERCEL`。CloudBase Web 静态托管也不等于 CloudBase 业务桥接已实现。三类环境不得共用数据库、Auth 用户、Edge Function Secret 或 Web hosting 环境变量。`supabase/config.toml` 只描述本地开发配置，不是远端 Trial 或 Production 配置的权威副本。V1.3 方案中的 Vercel-only 当前架构表述留待独立方案治理任务同步，本任务不修改最高级方案文件。
 
 ## 2. Preconditions
 
@@ -355,7 +360,7 @@ npx supabase functions deploy invite-workspace-member --project-ref $env:SUPABAS
 
 ### 9.1 Vercel Trial
 
-Vercel Trial 必须是与 Production 分离的项目或受控环境。当前工程要求：
+Vercel Trial 是当前 secondary / fallback / comparison Web origin，必须是与 Production 分离的项目或受控环境。当前工程要求：
 
 | 项目        | 值                                           |
 | ----------- | -------------------------------------------- |
@@ -374,7 +379,7 @@ Trial Vercel 部署已由 Task 3.9.2 的已授权人员在 Vercel 完成。
 
 ### 9.2 CloudBase Web Trial
 
-CloudBase Web Trial 使用与 Vercel 相同的 `npm ci` / `npm run build` 流程和 `dist` 静态制品，但必须在 CloudBase 自己的受控平台环境中独立完成：
+CloudBase Web Trial 是当前 primary Web origin，使用与 Vercel 相同的 `npm ci` / `npm run build` 流程和 `dist` 静态制品，但必须在 CloudBase 自己的受控平台环境中独立完成：
 
 - 配置两个 browser-safe Supabase 变量并指向同一个权威 Supabase Trial；
 - 配置适合该平台的 SPA fallback / rewrite，使 root、login、Auth 确认页与受保护 deep link 均由 React app 正确处理；
@@ -396,6 +401,8 @@ CloudBase Web Trial 使用与 Vercel 相同的 `npm ci` / `npm run build` 流程
 - `X-Permitted-Cross-Domain-Policies`。
 
 `vercel.json` 中的 header 配置只作用于 Vercel。CloudBase 必须通过适合自身平台的机制实现相同安全结果，不要求复制 Vercel 的内部配置方式；任一授权 origin 缺失共同 baseline 都必须独立记录，不得用另一 origin 的 6/6 结果覆盖。
+
+当前 CloudBase 结果为 0/6，Vercel 为 6/6；已测试 browser routes 存在 functional parity，但不存在 security-header parity。D3 的受控 Trial 治理决定允许在持续记录该已知风险的前提下执行 fresh full Trial Smoke/E2E；它不把 CloudBase 0/6 标记为 PASS、REMEDIATED、CLOSED 或安全等价。六项 baseline 仍是 CloudBase 主入口在 Production Admission 前必须完成并重新验证的 hardening gate。
 
 ## 10. Deployment version traceability
 
@@ -423,7 +430,7 @@ Vercel 使用 Vercel-specific provenance，CloudBase 使用 CloudBase-appropriat
 
 ## 11. Smoke checklist
 
-Task 3.9.3 必须在真实 Trial 和真实浏览器中完成，并明确区分人工与自动化证据。首先确认单一 Supabase Trial、Edge Function 与所有正式授权 Web frontend origins 均可追溯；随后对每个正式 Web origin 分别验证：HTTPS、root page、login、SPA/deep-link fallback、browser-safe Supabase target、六项 browser security headers、deployment provenance 与 Auth redirect compatibility。
+Task 3.9.3 必须在真实 Trial 和真实浏览器中完成，并明确区分人工与自动化证据。首先确认单一 Supabase Trial、Edge Function 与所有正式授权 Web frontend origins 均可追溯；随后对每个正式 Web origin 分别验证：HTTPS、root page、login、SPA/deep-link fallback、browser-safe Supabase target、六项 browser security headers、deployment provenance 与 Auth redirect compatibility。D3 之后的 fresh full E2E 以 CloudBase 为 primary origin 执行真实业务闭环，以 Vercel 进行 authorized-origin compatibility、fallback 与必要的 cross-origin comparison。
 
 Site URL / default landing origin 必须执行完整 Auth 与 core E2E：
 
@@ -444,7 +451,7 @@ Site URL / default landing origin 必须执行完整 Auth 与 core E2E：
 
 对于其他正式授权 origin，至少分别完成 home/login、受保护 deep link、Auth redirect compatibility、HTTPS、SPA fallback、browser-safe Supabase target、六项 browser headers 与 deployment provenance。若 Auth 的第一落点固定到 Site URL，这些兼容性检查仍不能替代 Site URL origin 上的完整 Auth/core E2E，也不能把另一 origin 的完整闭环结果自动外推为本 origin 的 hosting validation PASS。
 
-上述 multi-origin checklist 是下一轮 fresh Trial Admission 的执行合同；R7-D1 与本次 runbook 修复均未重新执行这些 E2E，不得据此补写 PASS。
+上述 multi-origin checklist 是下一轮 fresh Trial Admission 的执行合同；R7-D1 与 D3 均未重新执行这些 E2E，不得据此补写 PASS。CloudBase 0/6 必须在 E2E 报告中继续记为 `KNOWN DEFERRED PRODUCTION HARDENING`；除非 fresh E2E 出现证据证明该 gap 已造成实际 Trial 功能、安全或认证流程失败，否则不得仅因既知 0/6 将其重新升级为 Trial blocker。
 
 Task 3.9.1 historical baseline statement：Task 3.9.1 不声称完成上述远端 Smoke/E2E；Task 3.9.3-R6 已在后续独立授权中执行，并因 mandatory member activation blocker 判定 NOT ADMITTED。
 
@@ -621,21 +628,21 @@ R7-D1 从准确 `origin/main` 基线 `60796ddb4989711923f0546ef42fb326c6bb189d` 
 #### R7 findings reclassification
 
 - `R7-B001` historical classification：Blocker — Hosted origin 不能追溯到授权 Vercel exact-main deployment。D1 new classification：`SUPERSEDED / FALSE POSITIVE`，分类 D（Validation-model false positive）。证据：现行架构允许 Vercel 与 CloudBase 两个 Trial Web origin；Site URL 明确分类为 `CLOUDBASE_TRIAL_ORIGIN`，allowlist 同时覆盖两端，CloudBase 关键 SPA 路由可用且公开制品与 exact-main Vercel 逐字节一致。影响：撤销“非 Vercel 即非法 origin”的判断，但不把制品一致性冒充 CloudBase control-plane provenance。建议：后续验证模型使用 authorized-origin set，并在有现成登录态时补齐 CloudBase deployment ID / exact-SHA 控制面证据。
-- `R7-B002` historical classification：Blocker — Hosted actual origin 缺少 6 项 mandatory headers。D1 new classification：`REAL SECURITY HARDENING GAP`，分类 B，Severity `Major (admission-blocking)`。证据：授权 Vercel 为 6/6，承载 Invite / Recovery TokenHash 第一落点的授权 CloudBase 为 0/6。影响：缺少 HSTS、frame protection、nosniff、referrer policy、permissions policy 与 cross-domain policy；其中 TLS 降级防护、clickjacking 与 MIME sniffing 直接覆盖认证确认页和受保护业务 UI，结合当前应用数据敏感度，不满足 Trial Admission。建议：独立授权的 CloudBase hosting hardening 后重验 6/6，再执行 fresh full Trial E2E；R7-D1 不实施修复。
+- `R7-B002` historical classification：Blocker — Hosted actual origin 缺少 6 项 mandatory headers。D1 当时的 classification：`REAL SECURITY HARDENING GAP`，分类 B，Severity `Major (admission-blocking)`。证据：授权 Vercel 为 6/6，承载 Invite / Recovery TokenHash 第一落点的授权 CloudBase 为 0/6。影响：缺少 HSTS、frame protection、nosniff、referrer policy、permissions policy 与 cross-domain policy；其中 TLS 降级防护、clickjacking 与 MIME sniffing 直接覆盖认证确认页和受保护业务 UI。D1 当时建议先完成 hardening 再执行 fresh full Trial E2E；该准入排期已由下方 D3 人工治理决定取代，技术风险事实没有被推翻。
 
-D1 Finding 分类：
+D1 当时的 Finding 分类（historical；R7-B002 当前分类见 D3）：
 
 - A Functional defect：无已证实项。
-- B Security-hardening gap：`R7-B002`，Severity `Major (admission-blocking)`；证据、影响与建议见上方 reclassification。
+- B Security-hardening gap：`R7-B002`，当时的 Severity `Major (admission-blocking)`；证据、影响与当时建议见上方 historical reclassification。
 - C Environment/configuration defect：无已证实项。
 - D Validation-model false positive：`R7-B001`，Severity `Historical Blocker superseded`；证据、影响与建议见上方 reclassification。
 - E Documentation drift：`R7-D1-E001`，Severity `Minor`，Status `CORRECTED`。证据：D1 初始文档虽已修正 environment model，但本 runbook 的 browser env、Preconditions、deployment section、provenance 与 smoke contract 仍残留 Vercel-only 当前规则；D1-F1 已将这些 current contracts 全部统一为 multi-origin 模型，并保留 Vercel-specific 与 historical 语义。影响：避免再次把合法 CloudBase Web 误判为未知入口或用 Vercel evidence 代替 CloudBase evidence。V1.3 最高级方案的完整同步仍由独立 V1.4 治理任务处理，本轮不修改 V1.3。
 - F Not executed / insufficient evidence：`R7-D1-F001`，Severity `Evidence gate`。证据：CloudBase control plane 与 Vercel CLI account-level inspection 均需要当前不存在的登录态；前者未取得 deployment ID / exact-SHA 控制面追溯，后者已有 GitHub exact-SHA Deployment 等价证据。影响：不得把公开制品一致性写成 CloudBase 控制面 provenance PASS。建议：在后续已授权 hosting hardening 任务中补齐 CloudBase 直接证据。
-- F Not executed / insufficient evidence：`R7-D1-F002`，Severity `Admission gate`。证据：R7-D1 明确禁止真实 Invite、Recovery、token、session、密码和业务写入，历史 R7 又在前置门禁停止。影响：即使配置合同兼容，也不能把 Trial 改写为 ADMITTED。建议：安全加固和独立审计后，从 fresh exact-main 基线执行完整 mandatory E2E。
+- F Not executed / insufficient evidence：`R7-D1-F002`，Severity `Admission gate`。证据：R7-D1 明确禁止真实 Invite、Recovery、token、session、密码和业务写入，历史 R7 又在前置门禁停止。影响：即使配置合同兼容，也不能把 Trial 改写为 ADMITTED。D1 当时建议安全加固和独立审计后再执行完整 mandatory E2E；该先后顺序已由 D3 重排为先执行 fresh E2E、将 hardening 保留为 Production gate。
 
 F 类限制不把未执行项补写成 PASS，并须在最终准入前关闭。
 
-确定性结论：R7 的历史 `TRIAL ADMISSION: NOT ADMITTED` 不改写；R7-D1 后仍为 `TRIAL ADMISSION: NOT ADMITTED — CLOUDBASE SECURITY HARDENING BLOCKER REMAINS`。推荐 `PATH B — Hosting hardening required`：先完成 CloudBase 6 项安全响应头加固及独立审计，再从 fresh exact-main 基线执行完整 Trial Smoke/E2E；只有完整闭环真实通过后才可重新判定准入。
+D1 当时的确定性结论：R7 的历史 `TRIAL ADMISSION: NOT ADMITTED` 不改写；R7-D1 后为 `TRIAL ADMISSION: NOT ADMITTED — CLOUDBASE SECURITY HARDENING BLOCKER REMAINS`，并推荐 `PATH B — Hosting hardening required`。这段保留为历史决策记录；其“先 hardening、后 E2E”的当前 gate 语义已由下方 D3 人工治理决定重新分类，但 fresh full Trial E2E 通过前 Trial 仍不得改为 ADMITTED。
 
 ```text
 RUNTIME CODE CHANGED: NO
@@ -696,7 +703,7 @@ UNCHANGED: routing, domain bindings, deployment artifact, browser env,
 NO EXTRA HEADERS: CSP, COOP, COEP, CORP, CORS or other policy additions
 ```
 
-由于身份门禁未通过，`after 6/6`、传播后 route matrix、direct control-plane provenance 与 SPA/routes unchanged 的 before/after 证明均为 `NOT_EXECUTED`，不得补写成 PASS。当前确定性结论：`R7-B001 = SUPERSEDED / FALSE POSITIVE`；`R7-B002 = REMAINS OPEN — CLOUDBASE_OPERATOR_LOGIN_REQUIRED`；`TRIAL ADMISSION = NOT ADMITTED — CLOUDBASE SECURITY HARDENING BLOCKER REMAINS`。即使后续完成 6/6，加固状态也只能先记为 `REMEDIATED — PENDING INDEPENDENT AUDIT`，并须从 fresh exact-main 基线完成 full Trial Smoke/E2E 后才能重新判定准入。
+由于身份门禁未通过，`after 6/6`、传播后 route matrix、direct control-plane provenance 与 SPA/routes unchanged 的 before/after 证明均为 `NOT_EXECUTED`，不得补写成 PASS。D2B 当时的确定性结论为：`R7-B001 = SUPERSEDED / FALSE POSITIVE`；`R7-B002 = REMAINS OPEN — CLOUDBASE_OPERATOR_LOGIN_REQUIRED`；`TRIAL ADMISSION = NOT ADMITTED — CLOUDBASE SECURITY HARDENING BLOCKER REMAINS`。该段保留 D2B 当时的 fail-closed 结果；后续 R1 / R2 / R2A / R2B 与 D3 的治理结论见下方。即使未来完成 6/6，加固状态也只能先记为 `REMEDIATED — PENDING INDEPENDENT AUDIT`，不能由配置写入直接推导 Production Admission。
 
 ```text
 HOSTED CONFIG MUTATED: NO
@@ -709,6 +716,27 @@ PRODUCTION MUTATED: NO
 PR #33 CHANGED: NO
 TRIAL ADMISSION CHANGED TO ADMITTED: NO
 ```
+
+### Task 3.9.3-R7-D3 Trial Governance Reclassification（2026-08-28）
+
+D2B 之后的 R1 / R2 / R2A / R2B 继续以 fail-closed 方式定位 CloudBase header gap：真实公开源站为 Static Hosting CDN direct origin，不经过 HTTP Gateway；CDN read-only API 因 CAM authorization 被拒绝；当前 caller 是同一腾讯云主账号下的 assumed CAM Role；该平台 role 的 CAM metadata 无法读取，因此不能安全识别可授权 principal 或自行扩权。全过程未修改 CloudBase hosting、CDN、HTTP Gateway、Supabase、Vercel、Production、Recovery、Auth、SMTP、用户或业务数据，`HOSTED MUTATION = NONE`。
+
+人工批准的当前治理状态为：
+
+```text
+PRIMARY TRIAL WEB: CLOUDBASE
+SECONDARY / FALLBACK / COMPARISON TRIAL WEB: VERCEL
+R7-B001: SUPERSEDED / FALSE POSITIVE
+R7-B002: DEFERRED HARDENING — REQUIRED BEFORE PRODUCTION ADMISSION
+TRIAL ADMISSION: NOT ADMITTED — FRESH FULL TRIAL SMOKE/E2E REQUIRED
+PRODUCTION: NOT CONFIGURED
+```
+
+R7-B002 仍是真实的 0/6 security-hardening gap，不是 PASS、REMEDIATED、CLOSED 或 FALSE POSITIVE。D3 只进行 risk acceptance / scheduling：该 gap 不再独立阻断受控 Trial progression 或下一轮 fresh full Trial Smoke/E2E；这不是技术修复，也不是 Production 风险豁免。允许继续 Trial 的边界是：Trial 为受控测试环境，使用受控测试账号和低风险业务数据；Production 尚未配置；该 header gap 不改变 Supabase RLS、Auth 或单一 backend authority；当前也没有证据证明它已导致 Trial 核心业务流程失败。此边界不表示安全风险为零。
+
+下一独立任务必须主要通过 CloudBase 执行真实 Trial Auth 与 core business E2E，Vercel 只作为 secondary / fallback / authorized-origin comparison。上一轮 Final R7 在写入型多用户核心闭环前 fail closed，因此不存在新的完整 E2E PASS 证据；D3 不发送 invitation / recovery email、不消费 TokenHash、不执行 `verifyOtp`、不设置密码、不登录、不创建业务数据，也不改变 Trial Admission。
+
+Production Admission 前必须重新处理并验证 CloudBase 主入口的 HTTPS、六项 security headers、hosting provenance、browser environment、Auth redirects 与 deployment integrity，并同时通过其他 Production gates。`DEFERRED FOR TRIAL` 不等于 `WAIVED FOR PRODUCTION`；当前 Production Admission 仍被 CloudBase security hardening 和其他未完成的 Production gates 阻断。
 
 ## 12. Rollback
 
@@ -1005,7 +1033,8 @@ active Trial/Production 未修改和独立复核全部成立后，才可另行�
 > 范围边界。其中 Trial Supabase/Vercel 创建与部署已由 Task 3.9.2 完成，Recovery
 > Drill 已由 Task 3.9.3 完成；R6 与 R7 均已执行并判定 NOT ADMITTED；其余项目仍未执行并继续延期到后续授权任务：
 
-- Task 3.9.3 后续独立任务：按 `{ VERCEL_TRIAL_ORIGIN, CLOUDBASE_TRIAL_ORIGIN }` authorized-origin set 完成 CloudBase browser security header hardening，补齐 CloudBase control-plane provenance，并在独立审计后从准确基线重新执行全量 Trial Smoke/E2E 与准入；
+- Task 3.9.3 后续独立任务：从准确基线执行全量 Trial Smoke/E2E 与准入判断；以 CloudBase 为 primary Web origin 完成真实业务闭环，以 Vercel 为 secondary / fallback / comparison，并持续把 CloudBase 0/6 记录为 `KNOWN DEFERRED PRODUCTION HARDENING`；
+- Production Admission 前置任务：完成并独立验证 CloudBase browser security header hardening、control-plane provenance、HTTPS、browser environment、Auth redirects 与 deployment integrity；`DEFERRED FOR TRIAL` 不得解释为 `WAIVED FOR PRODUCTION`；
 - 方案治理后续：`FOLLOW_UP_REQUIRED: Repository plan version needs V1.4 sync`；本任务不修改 V1.3 最高级方案文件；
 - Production Supabase / Web hosting 创建、配置、迁移、域名和正式数据；
 - Stage 4 工作台、通知、提醒、通用日志、回收站；

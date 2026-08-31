@@ -9,8 +9,10 @@
 TRIAL DEPLOYMENT COMPLETE
 RECOVERY DRILL COMPLETE
 PREVIOUS FINAL TRIAL SMOKE/E2E EXECUTED — FAIL
-FRESH FULL TRIAL SMOKE/E2E REQUIRED
-TRIAL ADMISSION NOT ADMITTED
+FRESH FULL TRIAL BUSINESS E2E PASS
+TRIAL ADMISSION CANDIDATE ADMITTED
+ADMISSION EFFECTIVE AFTER INDEPENDENT AUDIT + MERGE
+CURRENT SEALED MAIN TRIAL ADMISSION NOT ADMITTED UNTIL AUDIT + MERGE
 CLOUDBASE PRIMARY TRIAL WEB
 VERCEL SECONDARY / FALLBACK TRIAL WEB
 CLOUDBASE SECURITY HARDENING DEFERRED TO PRODUCTION GATE
@@ -24,7 +26,8 @@ PRODUCTION NOT CONFIGURED
 - Task 3.9.3-R7-D1-F1：当前 runbook 的 browser env、preconditions、Web deployment、security-header、provenance 与 smoke 合同已统一为 multi-origin 模型；
 - Task 3.9.3-R7-D2B / R1 / R2 / R2A / R2B：进一步确认 CloudBase Web 仍为 0/6，并定位到 Static Hosting CDN 与受限 CAM role 的 fail-closed 控制面边界；全过程 Hosted mutation 为 NONE；
 - Task 3.9.3-R7-D3：人工治理决定将 CloudBase 设为 primary Trial Web、Vercel 设为 secondary / fallback / comparison，并把 R7-B002 重分类为 `DEFERRED HARDENING — REQUIRED BEFORE PRODUCTION ADMISSION`；这是风险接受与排期决定，不是技术修复、关闭或风险豁免；
-- Trial Admission：`NOT ADMITTED — FRESH FULL TRIAL SMOKE/E2E REQUIRED`；CloudBase 0/6 不再单独阻断该 fresh E2E 或受控 Trial progression；
+- Task 3.9.3-R8：以准确 main `0f6ed24898201d8bcf8a926fe8f35906fd9ff65a` 为基线完成 CloudBase-primary fresh full Trial Business E2E；Owner / Member 新登录、中文 synthetic 核心业务闭环、Stage 4.1 一致性与完成态冻结均为 PASS；
+- Trial Admission candidate：`ADMITTED`，经独立审计并合并到 main 后生效；当前 sealed main 状态在此之前不变；
 - Production：NOT CONFIGURED。
 
 > Task 3.9.1 historical baseline statement：Task 3.9.1 完成时仅建立
@@ -738,6 +741,35 @@ R7-B002 仍是真实的 0/6 security-hardening gap，不是 PASS、REMEDIATED、
 
 Production Admission 前必须重新处理并验证 CloudBase 主入口的 HTTPS、六项 security headers、hosting provenance、browser environment、Auth redirects 与 deployment integrity，并同时通过其他 Production gates。`DEFERRED FOR TRIAL` 不等于 `WAIVED FOR PRODUCTION`；当前 Production Admission 仍被 CloudBase security hardening 和其他未完成的 Production gates 阻断。
 
+### Task 3.9.3-R8 Delta Trial Business E2E（2026-08-31）
+
+R8 从准确 `origin/main` 基线 `0f6ed24898201d8bcf8a926fe8f35906fd9ff65a` 创建 evidence branch，仅在授权的 CloudBase primary Trial Web 中执行低风险 synthetic UI 写入。Vercel 继续作为 secondary / fallback / comparison origin；本轮未执行任何 Web、Edge Function 或数据库部署，未修改 Auth、hosting、header、SMTP、Recovery 或 Production 配置。
+
+Invitation / activation 未重复执行：Owner 明确批准复用既有激活证据，最后一轮邀请修复之后相关 executable implementation 未发生漂移。`INVITATION RE-SENT = NO`、`REAL RECOVERY = NO`、`INVITE TOKEN CONSUMED = NO`、`PASSWORD INITIALIZATION = NOT REPEATED`、`ACTIVATION EVIDENCE REUSE = ACCEPTED FOR R8`。
+
+Fresh Hosted 验证使用现有受控 Owner 与 Member 账号分别重新登录。通过正常中文 UI 创建 `R8-DELTA-*` synthetic 项目、项目成员关系、模块与任务，完成 `待开始 → 进行中 → 已阻塞 → 进行中 → 待验收 → 进行中 → 待验收 → 已完成` 全流程，并验证 30% / 70% / 100% 追加式进展、阻塞原因与恢复、首次验收退回、Member 补充说明并重新提交、Owner 最终通过、审批人与权威完成时间写入及刷新持久化。Owner 与 Member 两侧均验证完成态没有编辑、进展、阻塞、再次提交或重开入口；首页工作台与 `/tasks` 的责任关系、状态、截止日期和 100% 进度保持一致。
+
+```text
+PRIMARY TRIAL WEB: CLOUDBASE
+SECONDARY / FALLBACK / COMPARISON TRIAL WEB: VERCEL
+FRESH OWNER LOGIN: PASS
+FRESH MEMBER LOGIN: PASS
+WORKSPACE MEMBERSHIP: PASS
+FRESH TRIAL BUSINESS E2E: PASS
+STAGE 4.1 CONSISTENCY: PASS
+COMPLETED FREEZE: PASS
+HOSTED OUTSIDER CHECK: NOT REPEATED
+MOBILE CHECK: DEFERRED / NOT REPEATED
+R7-B002: DEFERRED HARDENING — REQUIRED BEFORE PRODUCTION ADMISSION
+TRIAL ADMISSION CANDIDATE: ADMITTED
+CURRENT SEALED MAIN STATUS: UNCHANGED UNTIL INDEPENDENT AUDIT + MERGE
+PRODUCTION: NOT CONFIGURED
+```
+
+Hosted outsider 检查因没有现成受控 outsider 而未重复，未为本轮新建账号或发送邀请；准确 main 的数据库、RLS/RPC 与 credential gates 已通过。真实移动设备检查按任务边界延期，不能据此外推为移动端 PASS。CloudBase 六项安全响应头仍为 0/6 `KNOWN DEFERRED PRODUCTION HARDENING`：不是 PASS、REMEDIATED、CLOSED 或风险豁免，但本轮没有证据显示该既知 gap 导致 Trial Auth 或核心业务流程失败。
+
+R8 的 evidence branch 准入候选结论为 `ADMITTED`，只在独立审计通过并合并到 main 后生效。R7 的历史 NOT ADMITTED 结论不改写；`DEFERRED FOR TRIAL` 仍不等于 `WAIVED FOR PRODUCTION`，Production 保持 `NOT CONFIGURED`。
+
 ## 12. Rollback
 
 ### Frontend rollback
@@ -1031,9 +1063,9 @@ active Trial/Production 未修改和独立复核全部成立后，才可另行�
 
 > Task 3.9.1 historical baseline statement：以下延期清单描述 Task 3.9.1 完成时的
 > 范围边界。其中 Trial Supabase/Vercel 创建与部署已由 Task 3.9.2 完成，Recovery
-> Drill 已由 Task 3.9.3 完成；R6 与 R7 均已执行并判定 NOT ADMITTED；其余项目仍未执行并继续延期到后续授权任务：
+> Drill 已由 Task 3.9.3 完成；R6 与 R7 均已执行并判定 NOT ADMITTED，R8 fresh full Trial Business E2E 已形成 `ADMITTED` evidence candidate；其余项目仍未执行并继续延期到后续授权任务：
 
-- Task 3.9.3 后续独立任务：从准确基线执行全量 Trial Smoke/E2E 与准入判断；以 CloudBase 为 primary Web origin 完成真实业务闭环，以 Vercel 为 secondary / fallback / comparison，并持续把 CloudBase 0/6 记录为 `KNOWN DEFERRED PRODUCTION HARDENING`；
+- R8 evidence branch 的独立审计与 main 合并门禁；通过前 current sealed main status 不变；
 - Production Admission 前置任务：完成并独立验证 CloudBase browser security header hardening、control-plane provenance、HTTPS、browser environment、Auth redirects 与 deployment integrity；`DEFERRED FOR TRIAL` 不得解释为 `WAIVED FOR PRODUCTION`；
 - 方案治理后续：`FOLLOW_UP_REQUIRED: Repository plan version needs V1.4 sync`；本任务不修改 V1.3 最高级方案文件；
 - Production Supabase / Web hosting 创建、配置、迁移、域名和正式数据；

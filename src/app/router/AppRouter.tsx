@@ -29,6 +29,7 @@ import { ProjectTasksPage } from '@/pages/ProjectTasksPage'
 import { ProjectsPage } from '@/pages/ProjectsPage'
 import { SystemHealthPage } from '@/pages/SystemHealthPage'
 import { TaskDetailPage } from '@/pages/TaskDetailPage'
+import { TeamLoadPage } from '@/pages/TeamLoadPage'
 import { ConfirmAccountInvitationPage } from '@/pages/auth/ConfirmAccountInvitationPage'
 import { ConfirmPasswordRecoveryPage } from '@/pages/auth/ConfirmPasswordRecoveryPage'
 import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage'
@@ -107,6 +108,7 @@ export function AppRouter({ resolveClient }: AppRouterProps) {
                           item.path !== '/members' &&
                           item.path !== '/tasks' &&
                           item.path !== '/management' &&
+                          item.path !== '/team-load' &&
                           item.path !== '/projects',
                       )
                       .map((item) => (
@@ -129,6 +131,7 @@ export function AppRouter({ resolveClient }: AppRouterProps) {
                       path="/management"
                       element={<ManagementWorkbenchPage />}
                     />
+                    <Route path="/team-load" element={<TeamLoadPage />} />
                     <Route path="/projects/new" element={<NewProjectPage />} />
                     <Route
                       path="/projects/:projectId"

@@ -81,6 +81,91 @@ describe('项目路由嵌套', () => {
     expect(screen.queryByText(/页面结构已完成/u)).not.toBeInTheDocument()
   })
 
+  it('团队负荷保持认证、工作空间和 AppLayout 门禁，并加载真实聚合页', async () => {
+    const supabase = createSupabaseClientMock({ hasSession: true })
+    supabase.rpc.mockImplementation(async (name: string) => {
+      if (name === 'current_app_user_id') {
+        return { data: FICTIONAL_APP_USER_ID, error: null }
+      }
+      if (name === 'list_my_workspaces') {
+        return { data: [fictionalWorkspace], error: null }
+      }
+      if (name === 'list_my_pending_workspace_invitations') {
+        return { data: [], error: null }
+      }
+      if (name === 'list_projects') {
+        return { data: [projectRow], error: null }
+      }
+      if (name === 'list_project_tasks') {
+        return { data: [], error: null }
+      }
+      if (name === 'list_project_members') {
+        return {
+          data: [
+            {
+              project_id: projectRow.project_id,
+              workspace_id: FICTIONAL_WORKSPACE_ID,
+              app_user_id: FICTIONAL_APP_USER_ID,
+              display_name: '虚构负责人',
+              workspace_role: 'owner',
+              project_role: 'owner',
+              joined_at: projectRow.created_at,
+              is_current_user: true,
+              is_active: true,
+              active_member_count: 1,
+              inactive_historical_member_count: 0,
+            },
+          ],
+          error: null,
+        }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/team-load']}>
+        <AppRouter resolveClient={readyResolver(supabase)} />
+      </MemoryRouter>,
+    )
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: '团队负荷' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 2, name: '团队负荷' }),
+    ).toBeInTheDocument()
+    expect(await screen.findByText('团队摘要')).toBeInTheDocument()
+    expect(
+      screen
+        .getAllByRole('link', { name: '团队负荷' })
+        .every((link) => link.getAttribute('href') === '/team-load'),
+    ).toBe(true)
+    expect(supabase.rpc).toHaveBeenCalledWith('list_project_tasks', {
+      p_project_id: projectRow.project_id,
+    })
+    expect(supabase.rpc).toHaveBeenCalledWith('list_project_members', {
+      p_project_id: projectRow.project_id,
+    })
+    expect(screen.queryByText(/页面结构已完成/u)).not.toBeInTheDocument()
+  })
+
+  it('未登录访问团队负荷时进入登录页且不读取项目数据', async () => {
+    const supabase = createSupabaseClientMock({ hasSession: false })
+
+    render(
+      <MemoryRouter initialEntries={['/team-load']}>
+        <AppRouter resolveClient={readyResolver(supabase)} />
+      </MemoryRouter>,
+    )
+
+    expect(
+      await screen.findByRole('heading', { level: 2, name: '登录' }),
+    ).toBeInTheDocument()
+    expect(
+      supabase.rpc.mock.calls.some(([name]) => name === 'list_projects'),
+    ).toBe(false)
+  })
+
   it('项目列表保持认证、工作空间和 AppLayout 门禁，并使用项目页标题', async () => {
     const supabase = createSupabaseClientMock({ hasSession: true })
     supabase.rpc.mockImplementation(async (name: string) => {

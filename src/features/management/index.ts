@@ -3,6 +3,8 @@ export { ManagementHealthBadge } from '@/features/management/ManagementHealthBad
 export { ManagementProjectCard } from '@/features/management/ManagementProjectCard'
 export { ManagementRecentTasks } from '@/features/management/ManagementRecentTasks'
 export { ManagementSummaryCard } from '@/features/management/ManagementSummaryCard'
+export { TeamLoadMemberCard } from '@/features/management/TeamLoadMemberCard'
+export { TeamLoadSummaryCard } from '@/features/management/TeamLoadSummaryCard'
 export {
   buildManagementWorkbenchSnapshot,
   calculateManagementProjectHealth,
@@ -33,6 +35,22 @@ export type {
   ManagementWorkbenchSummary,
 } from '@/features/management/managementWorkbench'
 export {
+  buildTeamLoadSnapshot,
+  calculateKnownRemainingHours,
+  formatTeamLoadHours,
+  isTeamLoadExecutionTask,
+  sortTeamLoadMembers,
+  teamLoadExecutionStatuses,
+  teamLoadSignalLabels,
+} from '@/features/management/teamLoad'
+export type {
+  TeamLoadMember,
+  TeamLoadProjectBundleLoad,
+  TeamLoadSignal,
+  TeamLoadSnapshot,
+  TeamLoadSummary,
+} from '@/features/management/teamLoad'
+export {
   MANAGEMENT_TASK_LOAD_CONCURRENCY,
   mapWithConcurrency,
   useManagementWorkbench,
@@ -41,3 +59,11 @@ export type {
   ManagementWorkbenchScope,
   ManagementWorkbenchState,
 } from '@/features/management/useManagementWorkbench'
+export {
+  TEAM_LOAD_PROJECT_BUNDLE_CONCURRENCY,
+  useTeamLoad,
+} from '@/features/management/useTeamLoad'
+export type {
+  TeamLoadScope,
+  TeamLoadState,
+} from '@/features/management/useTeamLoad'

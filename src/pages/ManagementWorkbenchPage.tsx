@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { Link } from 'react-router'
 import { EmptyState } from '@/components/feedback/EmptyState'
 import { ErrorState } from '@/components/feedback/ErrorState'
 import { LoadingState } from '@/components/feedback/LoadingState'
@@ -49,6 +50,9 @@ export function ManagementWorkbenchPage() {
           <h2>管理工作台</h2>
           <p>聚合当前负责项目的风险、异常和近期任务动态。</p>
         </div>
+        <Link className="button button-secondary button-md" to="/team-load">
+          查看团队负荷
+        </Link>
       </section>
 
       {state.status === 'loading' && (

@@ -15,6 +15,7 @@ import { AccountActivationPage } from '@/pages/AccountActivationPage'
 import { EditProjectPage } from '@/pages/EditProjectPage'
 import { EditTaskPage } from '@/pages/EditTaskPage'
 import { HomePage } from '@/pages/HomePage'
+import { ManagementWorkbenchPage } from '@/pages/ManagementWorkbenchPage'
 import { MembersPage } from '@/pages/MembersPage'
 import { MyTasksPage } from '@/pages/MyTasksPage'
 import { NewProjectPage } from '@/pages/NewProjectPage'
@@ -105,6 +106,7 @@ export function AppRouter({ resolveClient }: AppRouterProps) {
                           item.path !== '/settings' &&
                           item.path !== '/members' &&
                           item.path !== '/tasks' &&
+                          item.path !== '/management' &&
                           item.path !== '/projects',
                       )
                       .map((item) => (
@@ -123,6 +125,10 @@ export function AppRouter({ resolveClient }: AppRouterProps) {
                     ))}
                     <Route path="/projects" element={<ProjectsPage />} />
                     <Route path="/tasks" element={<MyTasksPage />} />
+                    <Route
+                      path="/management"
+                      element={<ManagementWorkbenchPage />}
+                    />
                     <Route path="/projects/new" element={<NewProjectPage />} />
                     <Route
                       path="/projects/:projectId"

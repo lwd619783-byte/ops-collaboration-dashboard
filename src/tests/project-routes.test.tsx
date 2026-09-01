@@ -33,6 +33,54 @@ function readyResolver(supabase: ReturnType<typeof createSupabaseClientMock>) {
 }
 
 describe('项目路由嵌套', () => {
+  it('管理工作台保持认证、工作空间和 AppLayout 门禁，并加载真实聚合页', async () => {
+    const supabase = createSupabaseClientMock({ hasSession: true })
+    supabase.rpc.mockImplementation(async (name: string) => {
+      if (name === 'current_app_user_id') {
+        return { data: FICTIONAL_APP_USER_ID, error: null }
+      }
+      if (name === 'list_my_workspaces') {
+        return { data: [fictionalWorkspace], error: null }
+      }
+      if (name === 'list_my_pending_workspace_invitations') {
+        return { data: [], error: null }
+      }
+      if (name === 'list_projects') {
+        return { data: [projectRow], error: null }
+      }
+      if (name === 'list_project_tasks') {
+        return { data: [], error: null }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/management']}>
+        <AppRouter resolveClient={readyResolver(supabase)} />
+      </MemoryRouter>,
+    )
+
+    expect(
+      await screen.findByRole('heading', {
+        level: 1,
+        name: '管理工作台',
+      }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 2, name: '管理工作台' }),
+    ).toBeInTheDocument()
+    expect(await screen.findByText('管理摘要')).toBeInTheDocument()
+    expect(
+      screen
+        .getAllByRole('link', { name: '管理工作台' })
+        .every((link) => link.getAttribute('href') === '/management'),
+    ).toBe(true)
+    expect(supabase.rpc).toHaveBeenCalledWith('list_project_tasks', {
+      p_project_id: projectRow.project_id,
+    })
+    expect(screen.queryByText(/页面结构已完成/u)).not.toBeInTheDocument()
+  })
+
   it('项目列表保持认证、工作空间和 AppLayout 门禁，并使用项目页标题', async () => {
     const supabase = createSupabaseClientMock({ hasSession: true })
     supabase.rpc.mockImplementation(async (name: string) => {

@@ -22,6 +22,7 @@ describe('安全 returnTo 校验', () => {
     '/members',
     '/settings',
     '/my-tasks',
+    '/management?view=attention#blocked',
     '/team-load',
     '/notifications',
   ])('接受内部路径: %s', (value) => {
@@ -54,6 +55,7 @@ describe('安全 returnTo 校验', () => {
     `/projects/${projectId}/tasks/not-a-uuid`,
     `/projects/${projectId}/tasks/${taskId}/delete`,
     `/projects/${projectId}/tasks/${taskId}/edit/extra`,
+    '/management/extra',
     '/projects%0a%0d',
     ' /projects',
     '',

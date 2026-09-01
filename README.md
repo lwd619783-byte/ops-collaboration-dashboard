@@ -12,9 +12,11 @@ Task 0.1 至 Task 1.4 已建立前端、数据库、统一身份、网页登录�
 
 Stage 4.1 已实现首页个人工作台与 `/tasks` 跨项目任务中心，复用同一个 `list_my_tasks(p_workspace_id)` 只读 RPC，并以现有项目/任务权限函数限制责任任务范围。对应 migration 已部署到 Trial，`public.list_my_tasks(uuid)` 远端验证与 Hosted Trial 真实浏览器验证均为 PASS。Task 3.9.3-R8 复用 Owner 批准的既有激活证据且确认邀请实现没有后续漂移，没有重发邀请、消费 token、执行真实恢复或重复初始化密码；随后在 CloudBase primary Trial Web 完成 Owner / Member fresh login、项目成员关系、模块、任务、进展、阻塞恢复、两轮验收和完成态冻结。工作台与 `/tasks` 一致性为 PASS。R8 的 Trial Admission evidence candidate 为 `ADMITTED`，经独立审计并合并到 main 后生效；R7 历史结果不改写。CloudBase 6 项安全响应头仍为 0/6，继续作为 Production Admission 前必须处理的 hardening gate。Recovery Drill 已完成；Local Database Credential Bootstrap V1 仅是 Windows 本机 operator tooling，不授予 write、migration、PLAN 或 APPLY 权限。Production Supabase 与 Production Web hosting 仍未创建或配置。
 
+Stage 4.2 Management Workbench V1 已完成并合入 `main`。Stage 4.3 Team Load Overview V1 已在当前功能分支实现，仍须经过准确 branch-head CI 与独立远端终局审计；本地实现不改变 Hosted Trial 或 Production 状态。
+
 ## 第一阶段边界
 
-当前数据库包含健康检查、统一身份、工作空间权限以及项目、成员、有序模块、项目任务、受控任务状态机、状态历史、追加式每日进展、验收记录和跨项目个人责任任务只读 RPC。前端已提供邮箱密码登录、密码恢复、个人资料、工作空间门禁、成员目录、邀请激活，项目闭环、任务核心闭环、首页个人工作台和 `/tasks` 个人任务中心。当前仍不含通知 / 提醒、已完成重开、管理者综合工作台、团队负荷、微信小程序、CloudBase 业务桥接、归档恢复或物理删除，也不扩大工作空间所有权、邀请、账号绑定、外部平台、生产 SMTP 或远端部署边界。
+当前数据库包含健康检查、统一身份、工作空间权限以及项目、成员、有序模块、项目任务、受控任务状态机、状态历史、追加式每日进展、验收记录和跨项目个人责任任务只读 RPC。前端已提供邮箱密码登录、密码恢复、个人资料、工作空间门禁、成员目录、邀请激活，项目闭环、任务核心闭环、首页个人工作台、`/tasks` 个人任务中心、Stage 4.2 管理工作台，以及当前功能分支实现的 Stage 4.3 团队负荷概览 V1。当前仍不含通知 / 提醒、已完成重开、微信小程序、CloudBase 业务桥接、归档恢复或物理删除，也不扩大工作空间所有权、邀请、账号绑定、外部平台、生产 SMTP 或远端部署边界。
 
 ## 技术栈
 
@@ -107,4 +109,4 @@ src/
 
 ## 当前未实现功能
 
-本仓库已实现身份、认证、工作空间成员权限 V1、项目 CRUD / 可见性 / 归档 V1、项目成员 / 牵头人 V1、项目工作模块 V1、Task 3.1–3.5 任务核心闭环，以及 Stage 4.1 首页个人工作台和跨项目“我的任务”V1；但**尚未实现或执行**公开注册、项目邀请 / 审批、拖拽状态修改、已完成重开、通知 / 提醒、管理者综合工作台、团队负荷、私人任务 / 个人空间、归档恢复或物理删除、工作空间所有权转移 / 删除、成员永久删除、批量项目成员操作、完整邀请撤销 / 重发界面、确认 Auth 用户跨工作空间自动加入、微信小程序、CloudBase 业务桥接、飞书、通用审计日志、生产 SMTP、Vercel Production 配置或 Production Supabase 部署。这些能力只能在新的、明确授权的任务中增加。
+本仓库已实现身份、认证、工作空间成员权限 V1、项目 CRUD / 可见性 / 归档 V1、项目成员 / 牵头人 V1、项目工作模块 V1、Task 3.1–3.5 任务核心闭环、Stage 4.1 首页个人工作台和跨项目“我的任务”V1、Stage 4.2 管理工作台；Stage 4.3 团队负荷概览 V1 已在当前功能分支实现。但**尚未实现或执行**公开注册、项目邀请 / 审批、拖拽状态修改、已完成重开、通知 / 提醒、私人任务 / 个人空间、归档恢复或物理删除、工作空间所有权转移 / 删除、成员永久删除、批量项目成员操作、完整邀请撤销 / 重发界面、确认 Auth 用户跨工作空间自动加入、微信小程序、CloudBase 业务桥接、飞书、通用审计日志、生产 SMTP、Vercel Production 配置或 Production Supabase 部署。这些能力只能在新的、明确授权的任务中增加。

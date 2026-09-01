@@ -354,7 +354,7 @@ describe('管理者工作台页面', () => {
       healthyProject.project_id,
       FICTIONAL_WORKSPACE_ID,
       '虚构正常任务',
-      { due_date: '2999-01-01', updated_at: '2026-08-25T10:00:00Z' },
+      { due_date: '2999-01-01', updated_at: new Date().toISOString() },
     )
     renderManagement(
       projectValue(
@@ -364,7 +364,12 @@ describe('管理者工作台页面', () => {
         vi.fn(async ({ projectId }) =>
           taskSuccess(
             projectId === PROJECT_A
-              ? [overdueTask, blockedTask, reviewTask, staleTask]
+              ? [
+                  { ...overdueTask, updated_at: healthyTask.updated_at },
+                  { ...blockedTask, updated_at: healthyTask.updated_at },
+                  { ...reviewTask, updated_at: healthyTask.updated_at },
+                  staleTask,
+                ]
               : [healthyTask],
           ),
         ),

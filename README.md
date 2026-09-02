@@ -1,6 +1,6 @@
 # 运维协同看板
 
-> Task 0.1–3.5 已完成远端独立审计、PR CI 和 Squash 合并，Stage 3 Web Core MVP 已封板。Stage 4.1 已完成首页工作台 V1、跨项目“我的任务”V1 与数据库权威的 `list_my_tasks(p_workspace_id)` 只读 RPC；migration、远端 RPC 与 Hosted Trial 真实浏览器验证均为 PASS。Task 3.9.3-R8 已在准确 main 基线上完成 CloudBase-primary fresh full Trial Business E2E，Owner / Member 新登录、中文 synthetic 多用户闭环、Stage 4.1 一致性与完成态冻结均为 PASS；Trial Admission evidence candidate 为 `ADMITTED`，经独立审计并合并到 main 后生效。R7-B002 仍是 CloudBase 0/6 的 `DEFERRED HARDENING — REQUIRED BEFORE PRODUCTION ADMISSION`，不是修复或风险豁免。Recovery Drill 已完成，Production 尚未配置。业务身份仍只通过 `current_app_user_id()` 解析，浏览器不持有高权限凭据。
+> Task 0.1–3.5 已完成远端独立审计、PR CI 和 Squash 合并，Stage 3 Web Core MVP 已封板。Stage 4.1、Stage 4.2 Management Workbench V1 与 Stage 4.3 Team Load Overview V1 均已完成；其中 Stage 4.3 已完成独立远端审计、CI、PR #39 Squash Merge 与 post-merge exact-main CI，并已合入 `main`。`Stage 4 = COMPLETE`，当前 Web milestone 为 `Operations Web MVP 1.0 — SEALED`，Stage 4 / Operations Web MVP 1.0 功能基线为 `47785559d36f1aab1e1ebc4d5f87ecedfafb8877`。Trial Admission 为 `ADMITTED`。CloudBase 是 primary Trial Web，Vercel 是 secondary / fallback / comparison Trial Web；CloudBase 仍存在 0/6 security headers known gap，状态为 `DEFERRED HARDENING — REQUIRED BEFORE PRODUCTION ADMISSION`，不是修复或风险豁免。Production 仍为 `NOT CONFIGURED`。
 
 一个面向互联网部署的轻量化运维协同看板前端工程。
 
@@ -10,13 +10,15 @@
 
 Task 0.1 至 Task 1.4 已建立前端、数据库、统一身份、网页登录与工作空间权限基线。Task 2.1–2.3 已完成项目 CRUD、项目成员/牵头人和有序模块；Task 3.1–3.5 已完成共享任务、只读浏览、受控状态机、每日进展和提交/退回/通过验收闭环。详见 [工作空间与成员权限](docs/workspace-permissions.md)、[项目 CRUD、可见性与归档 V1](docs/project-crud-and-visibility.md)、[项目成员与牵头人 V1](docs/project-membership-and-lead.md)、[项目工作模块 V1](docs/project-modules.md)、[任务数据模型与创建编辑 V1](docs/task-data-model-and-editing.md)、[任务看板与列表 V1](docs/task-board-and-list.md)、[任务状态流转与阻塞 V1](docs/task-status-transitions.md)、[每日任务进展与进度同步 V1](docs/task-daily-progress.md) 和 [任务提交验收、通过与退回 V1](docs/task-review-closure.md)。
 
-Stage 4.1 已实现首页个人工作台与 `/tasks` 跨项目任务中心，复用同一个 `list_my_tasks(p_workspace_id)` 只读 RPC，并以现有项目/任务权限函数限制责任任务范围。对应 migration 已部署到 Trial，`public.list_my_tasks(uuid)` 远端验证与 Hosted Trial 真实浏览器验证均为 PASS。Task 3.9.3-R8 复用 Owner 批准的既有激活证据且确认邀请实现没有后续漂移，没有重发邀请、消费 token、执行真实恢复或重复初始化密码；随后在 CloudBase primary Trial Web 完成 Owner / Member fresh login、项目成员关系、模块、任务、进展、阻塞恢复、两轮验收和完成态冻结。工作台与 `/tasks` 一致性为 PASS。R8 的 Trial Admission evidence candidate 为 `ADMITTED`，经独立审计并合并到 main 后生效；R7 历史结果不改写。CloudBase 6 项安全响应头仍为 0/6，继续作为 Production Admission 前必须处理的 hardening gate。Recovery Drill 已完成；Local Database Credential Bootstrap V1 仅是 Windows 本机 operator tooling，不授予 write、migration、PLAN 或 APPLY 权限。Production Supabase 与 Production Web hosting 仍未创建或配置。
+Stage 4.1 已实现首页个人工作台与 `/tasks` 跨项目任务中心，复用同一个 `list_my_tasks(p_workspace_id)` 只读 RPC，并以现有项目/任务权限函数限制责任任务范围。对应 migration 已部署到 Trial，`public.list_my_tasks(uuid)` 远端验证与 Hosted Trial 真实浏览器验证均为 PASS。Task 3.9.3-R8 复用 Owner 批准的既有激活证据且确认邀请实现没有后续漂移，没有重发邀请、消费 token、执行真实恢复或重复初始化密码；随后在 CloudBase primary Trial Web 完成 Owner / Member fresh login、项目成员关系、模块、任务、进展、阻塞恢复、两轮验收和完成态冻结。工作台与 `/tasks` 一致性为 PASS。R8 已完成独立审计并合入 `main`，当前正式状态为 `Trial Admission = ADMITTED`；R7 历史结果不改写。CloudBase 6 项安全响应头仍为 0/6，继续作为 `DEFERRED HARDENING — REQUIRED BEFORE PRODUCTION ADMISSION` 的 hardening gate。Recovery Drill 已完成；Local Database Credential Bootstrap V1 仅是 Windows 本机 operator tooling，不授予 write、migration、PLAN 或 APPLY 权限。Production Supabase 与 Production Web hosting 仍未创建或配置，`Production = NOT CONFIGURED`。
 
-Stage 4.2 Management Workbench V1 已完成并合入 `main`。Stage 4.3 Team Load Overview V1 已在当前功能分支实现，仍须经过准确 branch-head CI 与独立远端终局审计；本地实现不改变 Hosted Trial 或 Production 状态。
+Stage 4.2 Management Workbench V1 已完成并通过 PR #33 合入 `main`。Stage 4.3 Team Load Overview V1 已完成独立远端审计、CI、PR #39 Squash Merge 与 post-merge exact-main CI，并已合入 `main`。Stage 4.1 / 4.2 / 4.3 均已完成，因此 `Stage 4 = COMPLETE`，当前 Web milestone 为 `Operations Web MVP 1.0 — SEALED`。这里的 `SEALED` 仅表示当前 Web MVP 功能基线已完成、经过审计并进入真实使用反馈阶段，不表示 Production 已上线或已具备 Production Admission。
+
+当前 Web MVP 进入 **REAL-USAGE FEEDBACK MODE**，反馈按 Blocker、Major、Minor、Feature Request 分类，优先处理 Blocker / Major，不因缺少真实使用证据的单个建议自动扩展 Web 功能。下一正式阶段为 Stage 5 微信小程序 MVP，下一任务为 Task 5.1「微信身份桥接技术验证与威胁模型」；本仓库尚未开始该任务。完整边界见 [Operations Web MVP 1.0 封板记录](docs/operations-web-mvp-1.0-closeout.md)。
 
 ## 第一阶段边界
 
-当前数据库包含健康检查、统一身份、工作空间权限以及项目、成员、有序模块、项目任务、受控任务状态机、状态历史、追加式每日进展、验收记录和跨项目个人责任任务只读 RPC。前端已提供邮箱密码登录、密码恢复、个人资料、工作空间门禁、成员目录、邀请激活，项目闭环、任务核心闭环、首页个人工作台、`/tasks` 个人任务中心、Stage 4.2 管理工作台，以及当前功能分支实现的 Stage 4.3 团队负荷概览 V1。当前仍不含通知 / 提醒、已完成重开、微信小程序、CloudBase 业务桥接、归档恢复或物理删除，也不扩大工作空间所有权、邀请、账号绑定、外部平台、生产 SMTP 或远端部署边界。
+当前数据库包含健康检查、统一身份、工作空间权限以及项目、成员、有序模块、项目任务、受控任务状态机、状态历史、追加式每日进展、验收记录和跨项目个人责任任务只读 RPC。前端已提供邮箱密码登录、密码恢复、个人资料、工作空间门禁、成员目录、邀请激活，项目闭环、任务核心闭环、首页个人工作台、`/tasks` 个人任务中心、Stage 4.2 管理工作台和 Stage 4.3 团队负荷概览 V1。当前仍不含通知 / 提醒、已完成重开、微信小程序、CloudBase 业务桥接、归档恢复或物理删除，也不扩大工作空间所有权、邀请、账号绑定、外部平台、生产 SMTP 或远端部署边界。
 
 ## 技术栈
 
@@ -109,4 +111,4 @@ src/
 
 ## 当前未实现功能
 
-本仓库已实现身份、认证、工作空间成员权限 V1、项目 CRUD / 可见性 / 归档 V1、项目成员 / 牵头人 V1、项目工作模块 V1、Task 3.1–3.5 任务核心闭环、Stage 4.1 首页个人工作台和跨项目“我的任务”V1、Stage 4.2 管理工作台；Stage 4.3 团队负荷概览 V1 已在当前功能分支实现。但**尚未实现或执行**公开注册、项目邀请 / 审批、拖拽状态修改、已完成重开、通知 / 提醒、私人任务 / 个人空间、归档恢复或物理删除、工作空间所有权转移 / 删除、成员永久删除、批量项目成员操作、完整邀请撤销 / 重发界面、确认 Auth 用户跨工作空间自动加入、微信小程序、CloudBase 业务桥接、飞书、通用审计日志、生产 SMTP、Vercel Production 配置或 Production Supabase 部署。这些能力只能在新的、明确授权的任务中增加。
+本仓库已实现身份、认证、工作空间成员权限 V1、项目 CRUD / 可见性 / 归档 V1、项目成员 / 牵头人 V1、项目工作模块 V1、Task 3.1–3.5 任务核心闭环，以及 Stage 4.1 首页个人工作台和跨项目“我的任务”V1、Stage 4.2 管理工作台、Stage 4.3 团队负荷概览 V1。但**尚未实现或执行**公开注册、项目邀请 / 审批、拖拽状态修改、已完成重开、通知 / 提醒、私人任务 / 个人空间、归档恢复或物理删除、工作空间所有权转移 / 删除、成员永久删除、批量项目成员操作、完整邀请撤销 / 重发界面、确认 Auth 用户跨工作空间自动加入、微信小程序、CloudBase 业务桥接、飞书、通用审计日志、生产 SMTP、Vercel Production 配置或 Production Supabase 部署。这些能力只能在新的、明确授权的任务中增加；Stage 4 封板后按 Blocker、Major、Minor、Feature Request 分类收集真实使用反馈，不因单个建议自动扩展 Web 功能。

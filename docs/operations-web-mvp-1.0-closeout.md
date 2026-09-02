@@ -4,10 +4,10 @@
 
 - Milestone：`Operations Web MVP 1.0`
 - Status：`SEALED`
-- Sealed main：`47785559d36f1aab1e1ebc4d5f87ecedfafb8877`
-- Date：2026-09-01
+- Stage 4 functional baseline：`47785559d36f1aab1e1ebc4d5f87ecedfafb8877`
+- Stage 4 functional baseline date：2026-09-01
 
-本记录封板的是 Web MVP 功能基线，不代表 Production Admission、Production 部署或正式上线。
+该 SHA 标识完成 Stage 4 的 Web MVP 运行时与功能基线。后续 docs-only closeout 合并会自然推进仓库 `main`，但不会改变已经封板的 Web 功能。本记录不猜测未来 merge SHA，也不代表 Production Admission、Production 部署或正式上线。
 
 ## 2. Completed Stage 4 scope
 

@@ -1,6 +1,6 @@
 # 运维协同看板
 
-> Task 0.1–3.5 已完成远端独立审计、PR CI 和 Squash 合并，Stage 3 Web Core MVP 已封板。Stage 4.1、Stage 4.2 Management Workbench V1 与 Stage 4.3 Team Load Overview V1 均已完成；其中 Stage 4.3 已完成独立远端审计、CI、PR #39 Squash Merge 与 post-merge exact-main CI，并已合入 `main`。`Stage 4 = COMPLETE`，当前 Web milestone 为 `Operations Web MVP 1.0 — SEALED`，sealed main 为 `47785559d36f1aab1e1ebc4d5f87ecedfafb8877`。Trial Admission 为 `ADMITTED`。CloudBase 是 primary Trial Web，Vercel 是 secondary / fallback / comparison Trial Web；CloudBase 仍存在 0/6 security headers known gap，状态为 `DEFERRED HARDENING — REQUIRED BEFORE PRODUCTION ADMISSION`，不是修复或风险豁免。Production 仍为 `NOT CONFIGURED`。
+> Task 0.1–3.5 已完成远端独立审计、PR CI 和 Squash 合并，Stage 3 Web Core MVP 已封板。Stage 4.1、Stage 4.2 Management Workbench V1 与 Stage 4.3 Team Load Overview V1 均已完成；其中 Stage 4.3 已完成独立远端审计、CI、PR #39 Squash Merge 与 post-merge exact-main CI，并已合入 `main`。`Stage 4 = COMPLETE`，当前 Web milestone 为 `Operations Web MVP 1.0 — SEALED`，Stage 4 / Operations Web MVP 1.0 功能基线为 `47785559d36f1aab1e1ebc4d5f87ecedfafb8877`。Trial Admission 为 `ADMITTED`。CloudBase 是 primary Trial Web，Vercel 是 secondary / fallback / comparison Trial Web；CloudBase 仍存在 0/6 security headers known gap，状态为 `DEFERRED HARDENING — REQUIRED BEFORE PRODUCTION ADMISSION`，不是修复或风险豁免。Production 仍为 `NOT CONFIGURED`。
 
 一个面向互联网部署的轻量化运维协同看板前端工程。
 

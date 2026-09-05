@@ -1,38 +1,60 @@
 # 运维协同看板
 
-> Task 0.1–3.5 已完成远端独立审计、PR CI 和 Squash 合并，Stage 3 Web Core MVP 已封板。Stage 4.1、Stage 4.2 Management Workbench V1 与 Stage 4.3 Team Load Overview V1 均已完成；其中 Stage 4.3 已完成独立远端审计、CI、PR #39 Squash Merge 与 post-merge exact-main CI，并已合入 `main`。`Stage 4 = COMPLETE`，当前 Web milestone 为 `Operations Web MVP 1.0 — SEALED`，Stage 4 / Operations Web MVP 1.0 功能基线为 `47785559d36f1aab1e1ebc4d5f87ecedfafb8877`。Trial Admission 为 `ADMITTED`。CloudBase 是 primary Trial Web，Vercel 是 secondary / fallback / comparison Trial Web；CloudBase 仍存在 0/6 security headers known gap，状态为 `DEFERRED HARDENING — REQUIRED BEFORE PRODUCTION ADMISSION`，不是修复或风险豁免。Production 仍为 `NOT CONFIGURED`。
+一个面向互联网部署的小型团队协同工作台，以项目、模块和任务为执行骨架，通过进展、阻塞和验收形成可审计的协作闭环。
 
-一个面向互联网部署的轻量化运维协同看板前端工程。
+## 当前基线
 
-项目最高级路线与范围约束见 [《运维协同看板第一版建设方案 V1.3（受控试运行版）》](docs/project-construction-plan-v1.3.md)。试运行环境模型、目标门禁、迁移、Edge Function、Vercel / CloudBase Web、回滚和准入边界见 [试运行部署基线与环境门禁 V1](docs/trial-deployment.md)。
+- Web milestone：`Operations Web MVP 1.0 — SEALED`
+- Stage 4 functional baseline：`47785559d36f1aab1e1ebc4d5f87ecedfafb8877`
+- Trial Admission：`ADMITTED`
+- Primary Trial Web：CloudBase
+- Secondary / fallback / comparison Trial Web：Vercel
+- Authoritative backend：Supabase Trial
+- CloudBase security headers：`0/6`，状态仍为 `DEFERRED HARDENING — REQUIRED BEFORE PRODUCTION ADMISSION`
+- Production：`NOT CONFIGURED`
+- 当前工作模式：`REAL-USAGE FEEDBACK MODE`
+- 下一正式阶段：Stage 5 微信小程序 MVP；Task 5.1「微信身份桥接技术验证与威胁模型」尚未开始
 
-## 当前状态
+这里的 `SEALED` 只表示当前 Web MVP 功能基线已经封板并进入真实使用反馈阶段，不代表 Production 已上线或通过 Production Admission。完整状态与历史边界见 [Operations Web MVP 1.0 封板记录](docs/operations-web-mvp-1.0-closeout.md)。
 
-Task 0.1 至 Task 1.4 已建立前端、数据库、统一身份、网页登录与工作空间权限基线。Task 2.1–2.3 已完成项目 CRUD、项目成员/牵头人和有序模块；Task 3.1–3.5 已完成共享任务、只读浏览、受控状态机、每日进展和提交/退回/通过验收闭环。详见 [工作空间与成员权限](docs/workspace-permissions.md)、[项目 CRUD、可见性与归档 V1](docs/project-crud-and-visibility.md)、[项目成员与牵头人 V1](docs/project-membership-and-lead.md)、[项目工作模块 V1](docs/project-modules.md)、[任务数据模型与创建编辑 V1](docs/task-data-model-and-editing.md)、[任务看板与列表 V1](docs/task-board-and-list.md)、[任务状态流转与阻塞 V1](docs/task-status-transitions.md)、[每日任务进展与进度同步 V1](docs/task-daily-progress.md) 和 [任务提交验收、通过与退回 V1](docs/task-review-closure.md)。
+## 已有 Web 能力
 
-Stage 4.1 已实现首页个人工作台与 `/tasks` 跨项目任务中心，复用同一个 `list_my_tasks(p_workspace_id)` 只读 RPC，并以现有项目/任务权限函数限制责任任务范围。对应 migration 已部署到 Trial，`public.list_my_tasks(uuid)` 远端验证与 Hosted Trial 真实浏览器验证均为 PASS。Task 3.9.3-R8 复用 Owner 批准的既有激活证据且确认邀请实现没有后续漂移，没有重发邀请、消费 token、执行真实恢复或重复初始化密码；随后在 CloudBase primary Trial Web 完成 Owner / Member fresh login、项目成员关系、模块、任务、进展、阻塞恢复、两轮验收和完成态冻结。工作台与 `/tasks` 一致性为 PASS。R8 已完成独立审计并合入 `main`，当前正式状态为 `Trial Admission = ADMITTED`；R7 历史结果不改写。CloudBase 6 项安全响应头仍为 0/6，继续作为 `DEFERRED HARDENING — REQUIRED BEFORE PRODUCTION ADMISSION` 的 hardening gate。Recovery Drill 已完成；Local Database Credential Bootstrap V1 仅是 Windows 本机 operator tooling，不授予 write、migration、PLAN 或 APPLY 权限。Production Supabase 与 Production Web hosting 仍未创建或配置，`Production = NOT CONFIGURED`。
+当前 Web 基线已覆盖：
 
-Stage 4.2 Management Workbench V1 已完成并通过 PR #33 合入 `main`。Stage 4.3 Team Load Overview V1 已完成独立远端审计、CI、PR #39 Squash Merge 与 post-merge exact-main CI，并已合入 `main`。Stage 4.1 / 4.2 / 4.3 均已完成，因此 `Stage 4 = COMPLETE`，当前 Web milestone 为 `Operations Web MVP 1.0 — SEALED`。这里的 `SEALED` 仅表示当前 Web MVP 功能基线已完成、经过审计并进入真实使用反馈阶段，不表示 Production 已上线或已具备 Production Admission。
+- 统一内部用户、邮箱登录、密码恢复、邀请激活与工作空间权限；
+- 项目 CRUD、项目成员 / 牵头人、有序模块；
+- 共享任务创建 / 编辑、看板与列表、受控状态机、阻塞恢复；
+- 追加式每日进展、提交验收、通过 / 退回与完成态冻结；
+- 首页个人工作台、`/tasks` 跨项目个人任务中心；
+- Management Workbench V1 与 Team Load Overview V1。
 
-当前 Web MVP 进入 **REAL-USAGE FEEDBACK MODE**，反馈按 Blocker、Major、Minor、Feature Request 分类，优先处理 Blocker / Major，不因缺少真实使用证据的单个建议自动扩展 Web 功能。下一正式阶段为 Stage 5 微信小程序 MVP，下一任务为 Task 5.1「微信身份桥接技术验证与威胁模型」；本仓库尚未开始该任务。完整边界见 [Operations Web MVP 1.0 封板记录](docs/operations-web-mvp-1.0-closeout.md)。
+当前仍未把通知 / 提醒、已完成重开、微信小程序、CloudBase 业务桥接、归档恢复 / 物理删除、生产 SMTP、Production Supabase / Web hosting 等能力纳入已完成基线。新能力只在明确授权的后续任务中增加。
 
-## 第一阶段边界
+## 文档导航
 
-当前数据库包含健康检查、统一身份、工作空间权限以及项目、成员、有序模块、项目任务、受控任务状态机、状态历史、追加式每日进展、验收记录和跨项目个人责任任务只读 RPC。前端已提供邮箱密码登录、密码恢复、个人资料、工作空间门禁、成员目录、邀请激活，项目闭环、任务核心闭环、首页个人工作台、`/tasks` 个人任务中心、Stage 4.2 管理工作台和 Stage 4.3 团队负荷概览 V1。当前仍不含通知 / 提醒、已完成重开、微信小程序、CloudBase 业务桥接、归档恢复或物理删除，也不扩大工作空间所有权、邀请、账号绑定、外部平台、生产 SMTP 或远端部署边界。
+- Agent 项目级边界与上下文路由：[`AGENTS.md`](AGENTS.md)
+- 当前 Web MVP 封板状态：[`docs/operations-web-mvp-1.0-closeout.md`](docs/operations-web-mvp-1.0-closeout.md)
+- V1.3 历史产品总纲与双端路线图：[`docs/project-construction-plan-v1.3.md`](docs/project-construction-plan-v1.3.md)
+- 公开仓库开发与 Git 审计流程：[`docs/public-development-workflow.md`](docs/public-development-workflow.md)
+- Supabase / migration / RLS / RPC 本地开发：[`docs/supabase-development.md`](docs/supabase-development.md)
+- Trial / Recovery / deployment runbook：[`docs/trial-deployment.md`](docs/trial-deployment.md)
+- 统一身份：[`docs/identity-model.md`](docs/identity-model.md)
+- 工作空间权限：[`docs/workspace-permissions.md`](docs/workspace-permissions.md)
+- UI 设计系统：[`docs/design-system.md`](docs/design-system.md)
+- 项目、成员、模块和任务领域文档：按当前任务读取 `docs/project-*` 与 `docs/task-*`
+
+`project-construction-plan-v1.3.md` 和 `trial-deployment.md` 都包含重要历史基线与阶段证据；不要把历史 Task / Stage 步骤自动解释为当前任务指令。
 
 ## 技术栈
 
-- React + TypeScript（严格模式）
-- Vite + Tailwind CSS 4（官方 Vite 插件）
+- React 19 + TypeScript strict
+- Vite 8 + Tailwind CSS 4
 - React Router 8
-- ESLint + Prettier
-- Vitest + React Testing Library + jest-dom
+- Vitest + React Testing Library
+- Supabase PostgreSQL / Auth / Edge Functions
+- npm
 
-## 环境要求
-
-- Node.js 22.22.0 或更高版本
-- npm 10 或更高版本
-- Docker Desktop 或兼容 Docker API 的容器运行时（数据库开发需要）
+环境要求以 `package.json` 的 `engines` 为准；数据库开发还需要 Docker Desktop 或兼容 Docker API 的容器运行时。Supabase CLI 使用仓库锁定版本，不依赖全局安装。
 
 ## 本地运行
 
@@ -41,74 +63,52 @@ npm ci
 npm run dev
 ```
 
-浏览器访问命令输出的本地地址。生产预览可依次运行：
+生产预览：
 
 ```bash
 npm run build
 npm run preview
 ```
 
-需要验证数据库或系统健康页时，先启动本地 Supabase：
+需要本地数据库时：
 
 ```bash
 npm run db:start
 npm run db:verify
-npm run db:membership:verify
-npm run db:modules:verify
-npm run db:tasks:verify
 ```
 
-完整流程、环境变量边界与 migration 规范见 [Supabase 本地开发](docs/supabase-development.md)。
+数据库完整说明见 [`docs/supabase-development.md`](docs/supabase-development.md)。
 
-## 质量检查
+## 验证入口
 
-以下命令均已作为项目脚本提供：
+验证强度按改动风险选择；完整项目级映射见 [`docs/public-development-workflow.md`](docs/public-development-workflow.md)。常用入口：
 
 ```bash
-npm run format:check
-npm run security:audit
-npm run lint
-npm run typecheck
-npm run test
-npm run build
 npm run check
+npm run security:audit
+npm run db:verify
+npm run test:edge
 npm run trial:baseline:check
 npm run operator:db-credentials:verify
 ```
 
-`npm run check` 按格式、Lint、类型、测试、Trial 部署基线静态门禁、前端凭据构建门禁和生产构建的顺序执行。`npm run operator:db-credentials:verify` 在 Windows 上同时使用 Windows PowerShell 5.1 与已安装 PowerShell 7 执行 synthetic DPAPI、target、redaction、CA 与 cleanup 回归；不读取或写入真实 Trial/Recovery 凭据。`npm run security:audit` 单独阻断高危和严重依赖漏洞，CI 会在项目检查前运行该命令。Edge Function 另有明确的两个测试文件（`npm run test:edge` 运行 `handler.test.ts` 与 `entry.test.ts`）与真实入口类型检查（`deno check supabase/functions/invite-workspace-member/index.ts`，CI 使用固定版本 Deno 2.2.12）。真实本地 Auth 重发集成验证由 `npm run db:reissue:verify` 执行；Recovery Auth tenant rebind 的离线 PLAN/APPLY 回归由 `npm run db:recovery-rebind:verify` 执行；真实项目成员、项目模块和项目任务并发验证分别由 `npm run db:membership:verify`、`npm run db:modules:verify` 和 `npm run db:tasks:verify` 执行。Recovery 与三类项目并发脚本都已纳入 `db:verify`，且只使用 loopback 本地 Supabase 与随机虚构夹具。
+`npm run check` 覆盖格式、Lint、类型、单元测试、Trial baseline 静态门禁、前端凭据构建门禁和生产构建。依赖、数据库、Edge Function、Trial / Recovery 或 operator tooling 改动还需要对应专项验证，不应把所有专项命令无差别用于每个任务。
 
-## 环境变量
+## 环境与安全
 
-将 `.env.example` 复制为本地 `.env.local` 后按需调整。所有 `.env` 和 `.env.[mode]` 文件均默认忽略，`.env.example` 是唯一允许提交的环境示例。应用不依赖 Supabase 配置也可启动；未配置时系统健康页会显示安全的未配置状态。
+本仓库是公开仓库，不接受真实人员、单位、项目、内部工作记录、内部文件、IP / 内部域名 / 网络拓扑、日志、Cookie、Token、密码、私钥、API Key、数据库连接串、Supabase / Vercel / CloudBase / GitHub 凭据或本机绝对路径。
 
-Vite 会在构建阶段把使用到的 `VITE_*` 值写入客户端包，因此生产环境只能配置 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_PUBLISHABLE_KEY`。部分配置、无效 URL、secret key、service-role JWT 或高权限数据库变量会让 Vite 在启动或构建前直接失败，错误不会输出变量值。客户端工厂不接受调用方传入的 URL 或 key，只能读取并使用通过共享验证器的环境配置。
+所有 `.env` 和 `.env.[mode]` 文件默认忽略；`.env.example` 是唯一允许提交的环境示例。浏览器构建只允许使用经过共享验证器检查的：
 
-数据库 migration 已撤销未来 `public` schema 函数的默认执行权限；每个需要公开的 RPC 都必须在创建后显式、审阅并授予目标角色。工作空间邀请的 Auth Admin 调用只存在于 Edge Function，读取 Supabase 托管的服务端环境变量；secret key、service-role key、数据库连接串均不进入 `VITE_*`、浏览器包或仓库。Trial Supabase 以及授权 Vercel / CloudBase Web origin 已建立；Production Supabase 与 Production Web hosting 尚未配置。
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
 
-## 目录结构
+secret key、service-role JWT、高权限数据库变量和连接串不得进入 `VITE_*`、浏览器包或仓库。
 
-```text
-src/
-  app/          # 应用组合、布局、路由与 Provider
-  components/   # 可复用的反馈、表单和 UI 组件
-  features/     # 按业务功能组织的代码（含 auth 认证特性）
-  lib/          # 通用工具
-  pages/        # 路由页面（含 auth 认证页面）
-  tests/        # 测试初始化与应用测试
-  types/        # 共享类型
-```
+Supabase PostgreSQL 是业务数据权威来源。未来 `public` schema RPC 默认不向客户端角色开放执行权限；确需公开的 RPC 必须通过独立、可审阅的 migration 显式授权。Auth Admin 调用只存在于服务端边界。
 
-按实际任务创建文件；不为维持空目录而提交占位文件。
+## Trial Web
 
-## 公开仓库安全
+CloudBase 与 Vercel 共享同一个权威 Supabase Trial 后端；CloudBase 只是 primary Web origin，不代表 CloudBase 业务桥接已经实现。当前 CloudBase 仍存在已知 security-header gap，因此 Trial 可继续受控使用，但该问题必须在 Production Admission 前完成 hardening 与独立验证。
 
-本仓库不接受真实业务数据、人员或单位信息、内部材料、IP/内部域名、日志、Cookie、Token、密码、私钥、API Key 或本机绝对路径。提交前遵循 [公开开发流程](docs/public-development-workflow.md)。
-
-## Trial Web 前端部署
-
-当前 Trial Web 前端以 CloudBase 为 primary origin，以 Vercel 为 secondary / fallback / comparison origin；两者共用同一个权威 Supabase Trial 后端。CloudBase 在这里仅承担静态 Web hosting，不代表 CloudBase 业务桥接已经实现。构建命令为 `npm run build`，输出目录为 `dist`；`vercel.json` 为 Vercel 的 React Router 直接访问提供 SPA 回退。平台只允许配置 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_PUBLISHABLE_KEY` 两项 browser-safe 变量。只读核验确认两端 7/7 SPA browser routes 可用；CloudBase 当前 6 项安全响应头为 0/6，Vercel 为 6/6，因此只有功能路由 parity，没有 security-header parity。R8 fresh full Trial Business E2E 已在 CloudBase primary origin 通过；该既知 header 风险允许在受控 Trial 中延期，但在 Production Admission 前必须完成 hardening 与独立验证。本仓库本轮不执行 Vercel / CloudBase 部署，也不配置 Production。
-
-## 当前未实现功能
-
-本仓库已实现身份、认证、工作空间成员权限 V1、项目 CRUD / 可见性 / 归档 V1、项目成员 / 牵头人 V1、项目工作模块 V1、Task 3.1–3.5 任务核心闭环，以及 Stage 4.1 首页个人工作台和跨项目“我的任务”V1、Stage 4.2 管理工作台、Stage 4.3 团队负荷概览 V1。但**尚未实现或执行**公开注册、项目邀请 / 审批、拖拽状态修改、已完成重开、通知 / 提醒、私人任务 / 个人空间、归档恢复或物理删除、工作空间所有权转移 / 删除、成员永久删除、批量项目成员操作、完整邀请撤销 / 重发界面、确认 Auth 用户跨工作空间自动加入、微信小程序、CloudBase 业务桥接、飞书、通用审计日志、生产 SMTP、Vercel Production 配置或 Production Supabase 部署。这些能力只能在新的、明确授权的任务中增加；Stage 4 封板后按 Blocker、Major、Minor、Feature Request 分类收集真实使用反馈，不因单个建议自动扩展 Web 功能。
+任何 Trial / Recovery / Hosted mutation、credential 操作或 Production 配置都应按对应 runbook 与当前任务授权执行，不能从“功能已实现”或“CI 已通过”推导出部署授权。
